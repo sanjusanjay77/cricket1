@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  backend:
+    build: ./backend
+    container_name: cricket-backend
+    ports:
+      - "4000:4000"
+    volumes:
+      - cricket-db:/app/db
+    environment:
+      - PORT=4000
+      - DB_PATH=/app/db/cricket.db
+      - CORS_ORIGIN=*
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: cricket-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  cricket-db:
