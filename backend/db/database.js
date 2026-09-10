@@ -10,72 +10,96 @@ const client = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-// Turso/libSQL adapter.
-// Supports both:
-//   .run(value1, value2, ...)
-// and:
-//   .run({ named_parameter: value, ... })
+/*
+ * Convert named parameters such as:
+ *
+ *   WHERE id = @id
+ *
+ * into positional parameters:
+ *
+ *   WHERE id = ?
+ *
+ * This makes the adapter compatible with Turso/libSQL.
+ */
+function normalizeQuery(sql, args) {
+  if (
+    args.length === 1 &&
+    args[0] !== null &&
+    typeof args[0] === 'object' &&
+    !Array.isArray(args[0])
+  ) {
+    const named = args[0];
+
+    const values = [];
+
+    const normalizedSql = sql.replace(
+      /@([A-Za-z_][A-Za-z0-9_]*)/g,
+      (match, name) => {
+        values.push(named[name]);
+        return '?';
+      }
+    );
+
+    return {
+      sql: normalizedSql,
+      args: values,
+    };
+  }
+
+  return {
+    sql,
+    args,
+  };
+}
+
 const db = {
   prepare(sql) {
     return {
       async get(...args) {
-        const query = {
-          sql,
-          args: args.length === 1 && isPlainObject(args[0]) ? args[0] : args,
-        };
+        const query = normalizeQuery(sql, args);
 
-        const r = await client.execute(query);
+        const result = await client.execute(query);
 
-        return r.rows[0]
-          ? Object.fromEntries(
-              Object.entries(r.rows[0]).map(([k, v]) => [
-                k,
-                v?.valueOf?.() ?? v,
-              ])
-            )
-          : undefined;
+        if (!result.rows[0]) {
+          return undefined;
+        }
+
+        return Object.fromEntries(
+          Object.entries(result.rows[0]).map(([key, value]) => [
+            key,
+            value?.valueOf?.() ?? value,
+          ])
+        );
       },
 
       async all(...args) {
-        const query = {
-          sql,
-          args: args.length === 1 && isPlainObject(args[0]) ? args[0] : args,
-        };
+        const query = normalizeQuery(sql, args);
 
-        const r = await client.execute(query);
+        const result = await client.execute(query);
 
-        return r.rows.map(row =>
+        return result.rows.map(row =>
           Object.fromEntries(
-            Object.entries(row).map(([k, v]) => [
-              k,
-              v?.valueOf?.() ?? v,
+            Object.entries(row).map(([key, value]) => [
+              key,
+              value?.valueOf?.() ?? value,
             ])
           )
         );
       },
 
       async run(...args) {
-        const query = {
-          sql,
-          args: args.length === 1 && isPlainObject(args[0]) ? args[0] : args,
-        };
+        const query = normalizeQuery(sql, args);
 
-        return client.execute(query);
+        return await client.execute(query);
       },
     };
   },
 
-  execute: stmt => client.execute(stmt),
+  execute: statement => client.execute(statement),
 
-  initSchema: async schemaSql => client.executeMultiple(schemaSql),
+  initSchema: async schemaSql => {
+    return client.executeMultiple(schemaSql);
+  },
 };
-
-function isPlainObject(value) {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value)
-  );
-}
 
 module.exports = db;
