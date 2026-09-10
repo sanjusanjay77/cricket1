@@ -10,25 +10,72 @@ const client = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-// Small better-sqlite3-like adapter. The returned methods are async because Turso is remote.
+// Turso/libSQL adapter.
+// Supports both:
+//   .run(value1, value2, ...)
+// and:
+//   .run({ named_parameter: value, ... })
 const db = {
   prepare(sql) {
     return {
       async get(...args) {
-        const r = await client.execute({ sql, args });
-        return r.rows[0] ? Object.fromEntries(Object.entries(r.rows[0]).map(([k,v]) => [k, v?.valueOf?.() ?? v])) : undefined;
+        const query = {
+          sql,
+          args: args.length === 1 && isPlainObject(args[0]) ? args[0] : args,
+        };
+
+        const r = await client.execute(query);
+
+        return r.rows[0]
+          ? Object.fromEntries(
+              Object.entries(r.rows[0]).map(([k, v]) => [
+                k,
+                v?.valueOf?.() ?? v,
+              ])
+            )
+          : undefined;
       },
+
       async all(...args) {
-        const r = await client.execute({ sql, args });
-        return r.rows.map(row => Object.fromEntries(Object.entries(row).map(([k,v]) => [k, v?.valueOf?.() ?? v])));
+        const query = {
+          sql,
+          args: args.length === 1 && isPlainObject(args[0]) ? args[0] : args,
+        };
+
+        const r = await client.execute(query);
+
+        return r.rows.map(row =>
+          Object.fromEntries(
+            Object.entries(row).map(([k, v]) => [
+              k,
+              v?.valueOf?.() ?? v,
+            ])
+          )
+        );
       },
+
       async run(...args) {
-        return client.execute({ sql, args });
-      }
+        const query = {
+          sql,
+          args: args.length === 1 && isPlainObject(args[0]) ? args[0] : args,
+        };
+
+        return client.execute(query);
+      },
     };
   },
-  execute: (stmt) => client.execute(stmt),
-  initSchema: async (schemaSql) => client.executeMultiple(schemaSql),
+
+  execute: stmt => client.execute(stmt),
+
+  initSchema: async schemaSql => client.executeMultiple(schemaSql),
 };
+
+function isPlainObject(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value)
+  );
+}
 
 module.exports = db;
