@@ -11,17 +11,26 @@ const client = createClient({
 });
 
 /*
- * Convert named parameters such as:
+ * Convert named parameters:
  *
  *   WHERE id = @id
  *
- * into positional parameters:
+ * with:
+ *
+ *   .run({ id: 123 })
+ *
+ * into:
  *
  *   WHERE id = ?
  *
- * This makes the adapter compatible with Turso/libSQL.
+ * with:
+ *
+ *   args: [123]
+ *
+ * Positional parameters are passed through unchanged.
  */
 function normalizeQuery(sql, args) {
+  // Named parameter object
   if (
     args.length === 1 &&
     args[0] !== null &&
@@ -29,12 +38,15 @@ function normalizeQuery(sql, args) {
     !Array.isArray(args[0])
   ) {
     const named = args[0];
-
     const values = [];
 
     const normalizedSql = sql.replace(
       /@([A-Za-z_][A-Za-z0-9_]*)/g,
       (match, name) => {
+        if (!(name in named)) {
+          throw new Error(`Missing SQL parameter: ${name}`);
+        }
+
         values.push(named[name]);
         return '?';
       }
@@ -46,6 +58,14 @@ function normalizeQuery(sql, args) {
     };
   }
 
+  // Positional parameters:
+  //
+  // .run(1, 2, 3)
+  //
+  // becomes:
+  //
+  // args: [1, 2, 3]
+  //
   return {
     sql,
     args,
@@ -58,7 +78,10 @@ const db = {
       async get(...args) {
         const query = normalizeQuery(sql, args);
 
-        const result = await client.execute(query);
+        const result = await client.execute({
+          sql: query.sql,
+          args: query.args,
+        });
 
         if (!result.rows[0]) {
           return undefined;
@@ -75,7 +98,10 @@ const db = {
       async all(...args) {
         const query = normalizeQuery(sql, args);
 
-        const result = await client.execute(query);
+        const result = await client.execute({
+          sql: query.sql,
+          args: query.args,
+        });
 
         return result.rows.map(row =>
           Object.fromEntries(
@@ -90,7 +116,12 @@ const db = {
       async run(...args) {
         const query = normalizeQuery(sql, args);
 
-        return await client.execute(query);
+        const result = await client.execute({
+          sql: query.sql,
+          args: query.args,
+        });
+
+        return result;
       },
     };
   },
@@ -103,3 +134,4 @@ const db = {
 };
 
 module.exports = db;
+
