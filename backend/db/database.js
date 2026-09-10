@@ -1,3 +1,4 @@
+
 const { createClient } = require('@libsql/client');
 require('dotenv').config();
 
@@ -11,71 +12,157 @@ const client = createClient({
 });
 
 /*
- * Convert named parameters:
+ * Supports BOTH:
  *
- *   WHERE id = @id
+ * 1. Named parameters
  *
- * with:
+ *    SELECT * FROM users WHERE id = @id
  *
- *   .run({ id: 123 })
+ *    .get({ id: 123 })
  *
- * into:
+ * 2. Positional parameters
  *
- *   WHERE id = ?
+ *    SELECT * FROM users WHERE id = ?
  *
- * with:
+ *    .get(123)
  *
- *   args: [123]
+ * 3. Positional SQL with an object
  *
- * Positional parameters are passed through unchanged.
+ *    UPDATE table SET a=?, b=?, c=?
+ *
+ *    .run({
+ *      a: 1,
+ *      b: 2,
+ *      c: 3
+ *    })
+ *
+ *    This is converted to:
+ *
+ *    args: [1, 2, 3]
  */
+
 function normalizeQuery(sql, args) {
-  // Named parameter object
+
+  /*
+   * No arguments
+   */
+  if (args.length === 0) {
+    return {
+      sql,
+      args: [],
+    };
+  }
+
+  /*
+   * One object argument
+   */
   if (
     args.length === 1 &&
     args[0] !== null &&
     typeof args[0] === 'object' &&
     !Array.isArray(args[0])
   ) {
-    const named = args[0];
-    const values = [];
 
-    const normalizedSql = sql.replace(
-      /@([A-Za-z_][A-Za-z0-9_]*)/g,
-      (match, name) => {
-        if (!(name in named)) {
-          throw new Error(`Missing SQL parameter: ${name}`);
+    const params = args[0];
+
+    /*
+     * CASE 1:
+     * SQL uses named parameters such as @id
+     */
+    if (/@[A-Za-z_][A-Za-z0-9_]*/.test(sql)) {
+
+      const values = [];
+
+      const normalizedSql = sql.replace(
+        /@([A-Za-z_][A-Za-z0-9_]*)/g,
+        (match, name) => {
+
+          if (!(name in params)) {
+            throw new Error(
+              `Missing SQL parameter: ${name}`
+            );
+          }
+
+          values.push(params[name]);
+
+          return '?';
         }
+      );
 
-        values.push(named[name]);
-        return '?';
-      }
-    );
+      return {
+        sql: normalizedSql,
+        args: values,
+      };
+    }
+
+    /*
+     * CASE 2:
+     * SQL uses positional ? parameters.
+     *
+     * Example:
+     *
+     * UPDATE table
+     * SET a=?, b=?, c=?
+     *
+     * .run({ a: 1, b: 2, c: 3 })
+     *
+     * becomes:
+     *
+     * args: [1, 2, 3]
+     */
+
+    const placeholderCount =
+      (sql.match(/\?/g) || []).length;
+
+    const values = Object.values(params);
+
+    if (placeholderCount !== values.length) {
+      throw new Error(
+        `SQL parameter mismatch: SQL expects ${placeholderCount} parameters, but received ${values.length}.`
+      );
+    }
 
     return {
-      sql: normalizedSql,
+      sql,
       args: values,
     };
   }
 
-  // Positional parameters:
-  //
-  // .run(1, 2, 3)
-  //
-  // becomes:
-  //
-  // args: [1, 2, 3]
-  //
+  /*
+   * Normal positional arguments.
+   *
+   * Example:
+   *
+   * .get(playerId)
+   *
+   * becomes:
+   *
+   * args: [playerId]
+   *
+   * And:
+   *
+   * .get(playerId, playerId)
+   *
+   * becomes:
+   *
+   * args: [playerId, playerId]
+   */
+
   return {
     sql,
     args,
   };
 }
 
+
 const db = {
+
   prepare(sql) {
+
     return {
+
       async get(...args) {
+
         const query = normalizeQuery(sql, args);
 
         const result = await client.execute({
@@ -88,14 +175,18 @@ const db = {
         }
 
         return Object.fromEntries(
-          Object.entries(result.rows[0]).map(([key, value]) => [
-            key,
-            value?.valueOf?.() ?? value,
-          ])
+          Object.entries(result.rows[0]).map(
+            ([key, value]) => [
+              key,
+              value?.valueOf?.() ?? value,
+            ]
+          )
         );
       },
 
+
       async all(...args) {
+
         const query = normalizeQuery(sql, args);
 
         const result = await client.execute({
@@ -105,15 +196,19 @@ const db = {
 
         return result.rows.map(row =>
           Object.fromEntries(
-            Object.entries(row).map(([key, value]) => [
-              key,
-              value?.valueOf?.() ?? value,
-            ])
+            Object.entries(row).map(
+              ([key, value]) => [
+                key,
+                value?.valueOf?.() ?? value,
+              ]
+            )
           )
         );
       },
 
+
       async run(...args) {
+
         const query = normalizeQuery(sql, args);
 
         const result = await client.execute({
@@ -126,12 +221,17 @@ const db = {
     };
   },
 
-  execute: statement => client.execute(statement),
 
-  initSchema: async schemaSql => {
+  execute(statement) {
+    return client.execute(statement);
+  },
+
+
+  initSchema(schemaSql) {
     return client.executeMultiple(schemaSql);
   },
 };
+
 
 module.exports = db;
 
