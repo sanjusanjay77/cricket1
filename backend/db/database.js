@@ -11,227 +11,120 @@ const client = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-/*
- * Supports BOTH:
- *
- * 1. Named parameters
- *
- *    SELECT * FROM users WHERE id = @id
- *
- *    .get({ id: 123 })
- *
- * 2. Positional parameters
- *
- *    SELECT * FROM users WHERE id = ?
- *
- *    .get(123)
- *
- * 3. Positional SQL with an object
- *
- *    UPDATE table SET a=?, b=?, c=?
- *
- *    .run({
- *      a: 1,
- *      b: 2,
- *      c: 3
- *    })
- *
- *    This is converted to:
- *
- *    args: [1, 2, 3]
- */
-
-function normalizeQuery(sql, args) {
-
-  /*
-   * No arguments
-   */
-  if (args.length === 0) {
-    return {
-      sql,
-      args: [],
-    };
-  }
-
-  /*
-   * One object argument
-   */
-  if (
-    args.length === 1 &&
-    args[0] !== null &&
-    typeof args[0] === 'object' &&
-    !Array.isArray(args[0])
-  ) {
-
-    const params = args[0];
-
-    /*
-     * CASE 1:
-     * SQL uses named parameters such as @id
-     */
-    if (/@[A-Za-z_][A-Za-z0-9_]*/.test(sql)) {
-
-      const values = [];
-
-      const normalizedSql = sql.replace(
-        /@([A-Za-z_][A-Za-z0-9_]*)/g,
-        (match, name) => {
-
-          if (!(name in params)) {
-            throw new Error(
-              `Missing SQL parameter: ${name}`
-            );
-          }
-
-          values.push(params[name]);
-
-          return '?';
-        }
-      );
-
-      return {
-        sql: normalizedSql,
-        args: values,
-      };
-    }
-
-    /*
-     * CASE 2:
-     * SQL uses positional ? parameters.
-     *
-     * Example:
-     *
-     * UPDATE table
-     * SET a=?, b=?, c=?
-     *
-     * .run({ a: 1, b: 2, c: 3 })
-     *
-     * becomes:
-     *
-     * args: [1, 2, 3]
-     */
-
-    const placeholderCount =
-      (sql.match(/\?/g) || []).length;
-
-    const values = Object.values(params);
-
-    if (placeholderCount !== values.length) {
-      throw new Error(
-        `SQL parameter mismatch: SQL expects ${placeholderCount} parameters, but received ${values.length}.`
-      );
-    }
-
-    return {
-      sql,
-      args: values,
-    };
-  }
-
-  /*
-   * Normal positional arguments.
-   *
-   * Example:
-   *
-   * .get(playerId)
-   *
-   * becomes:
-   *
-   * args: [playerId]
-   *
-   * And:
-   *
-   * .get(playerId, playerId)
-   *
-   * becomes:
-   *
-   * args: [playerId, playerId]
-   */
-
-  return {
-    sql,
-    args,
-  };
-}
-
-
 const db = {
-
   prepare(sql) {
-
     return {
-
       async get(...args) {
+        let statement;
 
-        const query = normalizeQuery(sql, args);
+        if (args.length === 1 && Array.isArray(args[0])) {
+          statement = {
+            sql,
+            args: args[0],
+          };
+        } else if (
+          args.length === 1 &&
+          args[0] !== null &&
+          typeof args[0] === 'object'
+        ) {
+          statement = {
+            sql,
+            args: args[0],
+          };
+        } else {
+          statement = {
+            sql,
+            args,
+          };
+        }
 
-        const result = await client.execute({
-          sql: query.sql,
-          args: query.args,
-        });
+        const result = await client.execute(statement);
 
-        if (!result.rows[0]) {
+        if (!result.rows || result.rows.length === 0) {
           return undefined;
         }
 
         return Object.fromEntries(
-          Object.entries(result.rows[0]).map(
-            ([key, value]) => [
-              key,
-              value?.valueOf?.() ?? value,
-            ]
-          )
+          Object.entries(result.rows[0]).map(([key, value]) => [
+            key,
+            value?.valueOf?.() ?? value,
+          ])
         );
       },
 
-
       async all(...args) {
+        let statement;
 
-        const query = normalizeQuery(sql, args);
+        if (args.length === 1 && Array.isArray(args[0])) {
+          statement = {
+            sql,
+            args: args[0],
+          };
+        } else if (
+          args.length === 1 &&
+          args[0] !== null &&
+          typeof args[0] === 'object'
+        ) {
+          statement = {
+            sql,
+            args: args[0],
+          };
+        } else {
+          statement = {
+            sql,
+            args,
+          };
+        }
 
-        const result = await client.execute({
-          sql: query.sql,
-          args: query.args,
-        });
+        const result = await client.execute(statement);
 
         return result.rows.map(row =>
           Object.fromEntries(
-            Object.entries(row).map(
-              ([key, value]) => [
-                key,
-                value?.valueOf?.() ?? value,
-              ]
-            )
+            Object.entries(row).map(([key, value]) => [
+              key,
+              value?.valueOf?.() ?? value,
+            ])
           )
         );
       },
 
-
       async run(...args) {
+        let statement;
 
-        const query = normalizeQuery(sql, args);
+        if (args.length === 1 && Array.isArray(args[0])) {
+          statement = {
+            sql,
+            args: args[0],
+          };
+        } else if (
+          args.length === 1 &&
+          args[0] !== null &&
+          typeof args[0] === 'object'
+        ) {
+          statement = {
+            sql,
+            args: args[0],
+          };
+        } else {
+          statement = {
+            sql,
+            args,
+          };
+        }
 
-        const result = await client.execute({
-          sql: query.sql,
-          args: query.args,
-        });
-
-        return result;
+        return await client.execute(statement);
       },
     };
   },
-
 
   execute(statement) {
     return client.execute(statement);
   },
 
-
   initSchema(schemaSql) {
     return client.executeMultiple(schemaSql);
   },
 };
-
 
 module.exports = db;
 
