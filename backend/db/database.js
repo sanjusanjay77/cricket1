@@ -11,108 +11,107 @@ const client = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
+/*
+ * Converts named parameters:
+ *
+ *   WHERE id = @id
+ *
+ * into positional parameters:
+ *
+ *   WHERE id = ?
+ *
+ * It also supports:
+ *
+ *   .run([value1, value2, ...])
+ *
+ * which is required for Turso/libSQL positional parameters.
+ */
+function normalizeQuery(sql, args) {
+  // .run([value1, value2, ...])
+  if (args.length === 1 && Array.isArray(args[0])) {
+    return {
+      sql,
+      args: args[0],
+    };
+  }
+
+  // .run({ id: value, name: value })
+  if (
+    args.length === 1 &&
+    args[0] !== null &&
+    typeof args[0] === 'object' &&
+    !Array.isArray(args[0])
+  ) {
+    const named = args[0];
+    const values = [];
+
+    const normalizedSql = sql.replace(
+      /@([A-Za-z_][A-Za-z0-9_]*)/g,
+      (match, name) => {
+        values.push(named[name]);
+        return '?';
+      }
+    );
+
+    return {
+      sql: normalizedSql,
+      args: values,
+    };
+  }
+
+  // Normal positional parameters:
+  // .run(value1, value2, value3)
+  return {
+    sql,
+    args,
+  };
+}
+
+function convertRow(row) {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key,
+      value?.valueOf?.() ?? value,
+    ])
+  );
+}
+
 const db = {
   prepare(sql) {
     return {
       async get(...args) {
-        let statement;
+        const query = normalizeQuery(sql, args);
 
-        if (args.length === 1 && Array.isArray(args[0])) {
-          statement = {
-            sql,
-            args: args[0],
-          };
-        } else if (
-          args.length === 1 &&
-          args[0] !== null &&
-          typeof args[0] === 'object'
-        ) {
-          statement = {
-            sql,
-            args: args[0],
-          };
-        } else {
-          statement = {
-            sql,
-            args,
-          };
-        }
+        const result = await client.execute({
+          sql: query.sql,
+          args: query.args,
+        });
 
-        const result = await client.execute(statement);
-
-        if (!result.rows || result.rows.length === 0) {
+        if (!result.rows || !result.rows[0]) {
           return undefined;
         }
 
-        return Object.fromEntries(
-          Object.entries(result.rows[0]).map(([key, value]) => [
-            key,
-            value?.valueOf?.() ?? value,
-          ])
-        );
+        return convertRow(result.rows[0]);
       },
 
       async all(...args) {
-        let statement;
+        const query = normalizeQuery(sql, args);
 
-        if (args.length === 1 && Array.isArray(args[0])) {
-          statement = {
-            sql,
-            args: args[0],
-          };
-        } else if (
-          args.length === 1 &&
-          args[0] !== null &&
-          typeof args[0] === 'object'
-        ) {
-          statement = {
-            sql,
-            args: args[0],
-          };
-        } else {
-          statement = {
-            sql,
-            args,
-          };
-        }
+        const result = await client.execute({
+          sql: query.sql,
+          args: query.args,
+        });
 
-        const result = await client.execute(statement);
-
-        return result.rows.map(row =>
-          Object.fromEntries(
-            Object.entries(row).map(([key, value]) => [
-              key,
-              value?.valueOf?.() ?? value,
-            ])
-          )
-        );
+        return (result.rows || []).map(convertRow);
       },
 
       async run(...args) {
-        let statement;
+        const query = normalizeQuery(sql, args);
 
-        if (args.length === 1 && Array.isArray(args[0])) {
-          statement = {
-            sql,
-            args: args[0],
-          };
-        } else if (
-          args.length === 1 &&
-          args[0] !== null &&
-          typeof args[0] === 'object'
-        ) {
-          statement = {
-            sql,
-            args: args[0],
-          };
-        } else {
-          statement = {
-            sql,
-            args,
-          };
-        }
-
-        return await client.execute(statement);
+        return await client.execute({
+          sql: query.sql,
+          args: query.args,
+        });
       },
     };
   },
@@ -121,7 +120,7 @@ const db = {
     return client.execute(statement);
   },
 
-  initSchema(schemaSql) {
+  initSchema: async (schemaSql) => {
     return client.executeMultiple(schemaSql);
   },
 };
