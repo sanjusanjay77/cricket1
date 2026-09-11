@@ -1191,14 +1191,11 @@ GCC ONLY - ALL TIME RECORDS
 */
 
 async function getAllTimeRecords() {
-
-  /*
-   * Get only players who belong to GCC.
-   */
+  // Get ONLY players who belong to GCC
   const gccPlayers = await db
     .prepare(`
       SELECT DISTINCT
-        tp.player_id AS id
+        tp.player_id AS player_id
       FROM team_players tp
       INNER JOIN teams t
         ON t.id = tp.team_id
@@ -1206,17 +1203,12 @@ async function getAllTimeRecords() {
     `)
     .all();
 
-  const gccPlayerIds = new Set(
-    gccPlayers
-      .map(row => row.id)
-      .filter(Boolean)
-  );
+  const gccPlayerIds = gccPlayers
+    .map(row => row.player_id)
+    .filter(Boolean);
 
-  /*
-   * If GCC has no players yet,
-   * return empty records.
-   */
-  if (gccPlayerIds.size === 0) {
+  // No GCC players
+  if (gccPlayerIds.length === 0) {
     return {
       highestScore: null,
       bestBowling: null,
@@ -1231,6 +1223,8 @@ async function getAllTimeRecords() {
     };
   }
 
+  const gccSet = new Set(gccPlayerIds);
+
   const inningsRows = await db
     .prepare(`
       SELECT id, match_id
@@ -1241,228 +1235,185 @@ async function getAllTimeRecords() {
   let highestScore = null;
   let bestBowling = null;
 
-  /*
-   * Highest GCC batting score
-   * and best GCC bowling performance.
-   */
-  for (const innings of inningsRows) {
+  // -----------------------------------------
+  // HIGHEST SCORE + BEST BOWLING
+  // GCC PLAYERS ONLY
+  // -----------------------------------------
 
-    const scoreboard =
-      await getScoreboard(innings.id);
+  for (const innings of inningsRows) {
+    const scoreboard = await getScoreboard(innings.id);
 
     if (!scoreboard) continue;
 
-    /*
-     * GCC batting only
-     */
-    for (const batting of scoreboard.battingCard) {
+    // -------------------------
+    // Batting
+    // -------------------------
 
-      if (
-        !gccPlayerIds.has(
-          batting.player_id
-        )
-      ) {
+    for (const batting of scoreboard.battingCard || []) {
+      if (!gccSet.has(batting.player_id)) {
         continue;
       }
 
       if (
         !highestScore ||
-        batting.runs >
-          highestScore.runs
+        Number(batting.runs || 0) >
+          Number(highestScore.runs || 0)
       ) {
         highestScore = {
-          player_id:
-            batting.player_id,
-
-          runs:
-            batting.runs,
-
-          balls:
-            batting.balls,
-
-          fours:
-            batting.fours,
-
-          sixes:
-            batting.sixes,
-
-          strike_rate:
-            batting.strike_rate,
-
-          innings_id:
-            innings.id,
-
-          match_id:
-            innings.match_id
+          player_id: batting.player_id,
+          runs: Number(batting.runs || 0),
+          balls: Number(batting.balls || 0),
+          fours: Number(batting.fours || 0),
+          sixes: Number(batting.sixes || 0),
+          strike_rate: Number(batting.strike_rate || 0),
+          innings_id: innings.id,
+          match_id: innings.match_id
         };
       }
     }
 
-    /*
-     * GCC bowling only
-     */
-    for (const bowling of scoreboard.bowlingCard) {
+    // -------------------------
+    // Bowling
+    // -------------------------
 
-      if (
-        !gccPlayerIds.has(
-          bowling.player_id
-        )
-      ) {
+    for (const bowling of scoreboard.bowlingCard || []) {
+      if (!gccSet.has(bowling.player_id)) {
         continue;
       }
 
-      const better =
+      const wickets = Number(bowling.wickets || 0);
+      const runs = Number(bowling.runs || 0);
+
+      const isBetter =
         !bestBowling ||
-        bowling.wickets >
-          bestBowling.wickets ||
+        wickets > Number(bestBowling.wickets || 0) ||
         (
-          bowling.wickets ===
-            bestBowling.wickets &&
-          bowling.runs <
-            bestBowling.runs
+          wickets === Number(bestBowling.wickets || 0) &&
+          runs < Number(bestBowling.runs || 0)
         );
 
-      if (better) {
+      if (isBetter) {
         bestBowling = {
-          player_id:
-            bowling.player_id,
-
-          wickets:
-            bowling.wickets,
-
-          runs:
-            bowling.runs,
-
-          overs:
-            bowling.overs,
-
-          economy:
-            bowling.economy,
-
-          innings_id:
-            innings.id,
-
-          match_id:
-            innings.match_id
+          player_id: bowling.player_id,
+          wickets,
+          runs,
+          overs: bowling.overs,
+          economy: Number(bowling.economy || 0),
+          innings_id: innings.id,
+          match_id: innings.match_id
         };
       }
     }
   }
 
-  /*
-   * GCC batting leaders only
-   */
-  const battingLeaders =
-    await Promise.all(
-      [...gccPlayerIds].map(
-        async playerId => ({
-          player_id: playerId,
+  // -----------------------------------------
+  // CAREER BATTING STATS
+  // GCC PLAYERS ONLY
+  // -----------------------------------------
 
-          ...await computeCareerBattingStats(
-            playerId
-          )
-        })
-      )
-    );
+  const battingLeaders = [];
 
-  /*
-   * GCC bowling leaders only
-   */
-  const bowlingLeaders =
-    await Promise.all(
-      [...gccPlayerIds].map(
-        async playerId => ({
-          player_id: playerId,
+  for (const playerId of gccPlayerIds) {
+    const stats = await computeCareerBattingStats(playerId);
 
-          ...await computeCareerBowlingStats(
-            playerId
-          )
-        })
-      )
-    );
+    battingLeaders.push({
+      player_id: playerId,
+      ...stats
+    });
+  }
 
-  const topBy = (
-    array,
-    key,
-    count = 10
-  ) =>
-    [...array]
+  // -----------------------------------------
+  // CAREER BOWLING STATS
+  // GCC PLAYERS ONLY
+  // -----------------------------------------
+
+  const bowlingLeaders = [];
+
+  for (const playerId of gccPlayerIds) {
+    const stats = await computeCareerBowlingStats(playerId);
+
+    bowlingLeaders.push({
+      player_id: playerId,
+      ...stats
+    });
+  }
+
+  // -----------------------------------------
+  // SORT HELPER
+  // -----------------------------------------
+
+  function topBy(array, key, count = 10) {
+    return [...array]
       .sort(
         (a, b) =>
           Number(b[key] || 0) -
           Number(a[key] || 0)
       )
       .slice(0, count);
+  }
+
+  // -----------------------------------------
+  // FINAL GCC RECORDS
+  // -----------------------------------------
 
   return {
-
+    // GCC highest individual score
     highestScore,
 
+    // GCC best bowling performance
     bestBowling,
 
-    /*
-     * GCC batting records
-     */
-    mostRuns:
-      topBy(
-        battingLeaders,
-        'runs'
-      ),
+    // GCC batting records
+    mostRuns: topBy(
+      battingLeaders,
+      'runs'
+    ),
 
-    mostFours:
-      topBy(
-        battingLeaders,
-        'fours'
-      ),
+    mostFours: topBy(
+      battingLeaders,
+      'fours'
+    ),
 
-    mostSixes:
-      topBy(
-        battingLeaders,
-        'sixes'
-      ),
+    mostSixes: topBy(
+      battingLeaders,
+      'sixes'
+    ),
 
-    mostBallsFaced:
-      topBy(
-        battingLeaders,
-        'balls_faced'
-      ),
+    mostBallsFaced: topBy(
+      battingLeaders,
+      'balls_faced'
+    ),
 
-    bestStrikeRate:
-      topBy(
-        battingLeaders.filter(
-          player =>
-            player.balls_faced >= 10
-        ),
-        'strike_rate'
+    bestStrikeRate: topBy(
+      battingLeaders.filter(
+        player =>
+          Number(player.balls_faced || 0) >= 10
       ),
+      'strike_rate'
+    ),
 
-    /*
-     * GCC bowling records
-     */
-    mostWickets:
-      topBy(
-        bowlingLeaders,
-        'wickets'
-      ),
+    // GCC bowling records
+    mostWickets: topBy(
+      bowlingLeaders,
+      'wickets'
+    ),
 
-    mostBallsBowled:
-      topBy(
-        bowlingLeaders,
-        'balls_bowled'
-      ),
+    mostBallsBowled: topBy(
+      bowlingLeaders,
+      'balls_bowled'
+    ),
 
-    bestEconomy:
-      [...bowlingLeaders]
-        .filter(
-          player =>
-            player.balls_bowled >= 12
-        )
-        .sort(
-          (a, b) =>
-            Number(a.economy || 0) -
-            Number(b.economy || 0)
-        )
-        .slice(0, 10)
+    bestEconomy: [...bowlingLeaders]
+      .filter(
+        player =>
+          Number(player.balls_bowled || 0) >= 12
+      )
+      .sort(
+        (a, b) =>
+          Number(a.economy || 0) -
+          Number(b.economy || 0)
+      )
+      .slice(0, 10)
   };
 }
 
