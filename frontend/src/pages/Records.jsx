@@ -3,11 +3,7 @@ import { Records as RecordsApi } from '../api/api.js';
 
 function getTopFive(list, sortFn) {
   if (!Array.isArray(list)) {
-    if (list && typeof list === 'object') {
-      list = [list];
-    } else {
-      return [];
-    }
+    return [];
   }
 
   return [...list]
@@ -26,7 +22,10 @@ function LeaderboardCard({
 }) {
   const topFive = getTopFive(
     list,
-    sortFn || ((a, b) => Number(b[valueKey] || 0) - Number(a[valueKey] || 0))
+    sortFn ||
+      ((a, b) =>
+        Number(b[valueKey] || 0) -
+        Number(a[valueKey] || 0))
   );
 
   if (topFive.length === 0) {
@@ -51,7 +50,7 @@ function LeaderboardCard({
 
           return (
             <div
-              key={`${entry.player_id || entry.id || entry.player_name || index}-${index}`}
+              key={`${entry.player_id || entry.id || index}-${index}`}
               className="flex items-center justify-between text-sm py-2 border-b border-slate-700/40 last:border-0"
             >
               <div className="flex items-center gap-2 min-w-0">
@@ -79,6 +78,43 @@ function LeaderboardCard({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function BestRecordCard({
+  title,
+  icon,
+  entry,
+  line
+}) {
+  if (!entry) {
+    return null;
+  }
+
+  return (
+    <div className="card">
+      <h3 className="font-semibold mb-3 flex items-center gap-2">
+        {icon} {title}
+      </h3>
+
+      <div className="flex items-center gap-3">
+        <div className="text-3xl">
+          🥇
+        </div>
+
+        <div className="min-w-0">
+          <div className="text-xl font-extrabold truncate">
+            {entry.player_name ||
+              entry.name ||
+              'Unknown Player'}
+          </div>
+
+          <div className="text-slate-400 text-sm mt-1">
+            {line(entry)}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -132,30 +168,56 @@ export default function Records() {
   return (
     <div className="fade-in space-y-4">
 
-      {/* Header */}
+      {/* PAGE HEADER */}
       <div>
         <h1 className="text-2xl font-bold mb-1">
           📜 GCC All-Time Records
         </h1>
 
         <p className="text-sm text-slate-500">
-          Top 5 all-time records for GCC players.
+          All-time records for GCC players.
         </p>
       </div>
 
-      {/* Top 5 Batting Records */}
+      {/* BEST OF ALL */}
       <div className="grid sm:grid-cols-2 gap-4">
 
-        <LeaderboardCard
+        <BestRecordCard
           title="Highest Score"
           icon="🏏"
-          list={records.highestScore}
-          valueKey="runs"
-          unit=" runs"
-          sortFn={(a, b) =>
-            Number(b.runs || 0) - Number(a.runs || 0)
+          entry={records.highestScore}
+          line={(entry) =>
+            `${entry.runs || 0} runs from ${
+              entry.balls || 0
+            } balls · ${
+              entry.fours || 0
+            }x4 · ${
+              entry.sixes || 0
+            }x6 · SR ${
+              entry.strike_rate || 0
+            }`
           }
         />
+
+        <BestRecordCard
+          title="Best Bowling Figures"
+          icon="🎯"
+          entry={records.bestBowling}
+          line={(entry) =>
+            `${entry.wickets || 0}/${
+              entry.runs || 0
+            } in ${
+              entry.overs || '0.0'
+            } overs · Econ ${
+              entry.economy || 0
+            }`
+          }
+        />
+
+      </div>
+
+      {/* TOP 5 BATTING */}
+      <div className="grid sm:grid-cols-2 gap-4">
 
         <LeaderboardCard
           title="Most Runs"
@@ -164,7 +226,8 @@ export default function Records() {
           valueKey="runs"
           unit=" runs"
           sortFn={(a, b) =>
-            Number(b.runs || 0) - Number(a.runs || 0)
+            Number(b.runs || 0) -
+            Number(a.runs || 0)
           }
         />
 
@@ -175,7 +238,8 @@ export default function Records() {
           valueKey="fours"
           unit=" fours"
           sortFn={(a, b) =>
-            Number(b.fours || 0) - Number(a.fours || 0)
+            Number(b.fours || 0) -
+            Number(a.fours || 0)
           }
         />
 
@@ -186,53 +250,10 @@ export default function Records() {
           valueKey="sixes"
           unit=" sixes"
           sortFn={(a, b) =>
-            Number(b.sixes || 0) - Number(a.sixes || 0)
+            Number(b.sixes || 0) -
+            Number(a.sixes || 0)
           }
         />
-
-      </div>
-
-      {/* Top 5 Bowling Records */}
-      <div className="grid sm:grid-cols-2 gap-4">
-
-        <LeaderboardCard
-          title="Best Bowling Figures"
-          icon="🎯"
-          list={records.bestBowling}
-          valueKey="wickets"
-          unit=" wickets"
-          sortFn={(a, b) => {
-            const wicketDifference =
-              Number(b.wickets || 0) -
-              Number(a.wickets || 0);
-
-            if (wicketDifference !== 0) {
-              return wicketDifference;
-            }
-
-            return (
-              Number(a.runs || 0) -
-              Number(b.runs || 0)
-            );
-          }}
-        />
-
-        <LeaderboardCard
-          title="Most Wickets"
-          icon="🏆"
-          list={records.mostWickets}
-          valueKey="wickets"
-          unit=" wickets"
-          sortFn={(a, b) =>
-            Number(b.wickets || 0) -
-            Number(a.wickets || 0)
-          }
-        />
-
-      </div>
-
-      {/* Top 5 Performance Records */}
-      <div className="grid sm:grid-cols-2 gap-4">
 
         <LeaderboardCard
           title="Best Strike Rate"
@@ -244,6 +265,23 @@ export default function Records() {
           sortFn={(a, b) =>
             Number(b.strike_rate || 0) -
             Number(a.strike_rate || 0)
+          }
+        />
+
+      </div>
+
+      {/* TOP 5 BOWLING */}
+      <div className="grid sm:grid-cols-2 gap-4">
+
+        <LeaderboardCard
+          title="Most Wickets"
+          icon="🏆"
+          list={records.mostWickets}
+          valueKey="wickets"
+          unit=" wickets"
+          sortFn={(a, b) =>
+            Number(b.wickets || 0) -
+            Number(a.wickets || 0)
           }
         />
 
