@@ -1287,7 +1287,6 @@ module.exports = {
 
 ### One more important change
 
-Your current `scoringController.js` still waits for the **entire scoreboard calculation** before sending Socket.IO:
 
 ```js
 await calc.recordBall(...);
