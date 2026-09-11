@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Matches } from '../api/api.js';
 import socket from '../socket.js';
 import { exportMatchPdf } from '../utils/exportPdf.js';
@@ -11,21 +11,12 @@ const statusBadge = {
   completed: 'bg-slate-600',
 };
 
-/* -------------------------------------------------------
-   LIVE MATCH HERO
-------------------------------------------------------- */
-
-function LiveHero({ matchId, onDelete }) {
+function LiveHero({ matchId, onDeleted }) {
   const [data, setData] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [downloading, setDownloading] = useState(false);
 
   const load = useCallback(() => {
-    Matches.get(matchId)
-      .then(setData)
-      .catch((err) => {
-        console.error('Failed to load live match:', err);
-      });
+    Matches.get(matchId).then(setData).catch(console.error);
   }, [matchId]);
 
   useEffect(() => {
@@ -36,15 +27,7 @@ function LiveHero({ matchId, onDelete }) {
     socket.emit('join-match', matchId);
 
     const onUpdate = ({ match, innings }) => {
-      setData((current) =>
-        current
-          ? {
-              ...current,
-              match,
-              innings,
-            }
-          : current
-      );
+      setData((d) => (d ? { ...d, match, innings } : d));
     };
 
     socket.on('score-update', onUpdate);
@@ -55,78 +38,10 @@ function LiveHero({ matchId, onDelete }) {
     };
   }, [matchId]);
 
-  const handleDelete = async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const confirmed = window.confirm(
-      'Delete this LIVE match permanently?\n\nThis will remove the match from the scoreboard.'
-    );
-
-    if (!confirmed) return;
-
-    setDeleting(true);
-
-    try {
-      await Matches.remove(matchId);
-      onDelete(matchId);
-    } catch (err) {
-      console.error('Failed to delete live match:', err);
-
-      alert(
-        err?.response?.data?.error ||
-          err?.message ||
-          'Failed to delete match'
-      );
-
-      setDeleting(false);
-    }
-  };
-
-  const handleDownload = async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    setDownloading(true);
-
-    try {
-      /*
-       * Fetch the latest complete match data.
-       * This is important because the Home page only has
-       * a small match object initially.
-       */
-      const latest = await Matches.get(matchId);
-
-      if (!latest) {
-        throw new Error('Match data not available');
-      }
-
-      setData(latest);
-
-      exportMatchPdf({
-        match: latest.match,
-        innings: latest.innings || [],
-        players: latest.players || [],
-      });
-    } catch (err) {
-      console.error('Failed to generate PDF:', err);
-
-      alert(
-        err?.response?.data?.error ||
-          err?.message ||
-          'Failed to generate PDF'
-      );
-    } finally {
-      setDownloading(false);
-    }
-  };
-
   if (!data) return null;
 
   const { match } = data;
-
-  const innings =
-    data.innings?.[data.innings.length - 1];
+  const innings = data.innings?.[data.innings.length - 1];
 
   if (!innings) return null;
 
@@ -140,25 +55,50 @@ function LiveHero({ matchId, onDelete }) {
       ? match.team1_short
       : match.team2_short;
 
+  const downloadPdf = () => {
+    try {
+      exportMatchPdf({
+        match: data.match,
+        innings: data.innings || [],
+        players: data.players || [],
+      });
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      alert('Unable to create PDF. Please try again.');
+    }
+  };
+
+  const deleteMatch = async () => {
+    const ok = window.confirm(
+      'Delete this match permanently? This removes its full scorecard and cannot be undone.'
+    );
+
+    if (!ok) return;
+
+    setDeleting(true);
+
+    try {
+      await Matches.remove(matchId);
+      onDeleted?.(matchId);
+    } catch (error) {
+      console.error('Delete match failed:', error);
+      alert('Unable to delete this match.');
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="card border-red-600/50 hover:border-red-500 fade-in mb-6 relative overflow-hidden">
-
-      {/* CLICKABLE SCORE AREA */}
-      <Link
-        to={`/match/${matchId}/live`}
-        className="block"
-      >
+      <Link to={`/match/${matchId}/live`} className="block">
         <div className="absolute top-3 right-3 flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-red-500 pulse-live" />
-
           <span className="text-xs font-bold text-red-400 tracking-wider">
             LIVE
           </span>
         </div>
 
-        <div className="text-sm text-slate-400 mb-1 pr-16">
-          {match.team1_short} vs {match.team2_short} ·{' '}
-          {match.overs_limit} overs
+        <div className="text-sm text-slate-400 mb-1">
+          {match.team1_short} vs {match.team2_short} · {match.overs_limit} overs
         </div>
 
         <div className="flex items-end gap-3 flex-wrap">
@@ -169,7 +109,6 @@ function LiveHero({ matchId, onDelete }) {
 
             <div className="text-4xl font-extrabold tracking-tight">
               {innings.innings.total_runs}
-
               <span className="text-slate-400">
                 /{innings.innings.total_wickets}
               </span>
@@ -180,10 +119,7 @@ function LiveHero({ matchId, onDelete }) {
             {innings.overs} overs · RR {innings.runRate}
 
             {innings.innings.target && (
-              <span>
-                {' '}
-                · Target {innings.innings.target}
-              </span>
+              <span> · Target {innings.innings.target}</span>
             )}
           </div>
         </div>
@@ -193,9 +129,7 @@ function LiveHero({ matchId, onDelete }) {
         </div>
       </Link>
 
-      {/* LIVE MATCH ACTIONS */}
-      <div className="mt-3 pt-3 border-t border-slate-700 flex justify-end gap-2 flex-wrap">
-
+      <div className="flex gap-2 mt-4 pt-3 border-t border-slate-700">
         <Link
           to={`/match/${matchId}/live`}
           className="btn btn-secondary text-sm"
@@ -205,172 +139,97 @@ function LiveHero({ matchId, onDelete }) {
 
         <button
           type="button"
-          onClick={handleDownload}
-          disabled={downloading}
-          className="btn btn-secondary text-sm disabled:opacity-50"
+          className="btn btn-secondary text-sm"
+          onClick={downloadPdf}
         >
-          {downloading
-            ? 'Generating PDF...'
-            : '⬇ PDF'}
+          ⬇ PDF
         </button>
 
         <button
           type="button"
-          onClick={handleDelete}
+          className="btn btn-danger text-sm"
           disabled={deleting}
-          className="btn btn-danger text-sm disabled:opacity-50"
+          onClick={deleteMatch}
         >
-          {deleting
-            ? 'Deleting…'
-            : '🗑 Delete'}
+          {deleting ? 'Deleting…' : '🗑 Delete'}
         </button>
-
       </div>
     </div>
   );
 }
 
-/* -------------------------------------------------------
-   HOME PAGE
-------------------------------------------------------- */
-
 export default function Home() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
-  const [deletingId, setDeletingId] = useState(null);
-  const [downloadingId, setDownloadingId] = useState(null);
+  const loadMatches = useCallback(() => {
+    setLoading(true);
 
-  useEffect(() => {
     Matches.list()
-      .then(setMatches)
-      .catch((err) => {
-        console.error('Failed to load matches:', err);
+      .then((data) => {
+        setMatches(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        console.error('Failed to load matches:', error);
+        setMatches([]);
       })
       .finally(() => {
         setLoading(false);
       });
   }, []);
 
-  /* -----------------------------------------------------
-     DELETE MATCH
-  ----------------------------------------------------- */
+  useEffect(() => {
+    loadMatches();
+  }, [loadMatches]);
 
   const deleteMatch = async (matchId) => {
-    const confirmed = window.confirm(
-      'Delete this match permanently?\n\nThis action cannot be undone.'
+    const ok = window.confirm(
+      'Delete this match permanently? This removes its full scorecard and cannot be undone.'
     );
 
-    if (!confirmed) return;
-
-    setDeletingId(matchId);
+    if (!ok) return;
 
     try {
       await Matches.remove(matchId);
 
       setMatches((current) =>
-        current.filter(
-          (match) => match.id !== matchId
-        )
+        current.filter((match) => match.id !== matchId)
       );
-    } catch (err) {
-      console.error('Failed to delete match:', err);
-
-      alert(
-        err?.response?.data?.error ||
-          err?.message ||
-          'Failed to delete match'
-      );
-    } finally {
-      setDeletingId(null);
+    } catch (error) {
+      console.error('Delete match failed:', error);
+      alert('Unable to delete this match.');
     }
   };
 
-  /* -----------------------------------------------------
-     DOWNLOAD PDF
-  ----------------------------------------------------- */
-
-  const downloadMatchPdf = async (match) => {
-    setDownloadingId(match.id);
-
+  const downloadPdf = async (matchId) => {
     try {
-      /*
-       * Get the complete match data.
-       * This gives exportMatchPdf the same data
-       * it receives on LiveScoreboard.jsx.
-       */
-      const detail = await Matches.get(match.id);
-
-      if (!detail) {
-        throw new Error('Match data not available');
-      }
+      // Get the complete match data.
+      // Matches.list() normally contains only match summary information.
+      const detail = await Matches.get(matchId);
 
       exportMatchPdf({
         match: detail.match,
         innings: detail.innings || [],
         players: detail.players || [],
       });
-    } catch (err) {
-      console.error('Failed to generate PDF:', err);
-
-      alert(
-        err?.response?.data?.error ||
-          err?.message ||
-          'Failed to generate PDF'
-      );
-    } finally {
-      setDownloadingId(null);
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      alert('Unable to create PDF. Please try again.');
     }
   };
 
-  /* -----------------------------------------------------
-     REMOVE LIVE MATCH AFTER DELETE
-  ----------------------------------------------------- */
-
-  const removeLiveMatchFromList = (matchId) => {
-    setMatches((current) =>
-      current.filter(
-        (match) => match.id !== matchId
-      )
-    );
-  };
-
-  /* -----------------------------------------------------
-     LOADING
-  ----------------------------------------------------- */
-
   if (loading) {
-    return (
-      <p className="text-slate-400">
-        Loading matches…
-      </p>
-    );
+    return <p className="text-slate-400">Loading matches…</p>;
   }
 
-  /* -----------------------------------------------------
-     FILTER MATCHES
-  ----------------------------------------------------- */
-
-  const liveMatches = matches.filter(
-    (m) => m.status === 'live'
-  );
-
-  const others = matches.filter(
-    (m) => m.status !== 'live'
-  );
-
-  /* -----------------------------------------------------
-     PAGE
-  ----------------------------------------------------- */
+  const liveMatches = matches.filter((m) => m.status === 'live');
+  const others = matches.filter((m) => m.status !== 'live');
 
   return (
     <div className="fade-in">
-
-      {/* HEADER */}
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">
-          Matches
-        </h1>
+        <h1 className="text-2xl font-bold">Matches</h1>
 
         <Link
           to="/create-match"
@@ -380,43 +239,37 @@ export default function Home() {
         </Link>
       </div>
 
-      {/* LIVE MATCHES */}
       {liveMatches.map((m) => (
         <LiveHero
           key={m.id}
           matchId={m.id}
-          onDelete={removeLiveMatchFromList}
+          onDeleted={(id) => {
+            setMatches((current) =>
+              current.filter((match) => match.id !== id)
+            );
+          }}
         />
       ))}
 
-      {/* NO MATCHES */}
       {matches.length === 0 && (
         <div className="card text-center text-slate-400">
           No matches yet. Create teams first, then start a new scoreboard.
         </div>
       )}
 
-      {/* OTHER MATCHES */}
       <div className="grid gap-3">
-
         {others.map((m) => (
           <div
             key={m.id}
             className="card flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
           >
-
-            {/* MATCH INFORMATION */}
             <div>
-
               <div className="flex items-center gap-2 flex-wrap">
-
                 <span className="font-semibold">
                   {m.team1_short}
                 </span>
 
-                <span className="text-slate-400">
-                  vs
-                </span>
+                <span className="text-slate-400">vs</span>
 
                 <span className="font-semibold">
                   {m.team2_short}
@@ -424,13 +277,11 @@ export default function Home() {
 
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full ${
-                    statusBadge[m.status] ||
-                    'bg-slate-600'
+                    statusBadge[m.status] || 'bg-slate-600'
                   }`}
                 >
                   {m.status}
                 </span>
-
               </div>
 
               <div className="text-sm text-slate-400">
@@ -442,13 +293,9 @@ export default function Home() {
                   {m.result_text}
                 </div>
               )}
-
             </div>
 
-            {/* ACTION BUTTONS */}
             <div className="flex gap-2 flex-wrap">
-
-              {/* START TOSS */}
               {m.status === 'upcoming' && (
                 <Link
                   to={`/match/${m.id}/setup`}
@@ -458,7 +305,6 @@ export default function Home() {
                 </Link>
               )}
 
-              {/* CONTINUE */}
               {m.status === 'innings-break' && (
                 <Link
                   to={`/match/${m.id}/score`}
@@ -468,7 +314,6 @@ export default function Home() {
                 </Link>
               )}
 
-              {/* VIEW */}
               <Link
                 to={`/match/${m.id}/live`}
                 className="btn btn-secondary text-sm"
@@ -476,42 +321,24 @@ export default function Home() {
                 View
               </Link>
 
-              {/* PDF */}
               <button
                 type="button"
-                onClick={() =>
-                  downloadMatchPdf(m)
-                }
-                disabled={
-                  downloadingId === m.id
-                }
-                className="btn btn-secondary text-sm disabled:opacity-50"
+                className="btn btn-secondary text-sm"
+                onClick={() => downloadPdf(m.id)}
               >
-                {downloadingId === m.id
-                  ? 'Generating...'
-                  : '⬇ PDF'}
+                ⬇ PDF
               </button>
 
-              {/* DELETE */}
               <button
                 type="button"
-                onClick={() =>
-                  deleteMatch(m.id)
-                }
-                disabled={
-                  deletingId === m.id
-                }
-                className="btn btn-danger text-sm disabled:opacity-50"
+                className="btn btn-danger text-sm"
+                onClick={() => deleteMatch(m.id)}
               >
-                {deletingId === m.id
-                  ? 'Deleting…'
-                  : '🗑 Delete'}
+                🗑 Delete
               </button>
-
             </div>
           </div>
         ))}
-
       </div>
     </div>
   );
