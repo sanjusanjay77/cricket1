@@ -1,26 +1,31 @@
+
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Matches } from '../api/api.js';
 
 export default function MatchSetup() {
   const { matchId } = useParams();
+  const navigate = useNavigate();
+
   const [detail, setDetail] = useState(null);
   const [tossWinner, setTossWinner] = useState('');
   const [decision, setDecision] = useState('bat');
-  const [overs, setOvers] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const navigate = useNavigate();
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    Matches.get(matchId).then((data) => {
-      setDetail(data);
+    let active = true;
 
-      // Use the existing overs value if already available
-      if (data?.match?.overs_limit) {
-        setOvers(String(data.match.overs_limit));
-      }
-    });
+    Matches.get(matchId)
+      .then(data => {
+        if (active) setDetail(data);
+      })
+      .catch(err => {
+        console.error('Failed to load match:', err);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [matchId]);
 
   if (!detail) {
@@ -30,43 +35,23 @@ export default function MatchSetup() {
   const { match } = detail;
 
   const confirmToss = async () => {
-    if (!tossWinner) {
-      return alert('Select the toss-winning team');
-    }
+    if (!tossWinner || starting) return;
 
-    const oversNumber = Number(overs);
-
-    if (!overs || !Number.isInteger(oversNumber) || oversNumber <= 0) {
-      return alert('Enter a valid number of overs');
-    }
-
-    if (oversNumber > 100) {
-      return alert('Overs cannot be more than 100');
-    }
-
-    setSaving(true);
+    setStarting(true);
 
     try {
-      /*
-       * Save the overs limit together with the toss.
-       * This requires the backend setToss endpoint to accept overs_limit.
-       */
+      // Save toss
       await Matches.setToss(matchId, {
         toss_winner_id: tossWinner,
-        toss_decision: decision,
-        overs_limit: oversNumber
+        toss_decision: decision
       });
 
-      navigate(`/match/${matchId}/score`);
+      // Immediately move to scorer after successful save
+      navigate(`/match/${matchId}/score`, { replace: true });
     } catch (error) {
-      console.error(error);
-      alert(
-        error?.response?.data?.error ||
-        error?.message ||
-        'Failed to start match'
-      );
-    } finally {
-      setSaving(false);
+      console.error('Toss error:', error);
+      alert('Could not save toss. Please try again.');
+      setStarting(false);
     }
   };
 
@@ -77,46 +62,22 @@ export default function MatchSetup() {
       </h1>
 
       <p className="text-slate-400 mb-4">
-        Set match details before starting
+        {match.overs_limit || 'unlimited'} overs
       </p>
 
       <div className="card space-y-4">
-        <h2 className="font-semibold">Match Settings</h2>
+        <h2 className="font-semibold">Toss</h2>
 
-        {/* OVERS INPUT */}
         <div>
-          <label className="text-sm text-slate-400">
-            Overs per innings
-          </label>
-
-          <input
-            className="input mt-1"
-            type="number"
-            min="1"
-            max="100"
-            step="1"
-            placeholder="Enter number of overs"
-            value={overs}
-            onChange={(e) => setOvers(e.target.value)}
-          />
-
-          <p className="text-xs text-slate-500 mt-1">
-            Example: 5, 10, 20 or 50 overs
-          </p>
-        </div>
-
-        {/* TOSS */}
-        <div>
-          <h2 className="font-semibold mb-2">Toss</h2>
-
           <label className="text-sm text-slate-400">
             Won the toss
           </label>
 
           <select
-            className="input mt-1"
+            className="input"
             value={tossWinner}
-            onChange={(e) => setTossWinner(e.target.value)}
+            onChange={e => setTossWinner(e.target.value)}
+            disabled={starting}
           >
             <option value="">Select team</option>
 
@@ -130,7 +91,6 @@ export default function MatchSetup() {
           </select>
         </div>
 
-        {/* BAT / BOWL */}
         <div>
           <label className="text-sm text-slate-400">
             Elected to
@@ -145,6 +105,7 @@ export default function MatchSetup() {
                   : 'btn-secondary'
               }`}
               onClick={() => setDecision('bat')}
+              disabled={starting}
             >
               Bat
             </button>
@@ -157,21 +118,23 @@ export default function MatchSetup() {
                   : 'btn-secondary'
               }`}
               onClick={() => setDecision('bowl')}
+              disabled={starting}
             >
               Bowl
             </button>
           </div>
         </div>
 
-        {/* START */}
         <button
+          type="button"
           onClick={confirmToss}
-          disabled={saving}
+          disabled={!tossWinner || starting}
           className="btn btn-primary w-full"
         >
-          {saving ? 'Starting Match…' : 'Start Match'}
+          {starting ? 'Starting…' : 'Start Match'}
         </button>
       </div>
     </div>
   );
 }
+
