@@ -1,34 +1,6 @@
-
 import { useEffect, useState } from 'react';
 import { Records as RecordsApi } from '../api/api.js';
 
-// ----------------------------------------------------
-// GCC FILTER
-// ----------------------------------------------------
-function isGCCPlayer(entry) {
-  if (!entry) return false;
-
-  const team =
-    entry.team_short ||
-    entry.team_name ||
-    entry.team ||
-    '';
-
-  return String(team).trim().toUpperCase() === 'GCC';
-}
-
-// ----------------------------------------------------
-// GCC ONLY LIST
-// ----------------------------------------------------
-function gccOnly(list) {
-  if (!Array.isArray(list)) return [];
-
-  return list.filter(isGCCPlayer);
-}
-
-// ----------------------------------------------------
-// LEADERBOARD CARD
-// ----------------------------------------------------
 function LeaderboardCard({
   title,
   icon,
@@ -37,9 +9,9 @@ function LeaderboardCard({
   unit = '',
   minLabel
 }) {
-  const gccList = gccOnly(list);
-
-  if (gccList.length === 0) return null;
+  if (!Array.isArray(list) || list.length === 0) {
+    return null;
+  }
 
   return (
     <div className="card">
@@ -54,27 +26,23 @@ function LeaderboardCard({
       )}
 
       <div className="space-y-1.5">
-        {gccList.map((entry, idx) => (
+        {list.map((entry, index) => (
           <div
-            key={entry.player_id}
+            key={`${entry.player_id}-${index}`}
             className="flex items-center justify-between text-sm py-1 border-b border-slate-700/40 last:border-0"
           >
             <div className="flex items-center gap-2">
               <span className="w-5 text-slate-500 font-bold">
-                {idx + 1}
+                {index + 1}
               </span>
 
               <span className="font-medium">
-                {entry.player_name || 'Unknown'}
-              </span>
-
-              <span className="text-xs text-emerald-400">
-                (GCC)
+                {entry.player_name || entry.name || 'Unknown Player'}
               </span>
             </div>
 
             <span className="font-bold text-emerald-400">
-              {entry[valueKey]}
+              {entry[valueKey] ?? 0}
               {unit}
             </span>
           </div>
@@ -84,16 +52,8 @@ function LeaderboardCard({
   );
 }
 
-// ----------------------------------------------------
-// BEST SINGLE PERFORMANCE
-// ----------------------------------------------------
-function BestSingle({
-  title,
-  icon,
-  entry,
-  line
-}) {
-  if (!entry || !isGCCPlayer(entry)) {
+function BestSingle({ title, icon, entry, line }) {
+  if (!entry) {
     return null;
   }
 
@@ -104,163 +64,74 @@ function BestSingle({
       </h3>
 
       <div className="text-2xl font-extrabold">
-        {entry.player_name || 'Unknown'}
+        {entry.player_name || entry.name || 'Unknown Player'}
       </div>
 
       <div className="text-slate-400 text-sm">
         {line(entry)}
       </div>
-
-      <div className="text-xs text-emerald-400 mt-1">
-        GCC
-      </div>
-
-      {entry.match_label && (
-        <div className="text-xs text-slate-500 mt-1">
-          {entry.match_label}
-        </div>
-      )}
     </div>
   );
 }
 
-// ----------------------------------------------------
-// MAIN RECORDS PAGE
-// ----------------------------------------------------
 export default function Records() {
   const [records, setRecords] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     RecordsApi
       .get()
-      .then(data => {
+      .then((data) => {
         console.log('ALL TIME RECORDS:', data);
-
-        const filteredRecords = {
-          ...data,
-
-          // -------------------------------
-          // GCC BEST SINGLE RECORDS
-          // -------------------------------
-          highestScore:
-            isGCCPlayer(data?.highestScore)
-              ? data.highestScore
-              : null,
-
-          bestBowling:
-            isGCCPlayer(data?.bestBowling)
-              ? data.bestBowling
-              : null,
-
-          // -------------------------------
-          // GCC LEADERBOARDS
-          // -------------------------------
-          mostRuns:
-            gccOnly(data?.mostRuns),
-
-          mostWickets:
-            gccOnly(data?.mostWickets),
-
-          mostFours:
-            gccOnly(data?.mostFours),
-
-          mostSixes:
-            gccOnly(data?.mostSixes),
-
-          bestStrikeRate:
-            gccOnly(data?.bestStrikeRate),
-
-          bestEconomy:
-            gccOnly(data?.bestEconomy),
-
-          mostBallsFaced:
-            gccOnly(data?.mostBallsFaced),
-
-          mostBallsBowled:
-            gccOnly(data?.mostBallsBowled)
-        };
-
-        setRecords(filteredRecords);
+        setRecords(data);
       })
-      .catch(error => {
-        console.error(
-          'Failed to load records:',
-          error
-        );
-
-        setRecords({
-          highestScore: null,
-          bestBowling: null,
-          mostRuns: [],
-          mostWickets: [],
-          mostFours: [],
-          mostSixes: [],
-          bestStrikeRate: [],
-          bestEconomy: [],
-          mostBallsFaced: [],
-          mostBallsBowled: []
-        });
+      .catch((err) => {
+        console.error('Failed to load records:', err);
+        setError('Failed to load records.');
       })
       .finally(() => {
         setLoading(false);
       });
   }, []);
 
-  // ------------------------------------------------
-  // LOADING
-  // ------------------------------------------------
   if (loading) {
     return (
       <p className="text-slate-400">
-        Loading GCC records…
+        Loading records…
       </p>
     );
   }
 
-  // ------------------------------------------------
-  // ERROR / EMPTY RESPONSE
-  // ------------------------------------------------
-  if (!records) {
+  if (error) {
     return (
-      <div className="card text-center text-slate-400">
-        Unable to load records.
+      <div className="card text-red-400">
+        {error}
       </div>
     );
   }
 
-  const hasAnyRecords =
-    records.highestScore ||
-    records.bestBowling ||
-    records.mostRuns?.length ||
-    records.mostWickets?.length ||
-    records.mostFours?.length ||
-    records.mostSixes?.length ||
-    records.bestStrikeRate?.length ||
-    records.bestEconomy?.length ||
-    records.mostBallsFaced?.length ||
-    records.mostBallsBowled?.length;
+  if (!records) {
+    return (
+      <div className="card text-center text-slate-400">
+        No records available.
+      </div>
+    );
+  }
 
-  // ------------------------------------------------
-  // PAGE
-  // ------------------------------------------------
   return (
     <div className="fade-in space-y-4">
 
-      {/* HEADER */}
       <div>
         <h1 className="text-2xl font-bold mb-1">
           📜 GCC All-Time Records
         </h1>
 
         <p className="text-sm text-slate-500">
-          All-time records for GCC players only.
+          All-time records for GCC players.
         </p>
       </div>
 
-      {/* ------------------------------------------
-          BEST BATTING + BEST BOWLING
-      ------------------------------------------ */}
       <div className="grid sm:grid-cols-2 gap-4">
 
         <BestSingle
@@ -268,7 +139,11 @@ export default function Records() {
           icon="🏏"
           entry={records.highestScore}
           line={(e) =>
-            `${e.runs} runs from ${e.balls} balls · ${e.fours}x4 · ${e.sixes}x6 · SR ${e.strike_rate}`
+            `${e.runs || 0} runs from ${e.balls || 0} balls · ${
+              e.fours || 0
+            }x4 · ${e.sixes || 0}x6 · SR ${
+              e.strike_rate || 0
+            }`
           }
         />
 
@@ -277,15 +152,14 @@ export default function Records() {
           icon="🎯"
           entry={records.bestBowling}
           line={(e) =>
-            `${e.wickets}/${e.runs} in ${e.overs} overs · Econ ${e.economy}`
+            `${e.wickets || 0}/${e.runs || 0} in ${
+              e.overs || '0.0'
+            } overs · Econ ${e.economy || 0}`
           }
         />
 
       </div>
 
-      {/* ------------------------------------------
-          LEADERBOARDS
-      ------------------------------------------ */}
       <div className="grid sm:grid-cols-2 gap-4">
 
         <LeaderboardCard
@@ -332,30 +206,7 @@ export default function Records() {
           minLabel="Minimum 2 overs bowled"
         />
 
-        <LeaderboardCard
-          title="Most Balls Faced"
-          icon="⏱️"
-          list={records.mostBallsFaced}
-          valueKey="balls_faced"
-        />
-
-        <LeaderboardCard
-          title="Most Balls Bowled"
-          icon="⏱️"
-          list={records.mostBallsBowled}
-          valueKey="balls_bowled"
-        />
-
       </div>
-
-      {/* ------------------------------------------
-          EMPTY STATE
-      ------------------------------------------ */}
-      {!hasAnyRecords && (
-        <div className="card text-center text-slate-400">
-          No GCC records yet — records will populate as GCC matches are played.
-        </div>
-      )}
 
     </div>
   );
