@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from 'react';
 import { Records as RecordsApi } from '../api/api.js';
 
@@ -17,7 +18,7 @@ function isGCCPlayer(entry) {
 }
 
 // ----------------------------------------------------
-// FILTER LIST TO GCC ONLY
+// GCC ONLY LIST
 // ----------------------------------------------------
 function gccOnly(list) {
   if (!Array.isArray(list)) return [];
@@ -92,7 +93,6 @@ function BestSingle({
   entry,
   line
 }) {
-  // Only show GCC player's performance
   if (!entry || !isGCCPlayer(entry)) {
     return null;
   }
@@ -137,13 +137,12 @@ export default function Records() {
       .then(data => {
         console.log('ALL TIME RECORDS:', data);
 
-        // --------------------------------------------
-        // FORCE GCC FILTER ON EVERYTHING
-        // --------------------------------------------
-
         const filteredRecords = {
           ...data,
 
+          // -------------------------------
+          // GCC BEST SINGLE RECORDS
+          // -------------------------------
           highestScore:
             isGCCPlayer(data?.highestScore)
               ? data.highestScore
@@ -154,6 +153,9 @@ export default function Records() {
               ? data.bestBowling
               : null,
 
+          // -------------------------------
+          // GCC LEADERBOARDS
+          // -------------------------------
           mostRuns:
             gccOnly(data?.mostRuns),
 
@@ -205,6 +207,9 @@ export default function Records() {
       });
   }, []);
 
+  // ------------------------------------------------
+  // LOADING
+  // ------------------------------------------------
   if (loading) {
     return (
       <p className="text-slate-400">
@@ -213,6 +218,9 @@ export default function Records() {
     );
   }
 
+  // ------------------------------------------------
+  // ERROR / EMPTY RESPONSE
+  // ------------------------------------------------
   if (!records) {
     return (
       <div className="card text-center text-slate-400">
@@ -233,6 +241,9 @@ export default function Records() {
     records.mostBallsFaced?.length ||
     records.mostBallsBowled?.length;
 
+  // ------------------------------------------------
+  // PAGE
+  // ------------------------------------------------
   return (
     <div className="fade-in space-y-4">
 
@@ -247,15 +258,17 @@ export default function Records() {
         </p>
       </div>
 
-      {/* BEST INDIVIDUAL RECORDS */}
+      {/* ------------------------------------------
+          BEST BATTING + BEST BOWLING
+      ------------------------------------------ */}
       <div className="grid sm:grid-cols-2 gap-4">
 
         <BestSingle
-          title="Highest Individual Score"
+          title="Best Batting Figures"
           icon="🏏"
           entry={records.highestScore}
           line={(e) =>
-            `${e.runs} (${e.balls} balls, ${e.fours}x4, ${e.sixes}x6) · SR ${e.strike_rate}`
+            `${e.runs} runs from ${e.balls} balls · ${e.fours}x4 · ${e.sixes}x6 · SR ${e.strike_rate}`
           }
         />
 
@@ -270,7 +283,9 @@ export default function Records() {
 
       </div>
 
-      {/* LEADERBOARDS */}
+      {/* ------------------------------------------
+          LEADERBOARDS
+      ------------------------------------------ */}
       <div className="grid sm:grid-cols-2 gap-4">
 
         <LeaderboardCard
@@ -333,7 +348,9 @@ export default function Records() {
 
       </div>
 
-      {/* EMPTY STATE */}
+      {/* ------------------------------------------
+          EMPTY STATE
+      ------------------------------------------ */}
       {!hasAnyRecords && (
         <div className="card text-center text-slate-400">
           No GCC records yet — records will populate as GCC matches are played.
