@@ -4,6 +4,7 @@ import { Matches } from '../api/api.js';
 
 export default function MatchSetup() {
   const { matchId } = useParams();
+
   const [detail, setDetail] = useState(null);
   const [tossWinner, setTossWinner] = useState('');
   const [decision, setDecision] = useState('bat');
@@ -12,18 +13,27 @@ export default function MatchSetup() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    Matches.get(matchId).then(setDetail);
+    Matches.get(matchId)
+      .then(setDetail)
+      .catch((error) => {
+        console.error('Failed to load match:', error);
+      });
   }, [matchId]);
 
   if (!detail) {
-    return <p className="text-slate-400">Loading…</p>;
+    return (
+      <p className="text-slate-400">
+        Loading…
+      </p>
+    );
   }
 
   const { match } = detail;
 
   const confirmToss = async () => {
     if (!tossWinner) {
-      return alert('Select the toss-winning team');
+      alert('Select the toss-winning team');
+      return;
     }
 
     setSaving(true);
@@ -50,16 +60,14 @@ export default function MatchSetup() {
 
   return (
     <div className="max-w-md mx-auto fade-in">
-      <h1 className="text-2xl font-bold mb-1">
+      {/* MATCH TITLE */}
+      <h1 className="text-2xl font-bold mb-4">
         {match.team1_name} vs {match.team2_name}
       </h1>
 
-      <p className="text-slate-400 mb-4">
-        Toss
-      </p>
-
+      {/* TOSS CARD */}
       <div className="card space-y-4">
-        <h2 className="font-semibold">
+        <h2 className="font-semibold text-lg">
           Toss
         </h2>
 
@@ -88,7 +96,7 @@ export default function MatchSetup() {
           </select>
         </div>
 
-        {/* DECISION */}
+        {/* BAT / BOWL */}
         <div>
           <label className="text-sm text-slate-400">
             Elected to
@@ -123,6 +131,7 @@ export default function MatchSetup() {
 
         {/* START MATCH */}
         <button
+          type="button"
           onClick={confirmToss}
           disabled={saving}
           className="btn btn-primary w-full"
