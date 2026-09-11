@@ -22,7 +22,7 @@ export default function App() {
           <Route path="/players" element={<PlayerRecords />} />
           <Route path="/create-match" element={<ScoreboardGate><CreateMatch /></ScoreboardGate>} />
           <Route path="/match/:matchId/setup" element={<MatchSetup />} />
-          <Route path="/match/:matchId/score" element={<Scorer />} />
+         <Route path="/match/:matchId/score" element={<ScoreboardGate> <Scorer /></ScoreboardGate>}/>
           <Route path="/match/:matchId/live" element={<LiveScoreboard />} />
         </Routes>
       </main>
