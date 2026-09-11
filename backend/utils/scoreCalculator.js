@@ -1153,12 +1153,19 @@ ALL TIME RECORDS
 */
 
 async function getAllTimeRecords() {
-  // Get players directly from players table.
-  // NO team_players table is required.
+  // Get GCC players only
   const players = await db
     .prepare(`
-      SELECT id, name, role
-      FROM players
+      SELECT
+        p.id,
+        p.name,
+        p.role,
+        t.name AS team_name,
+        t.short_name AS team_short
+      FROM players p
+      INNER JOIN teams t
+        ON t.id = p.team_id
+      WHERE UPPER(TRIM(t.name)) = 'GCC'
     `)
     .all();
 
@@ -1167,6 +1174,24 @@ async function getAllTimeRecords() {
       player.id,
       player.name
     ])
+  );
+
+  // No GCC players
+  if (players.length === 0) {
+    return {
+      highestScore: null,
+      bestBowling: null,
+      mostRuns: [],
+      mostWickets: [],
+      mostFours: [],
+      mostSixes: [],
+      bestStrikeRate: [],
+      bestEconomy: []
+    };
+  }
+
+  const gccPlayerIds = new Set(
+    players.map(player => String(player.id))
   );
 
   const inningsRows = await db
@@ -1183,6 +1208,7 @@ async function getAllTimeRecords() {
   const battingMap = {};
   const bowlingMap = {};
 
+  // Only GCC players are considered
   for (const innings of inningsRows) {
     const scoreboard =
       await getScoreboard(innings.id);
@@ -1193,6 +1219,10 @@ async function getAllTimeRecords() {
       const playerId = batting.player_id;
 
       if (!playerId) continue;
+
+      if (!gccPlayerIds.has(String(playerId))) {
+        continue;
+      }
 
       if (
         !highestScore ||
@@ -1220,6 +1250,10 @@ async function getAllTimeRecords() {
       const playerId = bowling.player_id;
 
       if (!playerId) continue;
+
+      if (!gccPlayerIds.has(String(playerId))) {
+        continue;
+      }
 
       const wickets =
         Number(bowling.wickets || 0);
@@ -1255,6 +1289,7 @@ async function getAllTimeRecords() {
     }
   }
 
+  // Career batting stats — GCC only
   for (const player of players) {
     const stats =
       await computeCareerBattingStats(
@@ -1264,10 +1299,13 @@ async function getAllTimeRecords() {
     battingMap[player.id] = {
       player_id: player.id,
       player_name: player.name,
+      team_name: player.team_name,
+      team_short: player.team_short,
       ...stats
     };
   }
 
+  // Career bowling stats — GCC only
   for (const player of players) {
     const stats =
       await computeCareerBowlingStats(
@@ -1277,6 +1315,8 @@ async function getAllTimeRecords() {
     bowlingMap[player.id] = {
       player_id: player.id,
       player_name: player.name,
+      team_name: player.team_name,
+      team_short: player.team_short,
       ...stats
     };
   }
@@ -1307,6 +1347,11 @@ async function getAllTimeRecords() {
       'runs'
     ),
 
+    mostWickets: topBy(
+      bowlingLeaders,
+      'wickets'
+    ),
+
     mostFours: topBy(
       battingLeaders,
       'fours'
@@ -1323,11 +1368,6 @@ async function getAllTimeRecords() {
           Number(player.balls_faced || 0) >= 10
       ),
       'strike_rate'
-    ),
-
-    mostWickets: topBy(
-      bowlingLeaders,
-      'wickets'
     ),
 
     bestEconomy: [...bowlingLeaders]
