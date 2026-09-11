@@ -1,50 +1,107 @@
+const scoreCalculator = require('../utils/scoreCalculator');
 const db = require('../db/database');
-const calc = require('../utils/scoreCalculator');
-
-async function playerMap() {
-  const rows = await db.prepare(`
-    SELECT p.id, p.name, t.name AS team_name, t.short_name AS team_short
-    FROM players p JOIN teams t ON t.id = p.team_id
-  `).all();
-  const map = {};
-  rows.forEach(r => { map[r.id] = r; });
-  return map;
-}
-
-async function matchMap() {
-  const rows = await db.prepare(`
-    SELECT m.id, t1.short_name AS team1_short, t2.short_name AS team2_short
-    FROM matches m JOIN teams t1 ON t1.id = m.team1_id JOIN teams t2 ON t2.id = m.team2_id
-  `).all();
-  const map = {};
-  rows.forEach(r => { map[r.id] = r; });
-  return map;
-}
-
-function attach(entry, players, matches) {
-  if (!entry) return null;
-  const p = players[entry.player_id] || {};
-  const m = matches[entry.match_id] || {};
-  return { ...entry, player_name: p.name, team_short: p.team_short, match_label: m.team1_short && m.team2_short ? `${m.team1_short} vs ${m.team2_short}` : undefined };
-}
 
 exports.getRecords = async (req, res) => {
-  const players = await playerMap();
-  const matches = await matchMap();
-  const r = await calc.getAllTimeRecords();
+  try {
+    const records =
+      await scoreCalculator.getAllTimeRecords();
 
-  const attachList = (list) => list.map(e => attach(e, players, matches));
+    const players = await db
+      .prepare(`
+        SELECT id, name
+        FROM players
+      `)
+      .all();
 
-  res.json({
-    highestScore: attach(r.highestScore, players, matches),
-    bestBowling: attach(r.bestBowling, players, matches),
-    mostRuns: attachList(r.mostRuns),
-    mostFours: attachList(r.mostFours),
-    mostSixes: attachList(r.mostSixes),
-    mostBallsFaced: attachList(r.mostBallsFaced),
-    bestStrikeRate: attachList(r.bestStrikeRate),
-    mostWickets: attachList(r.mostWickets),
-    mostBallsBowled: attachList(r.mostBallsBowled),
-    bestEconomy: attachList(r.bestEconomy),
-  });
+    const matches = await db
+      .prepare(`
+        SELECT id, match_date, created_at
+        FROM matches
+      `)
+      .all();
+
+    const attach = (entry) => {
+      if (!entry) return entry;
+
+      const player = players.find(
+        p => String(p.id) === String(entry.player_id)
+      );
+
+      const match = matches.find(
+        m => String(m.id) === String(entry.match_id)
+      );
+
+      return {
+        ...entry,
+
+        player_name:
+          entry.player_name ||
+          player?.name ||
+          'Unknown Player',
+
+        match_date:
+          entry.match_date ||
+          match?.match_date ||
+          match?.created_at ||
+          null
+      };
+    };
+
+    const attachList = (list) => {
+      if (!Array.isArray(list)) {
+        return [];
+      }
+
+      return list.map(attach);
+    };
+
+    const response = {
+      highestScore: attach(
+        records.highestScore
+      ),
+
+      bestBowling: attach(
+        records.bestBowling
+      ),
+
+      mostRuns: attachList(
+        records.mostRuns
+      ),
+
+      mostWickets: attachList(
+        records.mostWickets
+      ),
+
+      mostFours: attachList(
+        records.mostFours
+      ),
+
+      mostSixes: attachList(
+        records.mostSixes
+      ),
+
+      bestStrikeRate: attachList(
+        records.bestStrikeRate
+      ),
+
+      bestEconomy: attachList(
+        records.bestEconomy
+      )
+    };
+
+    console.log('ALL TIME RECORDS LOADED');
+
+    res.json(response);
+
+  } catch (error) {
+    console.error(
+      'Failed to load all-time records:',
+      error
+    );
+
+    res.status(500).json({
+      error: 'Failed to load records',
+      message: error.message
+    });
+  }
 };
