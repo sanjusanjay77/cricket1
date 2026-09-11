@@ -63,6 +63,7 @@ export default function Scorer() {
       }
 
       const serverInnings = d?.innings || [];
+
       const serverCurrent =
         serverInnings[
           serverInnings.length - 1
@@ -97,6 +98,7 @@ export default function Scorer() {
       }
 
       const serverInnings = i || [];
+
       const serverCurrent =
         serverInnings[
           serverInnings.length - 1
@@ -112,11 +114,14 @@ export default function Scorer() {
       setInnings(serverInnings);
 
       if (overFinished) {
-        const previous = optimisticRef.current || {};
+        const previous =
+          optimisticRef.current || {};
 
         const nextState = {
           ...previous,
-          needsNextBowler: true
+          needsNextBowler: true,
+          activeBowlerId:
+            previous.activeBowlerId ?? null
         };
 
         optimisticRef.current = nextState;
@@ -251,8 +256,8 @@ export default function Scorer() {
       case 'legbye':
         extraRuns =
           Math.max(
-            1,
-            inputExtraRuns || 1
+            0,
+            inputExtraRuns
           );
 
         teamRuns = extraRuns;
@@ -956,10 +961,6 @@ export default function Scorer() {
             pendingCountRef.current
           );
 
-          /*
-           * CRITICAL:
-           * Keep next-bowler state after 6th ball.
-           */
           if (
             result?.overJustCompleted ||
             (
@@ -1058,9 +1059,11 @@ export default function Scorer() {
 
           if (overFinished) {
             setMatch(d.match);
+
             setPlayers(
               d.players || []
             );
+
             setInnings(
               serverInnings
             );
@@ -1127,23 +1130,22 @@ export default function Scorer() {
       current.current_bowler_id;
 
     /*
-     * STOP scoring until next bowler is selected.
+     * Do not allow another ball while
+     * waiting for the next bowler.
      */
     if (
-      optimisticRef.current?.needsNextBowler
+      optimisticRef.current?.needsNextBowler === true
     ) {
       return;
     }
 
     /*
-     * Also stop if backend has completed an over
-     * and no bowler has been selected.
+     * If there is no bowler for any reason,
+     * immediately open the next-bowler state.
+     *
+     * This is the important fix.
      */
-    if (
-      !effectiveBowlerId &&
-      Number(current.total_balls || 0) > 0 &&
-      Number(current.total_balls || 0) % 6 === 0
-    ) {
+    if (!effectiveBowlerId) {
       const nextState = {
         ...(optimisticRef.current || {}),
 
@@ -1159,13 +1161,16 @@ export default function Scorer() {
         nextState
       );
 
+      setError(
+        'Please select a bowler before scoring.'
+      );
+
       return;
     }
 
     if (
       !effectiveStrikerId ||
-      !effectiveNonStrikerId ||
-      !effectiveBowlerId
+      !effectiveNonStrikerId
     ) {
       return;
     }
@@ -1560,16 +1565,25 @@ export default function Scorer() {
     );
 
   /*
-   * IMPORTANT FIX:
+   * IMPORTANT:
    *
-   * Backend sets current_bowler_id = null
-   * after the 6th legal ball.
+   * When there is no current bowler,
+   * the scorer must show the next-bowler selector.
+   *
+   * pendingCount === 0 prevents the selector
+   * from appearing while a ball is still saving.
    */
   const serverNeedsNextBowler =
     !inn.current_bowler_id &&
-    Number(inn.total_balls || 0) > 0 &&
-    Number(inn.total_balls || 0) % 6 === 0;
+    pendingCount === 0;
 
+  /*
+   * Optimistic state gets priority.
+   *
+   * This prevents a slow/stale server response
+   * from reopening the selector immediately
+   * after the user has already selected a bowler.
+   */
   const needsNextBowler =
     optimistic?.needsNextBowler === true ||
     serverNeedsNextBowler;
@@ -1886,6 +1900,13 @@ export default function Scorer() {
             try {
               setError('');
 
+              if (!nextBowlerId) {
+                setError(
+                  'Please select a bowler.'
+                );
+                return;
+              }
+
               await Innings.setBowler(
                 inn.id,
                 {
@@ -1924,6 +1945,13 @@ export default function Scorer() {
                 }
               };
 
+              /*
+               * Set local state immediately.
+               *
+               * This makes the UI switch to the
+               * new bowler without waiting for
+               * another network request.
+               */
               optimisticRef.current =
                 nextState;
 
@@ -1932,8 +1960,7 @@ export default function Scorer() {
               );
 
               /*
-               * Do not allow the old server
-               * state to reopen the selector.
+               * Refresh server data.
                */
               const d =
                 await Matches.get(
@@ -1941,13 +1968,22 @@ export default function Scorer() {
                 );
 
               setMatch(d.match);
+
               setPlayers(
                 d.players || []
               );
+
               setInnings(
                 d.innings || []
               );
 
+              /*
+               * VERY IMPORTANT:
+               *
+               * Restore our selected bowler after
+               * the refresh so a slow/stale server
+               * response cannot reopen the selector.
+               */
               optimisticRef.current =
                 nextState;
 
@@ -1956,6 +1992,11 @@ export default function Scorer() {
               );
 
             } catch (e) {
+              console.error(
+                'Unable to select bowler:',
+                e
+              );
+
               setError(
                 e?.response?.data?.error ||
                 e?.message ||
