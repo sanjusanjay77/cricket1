@@ -1,4 +1,279 @@
 import { useEffect, useState } from 'react';
+import { Players } from '../api/api.js';
+
+export default function PlayerRecords() {
+  const [players, setPlayers] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    Players.listAll()
+      .then(setPlayers)
+      .catch((err) => {
+        console.error('Failed to load players:', err);
+      });
+  }, []);
+
+  const openPlayer = async (player) => {
+    setSelected(player);
+    setStats(null);
+    setLoadingStats(true);
+
+    try {
+      const data = await Players.stats(player.id);
+      setStats(data);
+    } catch (err) {
+      console.error('Failed to load player stats:', err);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  const filtered = players.filter((player) =>
+    String(player.name || '')
+      .toLowerCase()
+      .includes(search.toLowerCase())
+  );
+
+  const grouped = filtered.reduce((acc, player) => {
+    const teamName = player.team_name || 'Team';
+    (acc[teamName] ||= []).push(player);
+    return acc;
+  }, {});
+
+  return (
+    <div className="grid md:grid-cols-2 gap-6 fade-in">
+
+      {/* PLAYERS */}
+      <div>
+        <h1 className="text-2xl font-bold mb-1">
+          Player Stats
+        </h1>
+
+        <p className="text-sm text-slate-500 mb-4">
+          View batting and bowling career records.
+        </p>
+
+        <input
+          className="input mb-4"
+          placeholder="Search player..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+
+        {Object.keys(grouped).length === 0 && (
+          <div className="card text-slate-400">
+            No players found.
+          </div>
+        )}
+
+        {Object.entries(grouped).map(([teamName, teamPlayers]) => (
+          <div key={teamName} className="mb-4">
+
+            <h2 className="text-sm font-semibold text-slate-400 mb-2">
+              {teamName}
+            </h2>
+
+            <div className="space-y-1">
+              {teamPlayers.map((player) => (
+                <div
+                  key={player.id}
+                  onClick={() => openPlayer(player)}
+                  className={`card flex items-center justify-between py-2 cursor-pointer hover:border-emerald-500 ${
+                    selected?.id === player.id
+                      ? 'border-emerald-500'
+                      : ''
+                  }`}
+                >
+                  <span className="font-medium">
+                    {player.name}
+                  </span>
+
+                  <span className="text-xs text-slate-400">
+                    {player.role || 'Player'}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+          </div>
+        ))}
+      </div>
+
+      {/* CAREER RECORD */}
+      <div>
+        <h1 className="text-2xl font-bold mb-4">
+          Career Record
+        </h1>
+
+        {!selected && (
+          <div className="card text-slate-400">
+            Select a player to see their batting and bowling record.
+          </div>
+        )}
+
+        {selected && loadingStats && (
+          <div className="card text-slate-400">
+            Loading stats...
+          </div>
+        )}
+
+        {selected && !loadingStats && stats && (
+          <div className="space-y-4">
+
+            {/* PLAYER INFO */}
+            <div className="card">
+              <h2 className="text-xl font-bold">
+                {stats.player?.name || selected.name}
+              </h2>
+
+              <p className="text-sm text-slate-400">
+                {stats.player?.team_name ||
+                  selected.team_name ||
+                  'Team'}
+                {' · '}
+                {stats.player?.role ||
+                  selected.role ||
+                  'Player'}
+              </p>
+            </div>
+
+            {/* BATTING */}
+            <div className="card">
+              <h3 className="font-semibold mb-3 text-emerald-400">
+                🏏 Batting
+              </h3>
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+
+                <Stat
+                  label="Innings"
+                  value={stats.batting?.innings_batted}
+                />
+
+                <Stat
+                  label="Runs"
+                  value={stats.batting?.runs}
+                />
+
+                <Stat
+                  label="Balls"
+                  value={stats.batting?.balls_faced}
+                />
+
+                <Stat
+                  label="Fours"
+                  value={stats.batting?.fours}
+                />
+
+                <Stat
+                  label="Sixes"
+                  value={stats.batting?.sixes}
+                />
+
+                <Stat
+                  label="Strike Rate"
+                  value={stats.batting?.strike_rate}
+                />
+
+                <Stat
+                  label="Average"
+                  value={stats.batting?.average}
+                />
+
+                <Stat
+                  label="Times Out"
+                  value={stats.batting?.times_out}
+                />
+
+                <Stat
+                  label="Not Outs"
+                  value={stats.batting?.not_outs}
+                />
+
+              </div>
+            </div>
+
+            {/* BOWLING */}
+            <div className="card">
+              <h3 className="font-semibold mb-3 text-orange-400">
+                🎯 Bowling
+              </h3>
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+
+                <Stat
+                  label="Innings"
+                  value={stats.bowling?.innings_bowled}
+                />
+
+                <Stat
+                  label="Overs"
+                  value={stats.bowling?.overs}
+                />
+
+                <Stat
+                  label="Balls"
+                  value={stats.bowling?.balls_bowled}
+                />
+
+                <Stat
+                  label="Runs Given"
+                  value={stats.bowling?.runs_given}
+                />
+
+                <Stat
+                  label="Wickets"
+                  value={stats.bowling?.wickets}
+                />
+
+                <Stat
+                  label="Economy"
+                  value={stats.bowling?.economy}
+                />
+
+                <Stat
+                  label="Fours Given"
+                  value={stats.bowling?.fours_given}
+                />
+
+                <Stat
+                  label="Sixes Given"
+                  value={stats.bowling?.sixes_given}
+                />
+
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {selected && !loadingStats && !stats && (
+          <div className="card text-red-400">
+            Unable to load this player's statistics.
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+function Stat({ label, value }) {
+  return (
+    <div className="bg-slate-900 rounded-lg p-2">
+      <div className="text-slate-400 text-xs">
+        {label}
+      </div>
+
+      <div className="text-lg font-bold">
+        {value ?? 0}
+      </div>
+    </div>
+  );
+}import { useEffect, useState } from 'react';
 import { Players, Teams } from '../api/api.js';
 
 export default function PlayerRecords() {
