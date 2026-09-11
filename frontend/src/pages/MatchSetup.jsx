@@ -1,31 +1,18 @@
-
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Matches } from '../api/api.js';
 
 export default function MatchSetup() {
   const { matchId } = useParams();
-  const navigate = useNavigate();
-
   const [detail, setDetail] = useState(null);
   const [tossWinner, setTossWinner] = useState('');
   const [decision, setDecision] = useState('bat');
-  const [starting, setStarting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const navigate = useNavigate();
 
   useEffect(() => {
-    let active = true;
-
-    Matches.get(matchId)
-      .then(data => {
-        if (active) setDetail(data);
-      })
-      .catch(err => {
-        console.error('Failed to load match:', err);
-      });
-
-    return () => {
-      active = false;
-    };
+    Matches.get(matchId).then(setDetail);
   }, [matchId]);
 
   if (!detail) {
@@ -35,23 +22,29 @@ export default function MatchSetup() {
   const { match } = detail;
 
   const confirmToss = async () => {
-    if (!tossWinner || starting) return;
+    if (!tossWinner) {
+      return alert('Select the toss-winning team');
+    }
 
-    setStarting(true);
+    setSaving(true);
 
     try {
-      // Save toss
       await Matches.setToss(matchId, {
         toss_winner_id: tossWinner,
         toss_decision: decision
       });
 
-      // Immediately move to scorer after successful save
-      navigate(`/match/${matchId}/score`, { replace: true });
+      navigate(`/match/${matchId}/score`);
     } catch (error) {
       console.error('Toss error:', error);
-      alert('Could not save toss. Please try again.');
-      setStarting(false);
+
+      alert(
+        error?.response?.data?.error ||
+        error?.message ||
+        'Failed to start match'
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -62,24 +55,28 @@ export default function MatchSetup() {
       </h1>
 
       <p className="text-slate-400 mb-4">
-        {match.overs_limit || 'unlimited'} overs
+        Toss
       </p>
 
       <div className="card space-y-4">
-        <h2 className="font-semibold">Toss</h2>
+        <h2 className="font-semibold">
+          Toss
+        </h2>
 
+        {/* TOSS WINNER */}
         <div>
           <label className="text-sm text-slate-400">
             Won the toss
           </label>
 
           <select
-            className="input"
+            className="input mt-1"
             value={tossWinner}
-            onChange={e => setTossWinner(e.target.value)}
-            disabled={starting}
+            onChange={(e) => setTossWinner(e.target.value)}
           >
-            <option value="">Select team</option>
+            <option value="">
+              Select team
+            </option>
 
             <option value={match.team1_id}>
               {match.team1_name}
@@ -91,6 +88,7 @@ export default function MatchSetup() {
           </select>
         </div>
 
+        {/* DECISION */}
         <div>
           <label className="text-sm text-slate-400">
             Elected to
@@ -105,7 +103,6 @@ export default function MatchSetup() {
                   : 'btn-secondary'
               }`}
               onClick={() => setDecision('bat')}
-              disabled={starting}
             >
               Bat
             </button>
@@ -118,23 +115,21 @@ export default function MatchSetup() {
                   : 'btn-secondary'
               }`}
               onClick={() => setDecision('bowl')}
-              disabled={starting}
             >
               Bowl
             </button>
           </div>
         </div>
 
+        {/* START MATCH */}
         <button
-          type="button"
           onClick={confirmToss}
-          disabled={!tossWinner || starting}
+          disabled={saving}
           className="btn btn-primary w-full"
         >
-          {starting ? 'Starting…' : 'Start Match'}
+          {saving ? 'Starting Match…' : 'Start Match'}
         </button>
       </div>
     </div>
   );
 }
-
