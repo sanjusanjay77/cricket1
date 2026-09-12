@@ -1,35 +1,40 @@
 const db = require('../db/database');
 const calc = require('../utils/scoreCalculator');
 
-/* =========================================================
-   BACKGROUND SOCKET BROADCAST
-========================================================= */
+/*
+====================================================
+FAST BACKGROUND SOCKET BROADCAST
+====================================================
 
+Never block the scorer response with this.
+*/
 async function broadcast(req, matchId) {
   try {
     const io = req.app.get('io');
-
     if (!io) return;
 
-    const inningsRows = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE match_id = ?
-      ORDER BY innings_number ASC
-    `).all(matchId);
+    const inningsRows = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE match_id = ?
+        ORDER BY innings_number ASC
+      `)
+      .all(matchId);
 
     const innings = await Promise.all(
-      inningsRows.map(
-        innings =>
-          calc.getScoreboard(innings.id)
+      inningsRows.map((row) =>
+        calc.getScoreboard(row.id)
       )
     );
 
-    const match = await db.prepare(`
-      SELECT *
-      FROM matches
-      WHERE id = ?
-    `).get(matchId);
+    const match = await db
+      .prepare(`
+        SELECT *
+        FROM matches
+        WHERE id = ?
+      `)
+      .get(matchId);
 
     io.to(`match-${matchId}`).emit(
       'score-update',
@@ -46,9 +51,12 @@ async function broadcast(req, matchId) {
   }
 }
 
-/* =========================================================
-   SET BATSMEN
-========================================================= */
+
+/*
+====================================================
+SET BATSMEN
+====================================================
+*/
 
 exports.setBatsmen = async (req, res) => {
   try {
@@ -57,11 +65,19 @@ exports.setBatsmen = async (req, res) => {
       non_striker_id
     } = req.body;
 
-    const innings = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(req.params.id);
+    if (!striker_id) {
+      return res.status(400).json({
+        error: 'striker_id is required'
+      });
+    }
+
+    const innings = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(req.params.id);
 
     if (!innings) {
       return res.status(404).json({
@@ -69,37 +85,38 @@ exports.setBatsmen = async (req, res) => {
       });
     }
 
-    if (!striker_id) {
-      return res.status(400).json({
-        error: 'striker_id is required'
-      });
-    }
+    await db
+      .prepare(`
+        UPDATE innings
+        SET
+          striker_id = ?,
+          non_striker_id = COALESCE(?, non_striker_id)
+        WHERE id = ?
+      `)
+      .run(
+        striker_id,
+        non_striker_id || null,
+        innings.id
+      );
 
-    await db.prepare(`
-      UPDATE innings
-      SET
-        striker_id = ?,
-        non_striker_id =
-          COALESCE(?, non_striker_id)
-      WHERE id = ?
-    `).run(
-      striker_id,
-      non_striker_id || null,
-      innings.id
-    );
-
-    const updated = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(innings.id);
+    const updated = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(innings.id);
 
     res.json(updated);
 
-    broadcast(
+    /*
+    Background only.
+    */
+    void broadcast(
       req,
       innings.match_id
     );
+
   } catch (err) {
     console.error(
       'setBatsmen error:',
@@ -112,17 +129,22 @@ exports.setBatsmen = async (req, res) => {
   }
 };
 
-/* =========================================================
-   SWAP BATSMEN
-========================================================= */
+
+/*
+====================================================
+SWAP BATSMEN
+====================================================
+*/
 
 exports.swapBatsmen = async (req, res) => {
   try {
-    const innings = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(req.params.id);
+    const innings = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(req.params.id);
 
     if (!innings) {
       return res.status(404).json({
@@ -140,30 +162,35 @@ exports.swapBatsmen = async (req, res) => {
       });
     }
 
-    await db.prepare(`
-      UPDATE innings
-      SET
-        striker_id = ?,
-        non_striker_id = ?
-      WHERE id = ?
-    `).run(
-      innings.non_striker_id,
-      innings.striker_id,
-      innings.id
-    );
+    await db
+      .prepare(`
+        UPDATE innings
+        SET
+          striker_id = ?,
+          non_striker_id = ?
+        WHERE id = ?
+      `)
+      .run(
+        innings.non_striker_id,
+        innings.striker_id,
+        innings.id
+      );
 
-    const updated = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(innings.id);
+    const updated = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(innings.id);
 
     res.json(updated);
 
-    broadcast(
+    void broadcast(
       req,
       innings.match_id
     );
+
   } catch (err) {
     console.error(
       'swapBatsmen error:',
@@ -176,17 +203,22 @@ exports.swapBatsmen = async (req, res) => {
   }
 };
 
-/* =========================================================
-   SWAP STRIKE
-========================================================= */
+
+/*
+====================================================
+SWAP STRIKE
+====================================================
+*/
 
 exports.swapStrike = async (req, res) => {
   try {
-    const innings = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(req.params.id);
+    const innings = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(req.params.id);
 
     if (!innings) {
       return res.status(404).json({
@@ -204,30 +236,35 @@ exports.swapStrike = async (req, res) => {
       });
     }
 
-    await db.prepare(`
-      UPDATE innings
-      SET
-        striker_id = ?,
-        non_striker_id = ?
-      WHERE id = ?
-    `).run(
-      innings.non_striker_id,
-      innings.striker_id,
-      innings.id
-    );
+    await db
+      .prepare(`
+        UPDATE innings
+        SET
+          striker_id = ?,
+          non_striker_id = ?
+        WHERE id = ?
+      `)
+      .run(
+        innings.non_striker_id,
+        innings.striker_id,
+        innings.id
+      );
 
-    const updated = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(innings.id);
+    const updated = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(innings.id);
 
     res.json(updated);
 
-    broadcast(
+    void broadcast(
       req,
       innings.match_id
     );
+
   } catch (err) {
     console.error(
       'swapStrike error:',
@@ -240,9 +277,12 @@ exports.swapStrike = async (req, res) => {
   }
 };
 
-/* =========================================================
-   SET BOWLER
-========================================================= */
+
+/*
+====================================================
+SET BOWLER
+====================================================
+*/
 
 exports.setBowler = async (req, res) => {
   try {
@@ -251,11 +291,19 @@ exports.setBowler = async (req, res) => {
       force
     } = req.body;
 
-    const innings = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(req.params.id);
+    if (!bowler_id) {
+      return res.status(400).json({
+        error: 'bowler_id is required'
+      });
+    }
+
+    const innings = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(req.params.id);
 
     if (!innings) {
       return res.status(404).json({
@@ -263,22 +311,19 @@ exports.setBowler = async (req, res) => {
       });
     }
 
-    if (!bowler_id) {
-      return res.status(400).json({
-        error: 'bowler_id is required'
-      });
-    }
-
+    /*
+    Same bowler cannot bowl consecutive overs.
+    */
     if (!force) {
-      const lastBall = await db.prepare(`
-        SELECT
-          bowler_id,
-          is_legal
-        FROM balls
-        WHERE innings_id = ?
-        ORDER BY ball_sequence DESC
-        LIMIT 1
-      `).get(innings.id);
+      const lastBall = await db
+        .prepare(`
+          SELECT bowler_id
+          FROM balls
+          WHERE innings_id = ?
+          ORDER BY ball_sequence DESC
+          LIMIT 1
+        `)
+        .get(innings.id);
 
       const totalBalls =
         Number(innings.total_balls || 0);
@@ -296,27 +341,36 @@ exports.setBowler = async (req, res) => {
       }
     }
 
-    await db.prepare(`
-      UPDATE innings
-      SET current_bowler_id = ?
-      WHERE id = ?
-    `).run(
-      bowler_id,
-      innings.id
-    );
+    await db
+      .prepare(`
+        UPDATE innings
+        SET current_bowler_id = ?
+        WHERE id = ?
+      `)
+      .run(
+        bowler_id,
+        innings.id
+      );
 
-    const updated = await db.prepare(`
-      SELECT *
-      FROM innings
-      WHERE id = ?
-    `).get(innings.id);
+    const updated = await db
+      .prepare(`
+        SELECT *
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(innings.id);
 
+    /*
+    IMPORTANT:
+    Send immediately.
+    */
     res.json(updated);
 
-    broadcast(
+    void broadcast(
       req,
       innings.match_id
     );
+
   } catch (err) {
     console.error(
       'setBowler error:',
@@ -329,16 +383,23 @@ exports.setBowler = async (req, res) => {
   }
 };
 
-/* =========================================================
-   RECORD BALL
-========================================================= */
+
+/*
+====================================================
+RECORD BALL
+====================================================
+
+FAST PATH
+
+1. Save ball
+2. Return result
+3. Do NOT calculate another full scoreboard
+4. Broadcast in background
+====================================================
+*/
 
 exports.recordBall = async (req, res) => {
   try {
-    /*
-     * recordBall now returns lightweight information.
-     * It does NOT calculate the complete scoreboard.
-     */
     const result =
       await calc.recordBall(
         req.params.id,
@@ -346,23 +407,25 @@ exports.recordBall = async (req, res) => {
       );
 
     /*
-     * IMPORTANT:
-     * result.innings already contains the updated innings.
-     * No second SELECT is needed here.
-     */
+    calc.recordBall already returns the updated
+    scoreboard.
+
+    Therefore DO NOT perform another SELECT innings
+    here.
+    */
 
     res.json(result);
 
     /*
-     * Full scoreboard for spectators happens after
-     * the response has been sent.
-     */
-    if (result.innings?.match_id) {
-      broadcast(
+    Background synchronization only.
+    */
+    if (result?.innings?.match_id) {
+      void broadcast(
         req,
         result.innings.match_id
       );
     }
+
   } catch (err) {
     console.error(
       'recordBall error:',
@@ -375,9 +438,12 @@ exports.recordBall = async (req, res) => {
   }
 };
 
-/* =========================================================
-   UNDO
-========================================================= */
+
+/*
+====================================================
+UNDO
+====================================================
+*/
 
 exports.undoLastBall = async (req, res) => {
   try {
@@ -386,14 +452,29 @@ exports.undoLastBall = async (req, res) => {
         req.params.id
       );
 
+    /*
+    Again, don't SELECT innings unnecessarily.
+    */
     res.json(result);
 
-    if (result.innings?.match_id) {
-      broadcast(
+    /*
+    Get match id only for background broadcast.
+    */
+    const innings = await db
+      .prepare(`
+        SELECT match_id
+        FROM innings
+        WHERE id = ?
+      `)
+      .get(req.params.id);
+
+    if (innings?.match_id) {
+      void broadcast(
         req,
-        result.innings.match_id
+        innings.match_id
       );
     }
+
   } catch (err) {
     console.error(
       'undoLastBall error:',
@@ -406,9 +487,12 @@ exports.undoLastBall = async (req, res) => {
   }
 };
 
-/* =========================================================
-   GET SCOREBOARD
-========================================================= */
+
+/*
+====================================================
+GET SCOREBOARD
+====================================================
+*/
 
 exports.getScoreboard = async (req, res) => {
   try {
@@ -424,6 +508,7 @@ exports.getScoreboard = async (req, res) => {
     }
 
     res.json(scoreboard);
+
   } catch (err) {
     console.error(
       'getScoreboard error:',
