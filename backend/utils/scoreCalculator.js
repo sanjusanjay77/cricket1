@@ -1038,6 +1038,13 @@ function buildBattingScorecard(balls) {
 
     ensure(b.non_striker_id);
 
+    /*
+     * Wides are not balls faced.
+     *
+     * No-ball DOES count as a ball faced for
+     * this scoreboard implementation because
+     * the batsman participated in the delivery.
+     */
     if (b.extra_type !== 'wide') {
 
       if (striker) {
@@ -1045,6 +1052,9 @@ function buildBattingScorecard(balls) {
       }
     }
 
+    /*
+     * Batsman runs.
+     */
     if (
       !b.extra_type ||
       b.extra_type === 'noball'
@@ -1069,6 +1079,9 @@ function buildBattingScorecard(balls) {
       }
     }
 
+    /*
+     * Wicket.
+     */
     if (
       Number(b.is_wicket) === 1 &&
       b.dismissed_id
@@ -1353,10 +1366,6 @@ function buildPartnerships(balls) {
 
   for (const b of balls) {
 
-    /*
-     * Start partnership with the two batsmen
-     * stored on the delivery.
-     */
     if (!batsman1Id || !batsman2Id) {
 
       batsman1Id =
@@ -1373,36 +1382,15 @@ function buildPartnerships(balls) {
         extra_runs: b.extra_runs
       });
 
-    /*
-     * Include ALL team runs.
-     * This includes:
-     *
-     * batsman runs
-     * wides
-     * no-balls
-     * byes
-     * leg-byes
-     * penalty runs
-     */
     partnershipRuns +=
       effect.teamRuns;
 
-    /*
-     * Only legal balls count.
-     */
     if (Number(b.is_legal) === 1) {
       partnershipBalls += 1;
     }
 
-    /*
-     * A wicket completes the current
-     * partnership.
-     */
     if (Number(b.is_wicket) === 1) {
 
-      /*
-       * Save the completed partnership.
-       */
       if (batsman1Id && batsman2Id) {
 
         partnerships.push({
@@ -1429,12 +1417,6 @@ function buildPartnerships(balls) {
 
       partnershipNumber += 1;
 
-      /*
-       * Reset.
-       *
-       * The next delivery will establish
-       * the new partnership.
-       */
       batsman1Id = null;
       batsman2Id = null;
 
@@ -1443,19 +1425,6 @@ function buildPartnerships(balls) {
     }
   }
 
-  /*
-   * IMPORTANT:
-   *
-   * If there are no wickets, this creates
-   * the first/current partnership.
-   *
-   * Example:
-   *
-   * 202/0
-   *
-   * Sanjay + Raja
-   * 202 runs
-   */
   if (batsman1Id && batsman2Id) {
 
     partnerships.push({
@@ -1837,23 +1806,11 @@ async function getScoreboard(inningsId) {
       balls
     );
 
-  /* -------------------------------------------------------
-     CURRENT PARTNERSHIP
-  ------------------------------------------------------- */
-
   const partnership =
     buildPartnership(balls);
 
-  /* -------------------------------------------------------
-     ALL PARTNERSHIPS
-  ------------------------------------------------------- */
-
   const partnerships =
     buildPartnerships(balls);
-
-  /* -------------------------------------------------------
-     FALL OF WICKETS
-  ------------------------------------------------------- */
 
   const fallOfWickets =
     buildFallOfWickets(balls);
@@ -1907,15 +1864,17 @@ async function getScoreboard(inningsId) {
    CAREER BATTING
 ========================================================= */
 
-async function computeCareerBattingStats(
-  playerId
-) {
+async function computeCareerBattingStats(playerId) {
 
+  /*
+   * Get all deliveries where this player was the striker.
+   */
   const balls =
     await db.prepare(`
       SELECT *
       FROM balls
       WHERE batsman_id = ?
+      ORDER BY innings_id, ball_sequence ASC
     `).all(playerId);
 
   let runs = 0;
@@ -1923,20 +1882,45 @@ async function computeCareerBattingStats(
   let fours = 0;
   let sixes = 0;
 
+  /*
+   * Store the player's runs separately for every innings.
+   *
+   * Example:
+   *
+   * innings A -> 25
+   * innings B -> 72
+   * innings C -> 41
+   *
+   * Highest score = 72
+   */
+  const inningsScores = {};
+
   for (const b of balls) {
 
+    const inningsId =
+      b.innings_id;
+
+    if (!inningsScores[inningsId]) {
+      inningsScores[inningsId] = 0;
+    }
+
+    /*
+     * Wide does not count as a ball faced.
+     */
     if (
-      b.extra_type !==
-      'wide'
+      b.extra_type !== 'wide'
     ) {
 
       ballsFaced += 1;
     }
 
+    /*
+     * Batsman receives runs from normal balls
+     * and the bat runs from no-balls.
+     */
     if (
       !b.extra_type ||
-      b.extra_type ===
-      'noball'
+      b.extra_type === 'noball'
     ) {
 
       const batRuns =
@@ -1945,6 +1929,15 @@ async function computeCareerBattingStats(
         );
 
       runs += batRuns;
+
+      /*
+       * THIS IS THE IMPORTANT PART.
+       *
+       * Add the batsman's runs to the
+       * individual innings score.
+       */
+      inningsScores[inningsId] +=
+        batRuns;
 
       if (batRuns === 4) {
         fours += 1;
@@ -1956,6 +1949,27 @@ async function computeCareerBattingStats(
     }
   }
 
+  /*
+   * Calculate highest individual innings score.
+   */
+  const inningsScoreValues =
+    Object.values(
+      inningsScores
+    ).map(
+      score =>
+        Number(score || 0)
+    );
+
+  const highestScore =
+    inningsScoreValues.length > 0
+      ? Math.max(
+          ...inningsScoreValues
+        )
+      : 0;
+
+  /*
+   * Count dismissals.
+   */
   const timesOutRow =
     await db.prepare(`
       SELECT COUNT(*) AS c
@@ -1969,6 +1983,9 @@ async function computeCareerBattingStats(
       timesOutRow?.c || 0
     );
 
+  /*
+   * Count innings in which the player appeared.
+   */
   const inningsBattedRow =
     await db.prepare(`
       SELECT COUNT(DISTINCT innings_id) AS c
@@ -1985,12 +2002,57 @@ async function computeCareerBattingStats(
       inningsBattedRow?.c || 0
     );
 
+  /*
+   * Not outs.
+   */
+  const notOuts =
+    Math.max(
+      0,
+      inningsBatted -
+      timesOut
+    );
+
+  /*
+   * Strike rate.
+   */
+  const strikeRate =
+    ballsFaced > 0
+      ? Number(
+          (
+            (
+              runs /
+              ballsFaced
+            ) * 100
+          ).toFixed(2)
+        )
+      : 0;
+
+  /*
+   * Batting average.
+   */
+  const average =
+    timesOut > 0
+      ? Number(
+          (
+            runs /
+            timesOut
+          ).toFixed(2)
+        )
+      : runs;
+
   return {
 
     innings_batted:
       inningsBatted,
 
     runs,
+
+    /*
+     * FIXED:
+     * Highest individual score.
+     */
+    highest_score:
+      highestScore,
 
     balls_faced:
       ballsFaced,
@@ -2003,33 +2065,12 @@ async function computeCareerBattingStats(
       timesOut,
 
     not_outs:
-      Math.max(
-        0,
-        inningsBatted -
-        timesOut
-      ),
+      notOuts,
 
     strike_rate:
-      ballsFaced > 0
-        ? Number(
-            (
-              (
-                runs /
-                ballsFaced
-              ) * 100
-            ).toFixed(2)
-          )
-        : 0,
+      strikeRate,
 
-    average:
-      timesOut > 0
-        ? Number(
-            (
-              runs /
-              timesOut
-            ).toFixed(2)
-          )
-        : runs
+    average
   };
 }
 
