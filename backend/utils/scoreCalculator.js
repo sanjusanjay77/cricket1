@@ -1038,12 +1038,7 @@ function buildBattingScorecard(balls) {
 
     ensure(b.non_striker_id);
 
-    /*
-     * Wide does not count as ball faced.
-     *
-     * Keeping your existing app scoring model:
-     * no-ball counts as ball faced.
-     */
+    /* Wide does not count as ball faced */
 
     if (b.extra_type !== 'wide') {
 
@@ -1052,9 +1047,7 @@ function buildBattingScorecard(balls) {
       }
     }
 
-    /*
-     * Bat runs
-     */
+    /* Bat runs */
 
     if (
       !b.extra_type ||
@@ -1062,7 +1055,9 @@ function buildBattingScorecard(balls) {
     ) {
 
       const batRuns =
-        Number(b.runs_batsman || 0);
+        Number(
+          b.runs_batsman || 0
+        );
 
       if (striker) {
 
@@ -1186,11 +1181,6 @@ function buildBowlingScorecard(balls) {
       s.legalBalls += 1;
     }
 
-    /*
-     * Bye and leg-bye are not charged
-     * to bowler.
-     */
-
     const chargedRuns =
       b.extra_type === 'bye' ||
       b.extra_type === 'legbye'
@@ -1198,10 +1188,6 @@ function buildBowlingScorecard(balls) {
         : effect.teamRuns;
 
     s.runs += chargedRuns;
-
-    /*
-     * Run-out is not bowler wicket.
-     */
 
     if (
       Number(b.is_wicket) === 1 &&
@@ -1488,38 +1474,18 @@ function buildExtras(
     penalty;
 
   return {
-
     wide,
-
     noball,
-
     bye,
-
     legbye,
-
     penalty,
-
     total
   };
 }
 
 /* =========================================================
-   IMPORTANT COMPATIBILITY FUNCTIONS
+   COMPATIBILITY FUNCTIONS
 ========================================================= */
-
-/*
- * These functions are required by:
- *
- * - getAllTimeRecords()
- * - module.exports
- * - controllers using this file
- *
- * They were missing from the previous version,
- * which caused the Render error:
- *
- * ReferenceError:
- * computeBattingScorecard is not defined
- */
 
 async function computeBattingScorecard(inningsId) {
 
@@ -2007,26 +1973,14 @@ async function getPlayerCareerStats(
 }
 
 /* =========================================================
-   ALL TIME RECORDS
-========================================================= */
-
-/* =========================================================
    ALL TIME RECORDS — GCC ONLY
 ========================================================= */
 
 async function getAllTimeRecords() {
 
-  /*
-   * =======================================================
-   * FIND GCC PLAYERS
-   *
-   * We identify GCC players directly from:
-   *
-   * players.team_id -> teams.id -> teams.name
-   *
-   * This means records are calculated only from GCC players.
-   * =======================================================
-   */
+  /* -------------------------------------------------------
+     FIND GCC PLAYERS
+  ------------------------------------------------------- */
 
   const gccPlayers =
     await db.prepare(`
@@ -2058,11 +2012,9 @@ async function getAllTimeRecords() {
     gccPlayers
   );
 
-  /*
-   * =======================================================
-   * ALL INNINGS
-   * =======================================================
-   */
+  /* -------------------------------------------------------
+     ALL INNINGS
+  ------------------------------------------------------- */
 
   const inningsRows =
     await db.prepare(`
@@ -2077,7 +2029,15 @@ async function getAllTimeRecords() {
         innings_number
     `).all();
 
-  let highestScore = null;
+  /*
+   * IMPORTANT:
+   *
+   * There is NO highestScore variable anymore.
+   *
+   * Best Batting Figure is the single-innings
+   * highest batting performance.
+   */
+
   let bestBattingFigure = null;
   let bestBowling = null;
 
@@ -2102,9 +2062,7 @@ async function getAllTimeRecords() {
       const b of batting
     ) {
 
-      /*
-       * ONLY GCC PLAYERS
-       */
+      /* ONLY GCC PLAYERS */
 
       if (
         !gccPlayerIds.has(
@@ -2166,15 +2124,22 @@ async function getAllTimeRecords() {
       };
 
       /*
+       * ===================================================
        * BEST BATTING FIGURE
+       *
+       * THIS IS THE IMPORTANT PART.
+       *
+       * It compares each player's performance
+       * in each individual innings.
        *
        * Priority:
        *
        * 1. Highest runs
        * 2. Same runs -> fewer balls
-       * 3. Same balls -> higher SR
+       * 3. Same balls -> higher strike rate
        * 4. Same SR -> more fours
        * 5. Same fours -> more sixes
+       * ===================================================
        */
 
       const isBetter =
@@ -2238,32 +2203,6 @@ async function getAllTimeRecords() {
         bestBattingFigure =
           candidate;
       }
-
-      /*
-       * HIGHEST SCORE
-       *
-       * This is also a single innings record.
-       */
-
-      const isHigherScore =
-        !highestScore ||
-
-        candidate.runs >
-        highestScore.runs ||
-
-        (
-          candidate.runs ===
-          highestScore.runs &&
-
-          candidate.balls <
-          highestScore.balls
-        );
-
-      if (isHigherScore) {
-
-        highestScore =
-          candidate;
-      }
     }
 
     /* -----------------------------------------------------
@@ -2279,9 +2218,7 @@ async function getAllTimeRecords() {
       const b of bowling
     ) {
 
-      /*
-       * ONLY GCC BOWLERS
-       */
+      /* ONLY GCC BOWLERS */
 
       if (
         !gccPlayerIds.has(
@@ -2343,8 +2280,6 @@ async function getAllTimeRecords() {
       /*
        * BEST BOWLING FIGURE
        *
-       * Priority:
-       *
        * 1. Most wickets
        * 2. Same wickets -> fewest runs
        * 3. Same runs -> lower economy
@@ -2384,7 +2319,7 @@ async function getAllTimeRecords() {
   }
 
   /* =======================================================
-     CAREER BATTING PLAYERS
+     CAREER BATTING
   ======================================================= */
 
   const battingLeaders =
@@ -2406,7 +2341,7 @@ async function getAllTimeRecords() {
     );
 
   /* =======================================================
-     CAREER BOWLING PLAYERS
+     CAREER BOWLING
   ======================================================= */
 
   const bowlingLeaders =
@@ -2428,7 +2363,7 @@ async function getAllTimeRecords() {
     );
 
   /* =======================================================
-     TOP N HELPER
+     TOP N
   ======================================================= */
 
   const topBy =
@@ -2460,28 +2395,21 @@ async function getAllTimeRecords() {
         );
 
   /* =======================================================
-     RETURN GCC RECORDS
+     FINAL RESULT
+     
+     IMPORTANT:
+     highestScore IS NOT RETURNED.
   ======================================================= */
 
   return {
 
-    /*
-     * =====================================================
-     * SINGLE MATCH — GCC ONLY
-     * =====================================================
-     */
+    /* SINGLE-INNINGS GCC RECORDS */
 
     bestBattingFigure,
 
-    highestScore,
-
     bestBowling,
 
-    /*
-     * =====================================================
-     * CAREER — GCC ONLY
-     * =====================================================
-     */
+    /* CAREER GCC RECORDS */
 
     mostRuns:
       topBy(
@@ -2553,6 +2481,7 @@ async function getAllTimeRecords() {
         )
   };
 }
+
 /* =========================================================
    EXPORTS
 ========================================================= */
@@ -2570,11 +2499,6 @@ module.exports = {
   recordBall,
 
   undoLastBall,
-
-  /*
-   * IMPORTANT:
-   * These functions now actually exist above.
-   */
 
   computeBattingScorecard,
 
