@@ -1351,13 +1351,11 @@ function buildPartnerships(balls) {
 
   let partnershipNumber = 1;
 
-  for (let i = 0; i < balls.length; i++) {
-
-    const b = balls[i];
+  for (const b of balls) {
 
     /*
-     * Start partnership using the batsmen
-     * recorded on the first delivery.
+     * Start partnership with the two batsmen
+     * stored on the delivery.
      */
     if (!batsman1Id || !batsman2Id) {
 
@@ -1376,50 +1374,66 @@ function buildPartnerships(balls) {
       });
 
     /*
-     * Partnership includes team runs,
-     * including extras.
+     * Include ALL team runs.
+     * This includes:
+     *
+     * batsman runs
+     * wides
+     * no-balls
+     * byes
+     * leg-byes
+     * penalty runs
      */
     partnershipRuns +=
       effect.teamRuns;
 
     /*
-     * Only legal deliveries count.
+     * Only legal balls count.
      */
     if (Number(b.is_legal) === 1) {
       partnershipBalls += 1;
     }
 
     /*
-     * A wicket ends the partnership.
+     * A wicket completes the current
+     * partnership.
      */
     if (Number(b.is_wicket) === 1) {
 
-      partnerships.push({
+      /*
+       * Save the completed partnership.
+       */
+      if (batsman1Id && batsman2Id) {
 
-        partnership_no:
-          partnershipNumber,
+        partnerships.push({
 
-        batsman1_id:
-          batsman1Id,
+          partnership_no:
+            partnershipNumber,
 
-        batsman2_id:
-          batsman2Id,
+          batsman1_id:
+            batsman1Id,
 
-        runs:
-          partnershipRuns,
+          batsman2_id:
+            batsman2Id,
 
-        balls:
-          partnershipBalls,
+          runs:
+            partnershipRuns,
 
-        is_current:
-          false
-      });
+          balls:
+            partnershipBalls,
+
+          is_current:
+            false
+        });
+      }
 
       partnershipNumber += 1;
 
       /*
-       * New partnership begins
-       * with the next ball.
+       * Reset.
+       *
+       * The next delivery will establish
+       * the new partnership.
        */
       batsman1Id = null;
       batsman2Id = null;
@@ -1430,16 +1444,19 @@ function buildPartnerships(balls) {
   }
 
   /*
-   * Remaining partnership is current.
+   * IMPORTANT:
+   *
+   * If there are no wickets, this creates
+   * the first/current partnership.
+   *
+   * Example:
+   *
+   * 202/0
+   *
+   * Sanjay + Raja
+   * 202 runs
    */
-  if (
-    batsman1Id &&
-    batsman2Id &&
-    (
-      partnershipRuns > 0 ||
-      partnershipBalls > 0
-    )
-  ) {
+  if (batsman1Id && batsman2Id) {
 
     partnerships.push({
 
@@ -1820,24 +1837,24 @@ async function getScoreboard(inningsId) {
       balls
     );
 
-  /*
-   * NEW:
-   * Current partnership
-   */
+  /* -------------------------------------------------------
+     CURRENT PARTNERSHIP
+  ------------------------------------------------------- */
+
   const partnership =
     buildPartnership(balls);
 
-  /*
-   * NEW:
-   * All partnerships
-   */
+  /* -------------------------------------------------------
+     ALL PARTNERSHIPS
+  ------------------------------------------------------- */
+
   const partnerships =
     buildPartnerships(balls);
 
-  /*
-   * NEW:
-   * Fall of wickets
-   */
+  /* -------------------------------------------------------
+     FALL OF WICKETS
+  ------------------------------------------------------- */
+
   const fallOfWickets =
     buildFallOfWickets(balls);
 
