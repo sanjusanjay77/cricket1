@@ -9,6 +9,7 @@ const MAX_WICKETS = 10;
 
 function oversStr(totalBalls) {
   const balls = Number(totalBalls || 0);
+
   return `${Math.floor(balls / 6)}.${balls % 6}`;
 }
 
@@ -41,45 +42,112 @@ function computeRunEffects({
   extra_runs = Number(extra_runs) || 0;
 
   switch (extra_type) {
-    case 'wide':
+
+    /* -----------------------------------------------------
+       WIDE
+
+       WD       = 1 team run
+       WD + 1   = 2 team runs
+       WD + 2   = 3 team runs
+
+       All wide runs are extras.
+    ----------------------------------------------------- */
+
+    case 'wide': {
+      const totalWideRuns =
+        Math.max(1, extra_runs);
+
       return {
-        teamRuns: Math.max(1, extra_runs),
+        teamRuns: totalWideRuns,
         batsmanRuns: 0,
-        runsRun: Math.max(1, extra_runs) - 1,
+        runsRun: totalWideRuns - 1,
         isLegal: 0
       };
+    }
 
-    case 'noball':
+    /* -----------------------------------------------------
+       NO BALL
+
+       NB       = 1 extra
+       NB + 1   = 2 team runs
+       NB + 4   = 5 team runs
+       NB + 6   = 7 team runs
+
+       Only the automatic no-ball penalty is
+       counted as an extra.
+
+       Additional bat runs belong to batsman.
+    ----------------------------------------------------- */
+
+    case 'noball': {
+      const noBallExtra =
+        Math.max(1, extra_runs);
+
       return {
-        teamRuns: Math.max(1, extra_runs) + runs,
-        batsmanRuns: runs,
-        runsRun: runs,
+        teamRuns:
+          noBallExtra + runs,
+
+        batsmanRuns:
+          runs,
+
+        runsRun:
+          runs,
+
         isLegal: 0
       };
+    }
 
-    case 'bye':
+    /* -----------------------------------------------------
+       BYE
+    ----------------------------------------------------- */
+
+    case 'bye': {
+      const byeRuns =
+        Math.max(0, extra_runs);
+
       return {
-        teamRuns: Math.max(0, extra_runs),
+        teamRuns: byeRuns,
         batsmanRuns: 0,
-        runsRun: Math.max(0, extra_runs),
+        runsRun: byeRuns,
         isLegal: 1
       };
+    }
 
-    case 'legbye':
+    /* -----------------------------------------------------
+       LEG BYE
+    ----------------------------------------------------- */
+
+    case 'legbye': {
+      const legByeRuns =
+        Math.max(0, extra_runs);
+
       return {
-        teamRuns: Math.max(0, extra_runs),
+        teamRuns: legByeRuns,
         batsmanRuns: 0,
-        runsRun: Math.max(0, extra_runs),
+        runsRun: legByeRuns,
         isLegal: 1
       };
+    }
 
-    case 'penalty':
+    /* -----------------------------------------------------
+       PENALTY
+    ----------------------------------------------------- */
+
+    case 'penalty': {
+      const penaltyRuns =
+        Math.max(0, extra_runs);
+
       return {
-        teamRuns: Math.max(0, extra_runs),
+        teamRuns: penaltyRuns,
         batsmanRuns: 0,
         runsRun: 0,
         isLegal: 0
       };
+    }
+
+    /* -----------------------------------------------------
+       NORMAL BALL
+    ----------------------------------------------------- */
 
     default:
       return {
@@ -96,15 +164,28 @@ function computeRunEffects({
 ========================================================= */
 
 function getBallDisplay(ball) {
-  if (!ball) return '';
+  if (!ball) {
+    return '';
+  }
 
   if (Number(ball.is_wicket) === 1) {
     return 'W';
   }
 
-  const extraType = ball.extra_type;
-  const batRuns = Number(ball.runs_batsman || 0);
-  const extraRuns = Number(ball.extra_runs || 0);
+  const extraType =
+    ball.extra_type;
+
+  const batRuns =
+    Number(
+      ball.runs_batsman || 0
+    );
+
+  const extraRuns =
+    Number(
+      ball.extra_runs || 0
+    );
+
+  /* WIDE */
 
   if (extraType === 'wide') {
     return extraRuns > 1
@@ -112,23 +193,33 @@ function getBallDisplay(ball) {
       : 'WD';
   }
 
+  /* NO BALL */
+
   if (extraType === 'noball') {
     return batRuns > 0
       ? `NB+${batRuns}`
       : 'NB';
   }
 
+  /* BYE */
+
   if (extraType === 'bye') {
     return `B${extraRuns}`;
   }
+
+  /* LEG BYE */
 
   if (extraType === 'legbye') {
     return `LB${extraRuns}`;
   }
 
+  /* PENALTY */
+
   if (extraType === 'penalty') {
     return `P${extraRuns}`;
   }
+
+  /* NORMAL */
 
   return String(batRuns);
 }
@@ -138,52 +229,76 @@ function getBallDisplay(ball) {
 ========================================================= */
 
 async function getNextBallSequence(inningsId) {
-  const row = await db.prepare(`
-    SELECT ball_sequence
-    FROM balls
-    WHERE innings_id = ?
-    ORDER BY ball_sequence DESC
-    LIMIT 1
-  `).get(inningsId);
+  const row =
+    await db.prepare(`
+      SELECT ball_sequence
+      FROM balls
+      WHERE innings_id = ?
+      ORDER BY ball_sequence DESC
+      LIMIT 1
+    `).get(inningsId);
 
-  return Number(row?.ball_sequence || 0) + 1;
+  return (
+    Number(
+      row?.ball_sequence || 0
+    ) + 1
+  );
 }
 
 /* =========================================================
-   RECORD BALL - FAST PATH
+   RECORD BALL
 ========================================================= */
 
-async function recordBall(inningsId, payload = {}) {
+async function recordBall(
+  inningsId,
+  payload = {}
+) {
   /*
-   * Only ONE innings read before writing.
-   *
-   * We deliberately DO NOT call getScoreboard()
-   * here. That was the major source of delay.
+   * Only one innings read before
+   * the ball is inserted.
    */
-  const innings = await getInnings(inningsId);
+
+  const innings =
+    await getInnings(
+      inningsId
+    );
 
   if (!innings) {
-    throw new Error('Innings not found');
+    throw new Error(
+      'Innings not found'
+    );
   }
 
-  if (Number(innings.is_completed)) {
-    throw new Error('Innings is already completed');
+  if (
+    Number(
+      innings.is_completed
+    )
+  ) {
+    throw new Error(
+      'Innings is already completed'
+    );
   }
 
-  if (!innings.striker_id || !innings.non_striker_id) {
+  if (
+    !innings.striker_id ||
+    !innings.non_striker_id
+  ) {
     throw new Error(
       'Set both batsmen before recording a ball'
     );
   }
 
-  if (!innings.current_bowler_id) {
+  if (
+    !innings.current_bowler_id
+  ) {
     throw new Error(
       'Set the bowler before recording a ball'
     );
   }
 
   const extra_type =
-    payload.extra_type || null;
+    payload.extra_type ||
+    null;
 
   const is_wicket =
     Boolean(
@@ -192,7 +307,8 @@ async function recordBall(inningsId, payload = {}) {
     );
 
   const wicket_type =
-    payload.wicket_type || null;
+    payload.wicket_type ||
+    null;
 
   const dismissed_id =
     payload.dismissed_id ||
@@ -200,16 +316,26 @@ async function recordBall(inningsId, payload = {}) {
     null;
 
   const fielder_id =
-    payload.fielder_id || null;
+    payload.fielder_id ||
+    null;
 
   const commentary =
-    payload.commentary || null;
+    payload.commentary ||
+    null;
 
   const runs =
-    Number(payload.runs || 0);
+    Number(
+      payload.runs || 0
+    );
 
   const extra_runs =
-    Number(payload.extra_runs || 0);
+    Number(
+      payload.extra_runs || 0
+    );
+
+  /* -------------------------------------------------------
+     CALCULATE EFFECT
+  ------------------------------------------------------- */
 
   const effect =
     computeRunEffects({
@@ -235,6 +361,7 @@ async function recordBall(inningsId, payload = {}) {
   ------------------------------------------------------- */
 
   if (is_wicket) {
+
     if (!dismissed_id) {
       throw new Error(
         'Dismissed player is required'
@@ -245,7 +372,9 @@ async function recordBall(inningsId, payload = {}) {
       ![
         innings.striker_id,
         innings.non_striker_id
-      ].includes(dismissed_id)
+      ].includes(
+        dismissed_id
+      )
     ) {
       throw new Error(
         'Dismissed player must be the current striker or non-striker'
@@ -258,22 +387,36 @@ async function recordBall(inningsId, payload = {}) {
   ------------------------------------------------------- */
 
   const ballSequence =
-    await getNextBallSequence(inningsId);
+    await getNextBallSequence(
+      inningsId
+    );
 
   const currentTotalBalls =
-    Number(innings.total_balls || 0);
+    Number(
+      innings.total_balls || 0
+    );
 
   const overNumber =
     Math.floor(
       currentTotalBalls / 6
     );
 
+  /*
+   * Illegal deliveries do not consume
+   * a legal ball.
+   */
+
   const ballInOver =
     isLegal
-      ? (currentTotalBalls % 6) + 1
-      : (currentTotalBalls % 6);
+      ? (
+          currentTotalBalls % 6
+        ) + 1
+      : (
+          currentTotalBalls % 6
+        );
 
-  const ballId = uuidv4();
+  const ballId =
+    uuidv4();
 
   /* -------------------------------------------------------
      INSERT BALL
@@ -308,17 +451,24 @@ async function recordBall(inningsId, payload = {}) {
     overNumber,
     ballInOver,
     ballSequence,
+
     innings.striker_id,
     innings.non_striker_id,
     innings.current_bowler_id,
+
     batsmanRuns,
+
     extra_type,
     extra_runs,
+
     is_wicket ? 1 : 0,
+
     wicket_type,
     dismissed_id,
     fielder_id,
+
     isLegal,
+
     commentary
   );
 
@@ -328,15 +478,27 @@ async function recordBall(inningsId, payload = {}) {
 
   const newTotalBalls =
     currentTotalBalls +
-    (isLegal ? 1 : 0);
+    (
+      isLegal
+        ? 1
+        : 0
+    );
 
   const newTotalRuns =
-    Number(innings.total_runs || 0) +
+    Number(
+      innings.total_runs || 0
+    ) +
     teamRuns;
 
   const newTotalWickets =
-    Number(innings.total_wickets || 0) +
-    (is_wicket ? 1 : 0);
+    Number(
+      innings.total_wickets || 0
+    ) +
+    (
+      is_wicket
+        ? 1
+        : 0
+    );
 
   let newStriker =
     innings.striker_id;
@@ -348,17 +510,29 @@ async function recordBall(inningsId, payload = {}) {
      STRIKE ROTATION
   ------------------------------------------------------- */
 
-  if (is_wicket && dismissed_id) {
-    if (dismissed_id === newStriker) {
+  if (
+    is_wicket &&
+    dismissed_id
+  ) {
+
+    if (
+      dismissed_id ===
+      newStriker
+    ) {
       newStriker = null;
     }
 
-    if (dismissed_id === newNonStriker) {
+    if (
+      dismissed_id ===
+      newNonStriker
+    ) {
       newNonStriker = null;
     }
+
   } else if (
     runsRun % 2 === 1
   ) {
+
     [
       newStriker,
       newNonStriker
@@ -381,14 +555,19 @@ async function recordBall(inningsId, payload = {}) {
   let newBowler =
     innings.current_bowler_id;
 
-  if (overJustCompleted) {
+  if (
+    overJustCompleted
+  ) {
+
     /*
-     * End of over strike change.
+     * Change strike at end of over.
      */
+
     if (
       newStriker &&
       newNonStriker
     ) {
+
       [
         newStriker,
         newNonStriker
@@ -399,8 +578,10 @@ async function recordBall(inningsId, payload = {}) {
     }
 
     /*
-     * Force scorer to choose next bowler.
+     * Force scorer to choose
+     * the next bowler.
      */
+
     newBowler = null;
   }
 
@@ -409,11 +590,21 @@ async function recordBall(inningsId, payload = {}) {
   ------------------------------------------------------- */
 
   const extraColumn = {
-    wide: 'extras_wide',
-    noball: 'extras_noball',
-    bye: 'extras_bye',
-    legbye: 'extras_legbye',
-    penalty: 'extras_penalty'
+    wide:
+      'extras_wide',
+
+    noball:
+      'extras_noball',
+
+    bye:
+      'extras_bye',
+
+    legbye:
+      'extras_legbye',
+
+    penalty:
+      'extras_penalty'
+
   }[extra_type];
 
   let updateSql = `
@@ -430,14 +621,32 @@ async function recordBall(inningsId, payload = {}) {
     newTotalBalls
   ];
 
-  if (extraColumn) {
+  if (
+    extraColumn
+  ) {
+
+    /*
+     * WIDE:
+     *
+     * WD       = 1
+     * WD + 1   = 2
+     * WD + 2   = 3
+     *
+     * All are wide extras.
+     */
+
+    const extrasToAdd =
+      extra_type === 'wide'
+        ? teamRuns
+        : extra_runs;
+
     updateSql += `,
       ${extraColumn} =
         COALESCE(${extraColumn}, 0) + ?
     `;
 
     updateParams.push(
-      extra_runs
+      extrasToAdd
     );
   }
 
@@ -455,40 +664,61 @@ async function recordBall(inningsId, payload = {}) {
     inningsId
   );
 
-  await db.prepare(updateSql)
-    .run(...updateParams);
+  /*
+   * IMPORTANT:
+   *
+   * Positional parameters only.
+   *
+   * This avoids the Turso:
+   *
+   * Number of arguments mismatch
+   *
+   * problem.
+   */
+
+  await db
+    .prepare(updateSql)
+    .run(
+      ...updateParams
+    );
 
   /* -------------------------------------------------------
      FINALIZATION
   ------------------------------------------------------- */
 
-  /*
-   * This is only important when the innings can finish.
-   * For normal balls it does very little work.
-   */
   await checkAndFinalizeInnings(
     inningsId
   );
 
-  /*
-   * Get the final innings row.
-   *
-   * This is much cheaper than getScoreboard().
-   */
+  /* -------------------------------------------------------
+     FINAL INNINGS
+  ------------------------------------------------------- */
+
   const updatedInnings =
-    await getInnings(inningsId);
+    await getInnings(
+      inningsId
+    );
 
   /* -------------------------------------------------------
      SAVED BALL
   ------------------------------------------------------- */
 
   const savedBall = {
-    id: ballId,
-    innings_id: inningsId,
 
-    over_number: overNumber,
-    ball_in_over: ballInOver,
-    ball_sequence: ballSequence,
+    id:
+      ballId,
+
+    innings_id:
+      inningsId,
+
+    over_number:
+      overNumber,
+
+    ball_in_over:
+      ballInOver,
+
+    ball_sequence:
+      ballSequence,
 
     batsman_id:
       innings.striker_id,
@@ -503,46 +733,56 @@ async function recordBall(inningsId, payload = {}) {
       batsmanRuns,
 
     extra_type,
+
     extra_runs,
 
     is_wicket:
-      is_wicket ? 1 : 0,
+      is_wicket
+        ? 1
+        : 0,
 
     wicket_type,
+
     dismissed_id,
+
     fielder_id,
 
-    is_legal: isLegal,
+    is_legal:
+      isLegal,
 
     commentary,
 
     display:
       getBallDisplay({
         is_wicket:
-          is_wicket ? 1 : 0,
+          is_wicket
+            ? 1
+            : 0,
+
         extra_type,
+
         runs_batsman:
           batsmanRuns,
+
         extra_runs
       })
   };
 
-  /*
-   * IMPORTANT:
-   *
-   * NO getScoreboard() HERE.
-   *
-   * This response can now reach the frontend
-   * much faster.
-   */
+  /* -------------------------------------------------------
+     RETURN
+  ------------------------------------------------------- */
+
   return {
+
     ballId,
 
-    ball: savedBall,
+    ball:
+      savedBall,
 
     overJustCompleted,
 
     teamRuns,
+
     batsmanRuns,
 
     totalRuns:
@@ -572,14 +812,17 @@ async function recordBall(inningsId, payload = {}) {
    UNDO
 ========================================================= */
 
-async function undoLastBall(inningsId) {
-  const last = await db.prepare(`
-    SELECT *
-    FROM balls
-    WHERE innings_id = ?
-    ORDER BY ball_sequence DESC
-    LIMIT 1
-  `).get(inningsId);
+async function undoLastBall(
+  inningsId
+) {
+  const last =
+    await db.prepare(`
+      SELECT *
+      FROM balls
+      WHERE innings_id = ?
+      ORDER BY ball_sequence DESC
+      LIMIT 1
+    `).get(inningsId);
 
   if (!last) {
     throw new Error(
@@ -590,7 +833,9 @@ async function undoLastBall(inningsId) {
   await db.prepare(`
     DELETE FROM balls
     WHERE id = ?
-  `).run(last.id);
+  `).run(
+    last.id
+  );
 
   await recomputeInningsFromBalls(
     inningsId
@@ -600,26 +845,38 @@ async function undoLastBall(inningsId) {
     UPDATE innings
     SET is_completed = 0
     WHERE id = ?
-  `).run(inningsId);
+  `).run(
+    inningsId
+  );
 
   const innings =
-    await getInnings(inningsId);
+    await getInnings(
+      inningsId
+    );
 
   if (innings) {
+
     await db.prepare(`
       UPDATE matches
       SET status = 'live'
       WHERE id = ?
         AND status = 'innings-break'
-    `).run(innings.match_id);
+    `).run(
+      innings.match_id
+    );
   }
 
   const updatedInnings =
-    await getInnings(inningsId);
+    await getInnings(
+      inningsId
+    );
 
   return {
-    removedBallId: last.id,
-    innings: updatedInnings
+    removedBallId:
+      last.id,
+
+    innings:
+      updatedInnings
   };
 }
 
@@ -631,7 +888,9 @@ async function recomputeInningsFromBalls(
   inningsId
 ) {
   const innings =
-    await getInnings(inningsId);
+    await getInnings(
+      inningsId
+    );
 
   if (!innings) {
     throw new Error(
@@ -645,7 +904,9 @@ async function recomputeInningsFromBalls(
       FROM balls
       WHERE innings_id = ?
       ORDER BY ball_sequence ASC
-    `).all(inningsId);
+    `).all(
+      inningsId
+    );
 
   let totalRuns = 0;
   let totalWickets = 0;
@@ -663,7 +924,10 @@ async function recomputeInningsFromBalls(
   let nonStriker = null;
   let bowler = null;
 
-  if (balls.length > 0) {
+  if (
+    balls.length > 0
+  ) {
+
     striker =
       balls[0].batsman_id;
 
@@ -674,28 +938,50 @@ async function recomputeInningsFromBalls(
       balls[0].bowler_id;
   }
 
-  for (const b of balls) {
+  for (
+    const b of balls
+  ) {
+
     const effect =
       computeRunEffects({
-        runs: b.runs_batsman,
-        extra_type: b.extra_type,
-        extra_runs: b.extra_runs
+        runs:
+          b.runs_batsman,
+
+        extra_type:
+          b.extra_type,
+
+        extra_runs:
+          b.extra_runs
       });
+
+    /* TOTAL RUNS */
 
     totalRuns +=
       effect.teamRuns;
 
+    /* LEGAL BALL */
+
     if (
-      Number(b.is_legal)
+      Number(
+        b.is_legal
+      ) === 1
     ) {
       totalBalls += 1;
     }
 
+    /* WICKET */
+
     if (
-      Number(b.is_wicket)
+      Number(
+        b.is_wicket
+      ) === 1
     ) {
       totalWickets += 1;
     }
+
+    /* -----------------------------------------------------
+       EXTRAS
+    ----------------------------------------------------- */
 
     if (
       b.extra_type &&
@@ -704,11 +990,41 @@ async function recomputeInningsFromBalls(
         b.extra_type
       )
     ) {
-      extras[b.extra_type] +=
-        Number(
-          b.extra_runs || 0
-        );
+
+      if (
+        b.extra_type === 'wide'
+      ) {
+
+        /*
+         * WD + 2 = 3 wides
+         */
+
+        extras.wide +=
+          effect.teamRuns;
+
+      } else {
+
+        /*
+         * NB + 4:
+         *
+         * extra_runs = 1
+         *
+         * so only 1 is added to
+         * no-ball extras.
+         */
+
+        extras[
+          b.extra_type
+        ] +=
+          Number(
+            b.extra_runs || 0
+          );
+      }
     }
+
+    /* -----------------------------------------------------
+       STRIKE
+    ----------------------------------------------------- */
 
     let ballStriker =
       b.batsman_id;
@@ -717,23 +1033,31 @@ async function recomputeInningsFromBalls(
       b.non_striker_id;
 
     if (
-      Number(b.is_wicket) &&
+      Number(
+        b.is_wicket
+      ) === 1 &&
       b.dismissed_id
     ) {
+
       if (
         b.dismissed_id ===
         ballStriker
       ) {
-        ballStriker = null;
+        ballStriker =
+          null;
+
       } else if (
         b.dismissed_id ===
         ballNonStriker
       ) {
-        ballNonStriker = null;
+        ballNonStriker =
+          null;
       }
+
     } else if (
       effect.runsRun % 2 === 1
     ) {
+
       [
         ballStriker,
         ballNonStriker
@@ -743,18 +1067,31 @@ async function recomputeInningsFromBalls(
       ];
     }
 
-    striker = ballStriker;
-    nonStriker = ballNonStriker;
-    bowler = b.bowler_id;
+    striker =
+      ballStriker;
+
+    nonStriker =
+      ballNonStriker;
+
+    bowler =
+      b.bowler_id;
+
+    /* -----------------------------------------------------
+       END OF OVER
+    ----------------------------------------------------- */
 
     if (
-      Number(b.is_legal) &&
+      Number(
+        b.is_legal
+      ) === 1 &&
       totalBalls % 6 === 0
     ) {
+
       if (
         striker &&
         nonStriker
       ) {
+
         [
           striker,
           nonStriker
@@ -784,18 +1121,27 @@ async function recomputeInningsFromBalls(
       current_bowler_id = ?
     WHERE id = ?
   `).run(
+
     totalRuns,
+
     totalWickets,
+
     totalBalls,
 
     extras.wide,
+
     extras.noball,
+
     extras.bye,
+
     extras.legbye,
+
     extras.penalty,
 
     striker,
+
     nonStriker,
+
     bowler,
 
     inningsId
@@ -810,7 +1156,9 @@ async function checkAndFinalizeInnings(
   inningsId
 ) {
   const innings =
-    await getInnings(inningsId);
+    await getInnings(
+      inningsId
+    );
 
   if (!innings) {
     return;
@@ -863,11 +1211,16 @@ async function checkAndFinalizeInnings(
       is_completed = 1,
       current_bowler_id = NULL
     WHERE id = ?
-  `).run(inningsId);
+  `).run(
+    inningsId
+  );
 
   if (
-    Number(innings.innings_number) >= 2
+    Number(
+      innings.innings_number
+    ) >= 2
   ) {
+
     await finalizeMatch(
       match.id
     );
@@ -881,16 +1234,22 @@ async function checkAndFinalizeInnings(
       status = 'innings-break',
       current_innings = 1
     WHERE id = ?
-  `).run(match.id);
+  `).run(
+    match.id
+  );
 }
 
 /* =========================================================
    FINALIZE MATCH
 ========================================================= */
 
-async function finalizeMatch(matchId) {
+async function finalizeMatch(
+  matchId
+) {
   const match =
-    await getMatch(matchId);
+    await getMatch(
+      matchId
+    );
 
   if (!match) {
     return;
@@ -902,21 +1261,30 @@ async function finalizeMatch(matchId) {
       FROM innings
       WHERE match_id = ?
       ORDER BY innings_number ASC
-    `).all(matchId);
+    `).all(
+      matchId
+    );
 
   const inn1 =
     allInnings.find(
       i =>
-        Number(i.innings_number) === 1
+        Number(
+          i.innings_number
+        ) === 1
     );
 
   const inn2 =
     allInnings.find(
       i =>
-        Number(i.innings_number) === 2
+        Number(
+          i.innings_number
+        ) === 2
     );
 
-  if (!inn1 || !inn2) {
+  if (
+    !inn1 ||
+    !inn2
+  ) {
     return;
   }
 
@@ -942,9 +1310,14 @@ async function finalizeMatch(matchId) {
   let winnerId = null;
 
   if (
-    Number(inn2.total_runs) >
-    Number(inn1.total_runs)
+    Number(
+      inn2.total_runs
+    ) >
+    Number(
+      inn1.total_runs
+    )
   ) {
+
     const wickets =
       Math.max(
         0,
@@ -957,20 +1330,34 @@ async function finalizeMatch(matchId) {
     resultText =
       `${team2.name} won by ${wickets} wicket${wickets === 1 ? '' : 's'}`;
 
-    winnerId = team2.id;
+    winnerId =
+      team2.id;
+
   } else if (
-    Number(inn1.total_runs) >
-    Number(inn2.total_runs)
+    Number(
+      inn1.total_runs
+    ) >
+    Number(
+      inn2.total_runs
+    )
   ) {
+
     const margin =
-      Number(inn1.total_runs) -
-      Number(inn2.total_runs);
+      Number(
+        inn1.total_runs
+      ) -
+      Number(
+        inn2.total_runs
+      );
 
     resultText =
       `${team1.name} won by ${margin} run${margin === 1 ? '' : 's'}`;
 
-    winnerId = team1.id;
+    winnerId =
+      team1.id;
+
   } else {
+
     resultText =
       'Match tied';
   }
@@ -991,24 +1378,12 @@ async function finalizeMatch(matchId) {
 }
 
 /* =========================================================
-   FAST SCOREBOARD BUILDERS
+   BATTING SCORECARD BUILDER
 ========================================================= */
 
-/*
- * These functions accept already-loaded balls.
- *
- * This is important because Turso is remote.
- * We don't want:
- *
- * SELECT balls
- * SELECT balls
- * SELECT balls
- * SELECT balls
- *
- * for one scoreboard.
- */
-
-function buildBattingScorecard(balls) {
+function buildBattingScorecard(
+  balls
+) {
   const stats = {};
   const order = [];
 
@@ -1018,15 +1393,25 @@ function buildBattingScorecard(balls) {
     }
 
     if (!stats[id]) {
+
       stats[id] = {
-        player_id: id,
+        player_id:
+          id,
+
         runs: 0,
+
         balls: 0,
+
         fours: 0,
+
         sixes: 0,
+
         is_out: false,
+
         how_out: null,
+
         dismissed_by: null,
+
         fielder_id: null
       };
 
@@ -1036,79 +1421,138 @@ function buildBattingScorecard(balls) {
     return stats[id];
   }
 
-  for (const b of balls) {
-    const striker =
-      ensure(b.batsman_id);
+  for (
+    const b of balls
+  ) {
 
-    ensure(b.non_striker_id);
+    const striker =
+      ensure(
+        b.batsman_id
+      );
+
+    ensure(
+      b.non_striker_id
+    );
+
+    /*
+     * Wide does not count as
+     * ball faced.
+     *
+     * No-ball DOES count as a
+     * ball faced for this app's
+     * scoring model.
+     */
 
     if (
-      b.extra_type !== 'wide'
+      b.extra_type !==
+      'wide'
     ) {
-      striker.balls += 1;
+
+      if (striker) {
+        striker.balls += 1;
+      }
     }
+
+    /*
+     * Bat runs are credited on:
+     *
+     * normal delivery
+     * no-ball
+     */
 
     if (
       !b.extra_type ||
-      b.extra_type === 'noball'
+      b.extra_type ===
+        'noball'
     ) {
+
       const batRuns =
         Number(
           b.runs_batsman || 0
         );
 
-      striker.runs +=
-        batRuns;
+      if (striker) {
 
-      if (batRuns === 4) {
-        striker.fours += 1;
-      }
+        striker.runs +=
+          batRuns;
 
-      if (batRuns === 6) {
-        striker.sixes += 1;
+        if (
+          batRuns === 4
+        ) {
+          striker.fours += 1;
+        }
+
+        if (
+          batRuns === 6
+        ) {
+          striker.sixes += 1;
+        }
       }
     }
 
+    /* WICKET */
+
     if (
-      Number(b.is_wicket) &&
+      Number(
+        b.is_wicket
+      ) === 1 &&
       b.dismissed_id
     ) {
+
       const dismissed =
-        ensure(b.dismissed_id);
+        ensure(
+          b.dismissed_id
+        );
 
-      dismissed.is_out = true;
+      if (dismissed) {
 
-      dismissed.how_out =
-        b.wicket_type;
+        dismissed.is_out =
+          true;
 
-      dismissed.dismissed_by =
-        b.bowler_id;
+        dismissed.how_out =
+          b.wicket_type;
 
-      dismissed.fielder_id =
-        b.fielder_id;
+        dismissed.dismissed_by =
+          b.bowler_id;
+
+        dismissed.fielder_id =
+          b.fielder_id;
+      }
     }
   }
 
-  return order.map(id => {
-    const s = stats[id];
+  return order.map(
+    id => {
 
-    return {
-      ...s,
+      const s =
+        stats[id];
 
-      strike_rate:
-        s.balls > 0
-          ? Number(
-              (
-                (s.runs / s.balls) *
-                100
-              ).toFixed(2)
-            )
-          : 0
-    };
-  });
+      return {
+        ...s,
+
+        strike_rate:
+          s.balls > 0
+            ? Number(
+                (
+                  (
+                    s.runs /
+                    s.balls
+                  ) * 100
+                ).toFixed(2)
+              )
+            : 0
+      };
+    }
+  );
 }
 
-function buildBowlingScorecard(balls) {
+/* =========================================================
+   BOWLING SCORECARD BUILDER
+========================================================= */
+
+function buildBowlingScorecard(
+  balls
+) {
   const stats = {};
   const order = [];
 
@@ -1118,12 +1562,19 @@ function buildBowlingScorecard(balls) {
     }
 
     if (!stats[id]) {
+
       stats[id] = {
-        player_id: id,
+        player_id:
+          id,
+
         legalBalls: 0,
+
         runs: 0,
+
         wickets: 0,
+
         maidens: 0,
+
         overRuns: {}
       };
 
@@ -1133,9 +1584,14 @@ function buildBowlingScorecard(balls) {
     return stats[id];
   }
 
-  for (const b of balls) {
+  for (
+    const b of balls
+  ) {
+
     const s =
-      ensure(b.bowler_id);
+      ensure(
+        b.bowler_id
+      );
 
     if (!s) {
       continue;
@@ -1143,161 +1599,228 @@ function buildBowlingScorecard(balls) {
 
     const effect =
       computeRunEffects({
-        runs: b.runs_batsman,
-        extra_type: b.extra_type,
-        extra_runs: b.extra_runs
+        runs:
+          b.runs_batsman,
+
+        extra_type:
+          b.extra_type,
+
+        extra_runs:
+          b.extra_runs
       });
 
     const legal =
-      Number(b.is_legal) === 1;
+      Number(
+        b.is_legal
+      ) === 1;
 
     if (legal) {
       s.legalBalls += 1;
     }
 
     /*
-     * Byes and leg-byes are not
-     * charged to the bowler.
+     * Bye and leg-bye are not
+     * charged to bowler.
      */
+
     const chargedRuns =
-      b.extra_type === 'bye' ||
-      b.extra_type === 'legbye'
+      b.extra_type ===
+        'bye' ||
+      b.extra_type ===
+        'legbye'
         ? 0
         : effect.teamRuns;
 
     s.runs +=
       chargedRuns;
 
+    /*
+     * Run-outs are not bowler
+     * wickets.
+     */
+
     if (
-      Number(b.is_wicket) &&
+      Number(
+        b.is_wicket
+      ) === 1 &&
       b.wicket_type &&
-      b.wicket_type !== 'run-out'
+      b.wicket_type !==
+        'run-out'
     ) {
       s.wickets += 1;
     }
+
+    /* OVER */
 
     const overNo =
       Number(
         b.over_number || 0
       );
 
-    if (!s.overRuns[overNo]) {
+    if (
+      !s.overRuns[overNo]
+    ) {
+
       s.overRuns[overNo] = {
         runs: 0,
         legalBalls: 0
       };
     }
 
-    s.overRuns[overNo].runs +=
+    s.overRuns[
+      overNo
+    ].runs +=
       chargedRuns;
 
     if (legal) {
-      s.overRuns[overNo]
-        .legalBalls += 1;
+
+      s.overRuns[
+        overNo
+      ].legalBalls += 1;
     }
   }
 
-  return order.map(id => {
-    const s = stats[id];
+  return order.map(
+    id => {
 
-    const completedOvers =
-      Math.floor(
-        s.legalBalls / 6
-      );
+      const s =
+        stats[id];
 
-    const ballsRem =
-      s.legalBalls % 6;
+      const completedOvers =
+        Math.floor(
+          s.legalBalls / 6
+        );
 
-    const maidens =
-      Object.values(
-        s.overRuns
-      ).filter(
-        over =>
+      const ballsRem =
+        s.legalBalls % 6;
+
+      let maidens = 0;
+
+      for (
+        const over of
+          Object.values(
+            s.overRuns
+          )
+      ) {
+
+        if (
           over.legalBalls >= 6 &&
           over.runs === 0
-      ).length;
+        ) {
+          maidens += 1;
+        }
+      }
 
-    const economy =
-      s.legalBalls > 0
-        ? Number(
-            (
-              s.runs /
-              (s.legalBalls / 6)
-            ).toFixed(2)
-          )
-        : 0;
+      const economy =
+        s.legalBalls > 0
+          ? Number(
+              (
+                s.runs /
+                (
+                  s.legalBalls /
+                  6
+                )
+              ).toFixed(2)
+            )
+          : 0;
 
-    return {
-      player_id: id,
+      return {
 
-      legalBalls:
-        s.legalBalls,
+        player_id:
+          id,
 
-      balls:
-        s.legalBalls,
+        legalBalls:
+          s.legalBalls,
 
-      overs:
-        `${completedOvers}.${ballsRem}`,
+        balls:
+          s.legalBalls,
 
-      runs:
-        s.runs,
+        overs:
+          `${completedOvers}.${ballsRem}`,
 
-      wickets:
-        s.wickets,
+        runs:
+          s.runs,
 
-      maidens,
+        wickets:
+          s.wickets,
 
-      economy
-    };
-  });
+        maidens,
+
+        economy
+      };
+    }
+  );
 }
 
-function buildPartnership(balls) {
+/* =========================================================
+   PARTNERSHIP
+========================================================= */
+
+function buildPartnership(
+  balls
+) {
   let runs = 0;
   let ballsFaced = 0;
 
   /*
-   * Find the current partnership by
-   * working backwards from the last wicket.
+   * Find the last wicket.
    */
+
   let startIndex = 0;
 
   for (
-    let i = balls.length - 1;
+    let i =
+      balls.length - 1;
     i >= 0;
     i--
   ) {
+
     if (
       Number(
         balls[i].is_wicket
       ) === 1
     ) {
-      startIndex = i + 1;
+
+      startIndex =
+        i + 1;
+
       break;
     }
   }
 
   for (
-    let i = startIndex;
+    let i =
+      startIndex;
     i < balls.length;
     i++
   ) {
-    const b = balls[i];
+
+    const b =
+      balls[i];
 
     const effect =
       computeRunEffects({
-        runs: b.runs_batsman,
-        extra_type: b.extra_type,
-        extra_runs: b.extra_runs
+        runs:
+          b.runs_batsman,
+
+        extra_type:
+          b.extra_type,
+
+        extra_runs:
+          b.extra_runs
       });
 
-    runs += effect.teamRuns;
+    runs +=
+      effect.teamRuns;
 
     /*
-     * Wide is not a ball faced.
+     * Wide is not counted
+     * as a ball faced.
      */
+
     if (
-      b.extra_type !== 'wide'
+      b.extra_type !==
+      'wide'
     ) {
       ballsFaced += 1;
     }
@@ -1305,9 +1828,15 @@ function buildPartnership(balls) {
 
   return {
     runs,
-    balls: ballsFaced
+
+    balls:
+      ballsFaced
   };
 }
+
+/* =========================================================
+   CURRENT OVER
+========================================================= */
 
 function buildCurrentOver(
   balls,
@@ -1315,55 +1844,220 @@ function buildCurrentOver(
 ) {
   let overNumber =
     Math.floor(
-      Number(totalBalls || 0) / 6
+      Number(
+        totalBalls || 0
+      ) / 6
     );
 
   /*
-   * At exactly 6, 12, 18... balls,
-   * show the completed over.
+   * At exactly 6, 12, 18...
+   * display the completed over.
    */
+
   if (
-    Number(totalBalls || 0) > 0 &&
-    Number(totalBalls) % 6 === 0
+    Number(
+      totalBalls || 0
+    ) > 0 &&
+    Number(
+      totalBalls
+    ) % 6 === 0
   ) {
+
     overNumber =
       Math.floor(
-        Number(totalBalls) / 6
+        Number(
+          totalBalls
+        ) / 6
       ) - 1;
   }
 
-  if (overNumber < 0) {
+  if (
+    overNumber < 0
+  ) {
     return [];
   }
 
   return balls
     .filter(
       b =>
-        Number(b.over_number) ===
+        Number(
+          b.over_number
+        ) ===
         overNumber
     )
-    .map(b => ({
-      ...b,
-      display:
-        getBallDisplay(b)
-    }));
+    .map(
+      b => ({
+        ...b,
+
+        display:
+          getBallDisplay(b)
+      })
+    );
 }
 
 /* =========================================================
-   FULL SCOREBOARD - OPTIMIZED
+   EXTRAS BUILDER
 ========================================================= */
 
-async function getScoreboard(inningsId) {
+function buildExtras(
+  innings,
+  balls
+) {
+  /*
+   * Prefer the values stored in innings.
+   *
+   * These are updated every time a ball
+   * is recorded.
+   */
+
+  let wide =
+    Number(
+      innings.extras_wide || 0
+    );
+
+  let noball =
+    Number(
+      innings.extras_noball || 0
+    );
+
+  let bye =
+    Number(
+      innings.extras_bye || 0
+    );
+
+  let legbye =
+    Number(
+      innings.extras_legbye || 0
+    );
+
+  let penalty =
+    Number(
+      innings.extras_penalty || 0
+    );
+
+  /*
+   * If stored values are unavailable or
+   * zero while balls exist, rebuild from
+   * balls.
+   */
+
+  if (
+    balls.length > 0 &&
+    wide === 0 &&
+    noball === 0 &&
+    bye === 0 &&
+    legbye === 0 &&
+    penalty === 0
+  ) {
+
+    wide = 0;
+    noball = 0;
+    bye = 0;
+    legbye = 0;
+    penalty = 0;
+
+    for (
+      const b of balls
+    ) {
+
+      const effect =
+        computeRunEffects({
+          runs:
+            b.runs_batsman,
+
+          extra_type:
+            b.extra_type,
+
+          extra_runs:
+            b.extra_runs
+        });
+
+      switch (
+        b.extra_type
+      ) {
+
+        case 'wide':
+          wide +=
+            effect.teamRuns;
+          break;
+
+        case 'noball':
+          noball +=
+            Number(
+              b.extra_runs || 0
+            );
+          break;
+
+        case 'bye':
+          bye +=
+            Number(
+              b.extra_runs || 0
+            );
+          break;
+
+        case 'legbye':
+          legbye +=
+            Number(
+              b.extra_runs || 0
+            );
+          break;
+
+        case 'penalty':
+          penalty +=
+            Number(
+              b.extra_runs || 0
+            );
+          break;
+
+        default:
+          break;
+      }
+    }
+  }
+
+  const total =
+    wide +
+    noball +
+    bye +
+    legbye +
+    penalty;
+
+  return {
+    wide,
+
+    noball,
+
+    bye,
+
+    legbye,
+
+    penalty,
+
+    total
+  };
+}
+
+/* =========================================================
+   FULL SCOREBOARD
+========================================================= */
+
+async function getScoreboard(
+  inningsId
+) {
   /*
    * Only TWO database reads:
    *
    * 1. innings
-   * 2. all balls
+   * 2. balls
    *
-   * Everything else happens in memory.
+   * Everything else is calculated
+   * in memory.
    */
+
   const innings =
-    await getInnings(inningsId);
+    await getInnings(
+      inningsId
+    );
 
   if (!innings) {
     return null;
@@ -1375,7 +2069,13 @@ async function getScoreboard(inningsId) {
       FROM balls
       WHERE innings_id = ?
       ORDER BY ball_sequence ASC
-    `).all(inningsId);
+    `).all(
+      inningsId
+    );
+
+  /* -------------------------------------------------------
+     SCORECARDS
+  ------------------------------------------------------- */
 
   const battingCard =
     buildBattingScorecard(
@@ -1387,20 +2087,35 @@ async function getScoreboard(inningsId) {
       balls
     );
 
+  /* -------------------------------------------------------
+     RECENT BALLS
+  ------------------------------------------------------- */
+
   const recentBalls =
     balls
       .slice(-18)
-      .map(b => ({
-        ...b,
-        display:
-          getBallDisplay(b)
-      }));
+      .map(
+        b => ({
+          ...b,
+
+          display:
+            getBallDisplay(b)
+        })
+      );
+
+  /* -------------------------------------------------------
+     CURRENT OVER
+  ------------------------------------------------------- */
 
   const currentOver =
     buildCurrentOver(
       balls,
       innings.total_balls
     );
+
+  /* -------------------------------------------------------
+     CURRENT BOWLER
+  ------------------------------------------------------- */
 
   const currentBowler =
     innings.current_bowler_id
@@ -1411,12 +2126,20 @@ async function getScoreboard(inningsId) {
         ) || null
       : null;
 
+  /* -------------------------------------------------------
+     STRIKER
+  ------------------------------------------------------- */
+
   const striker =
     battingCard.find(
       b =>
         b.player_id ===
         innings.striker_id
     ) || null;
+
+  /* -------------------------------------------------------
+     NON-STRIKER
+  ------------------------------------------------------- */
 
   const nonStriker =
     battingCard.find(
@@ -1425,24 +2148,49 @@ async function getScoreboard(inningsId) {
         innings.non_striker_id
     ) || null;
 
+  /* -------------------------------------------------------
+     RUN RATE
+  ------------------------------------------------------- */
+
   const ballsTotal =
     Number(
       innings.total_balls || 0
+    );
+
+  const totalRuns =
+    Number(
+      innings.total_runs || 0
     );
 
   const runRate =
     ballsTotal > 0
       ? Number(
           (
-            Number(
-              innings.total_runs || 0
-            ) /
-            (ballsTotal / 6)
+            totalRuns /
+            (
+              ballsTotal /
+              6
+            )
           ).toFixed(2)
         )
       : 0;
 
+  /* -------------------------------------------------------
+     EXTRAS
+  ------------------------------------------------------- */
+
+  const extras =
+    buildExtras(
+      innings,
+      balls
+    );
+
+  /* -------------------------------------------------------
+     RETURN
+  ------------------------------------------------------- */
+
   return {
+
     innings,
 
     overs:
@@ -1465,7 +2213,9 @@ async function getScoreboard(inningsId) {
       ballsTotal === 0
         ? 0
         : Math.floor(
-            (ballsTotal - 1) / 6
+            (
+              ballsTotal - 1
+            ) / 6
           ),
 
     currentBowler,
@@ -1479,7 +2229,9 @@ async function getScoreboard(inningsId) {
         balls
       ),
 
-    runRate
+    runRate,
+
+    extras
   };
 }
 
@@ -1495,36 +2247,49 @@ async function computeCareerBattingStats(
       SELECT *
       FROM balls
       WHERE batsman_id = ?
-    `).all(playerId);
+    `).all(
+      playerId
+    );
 
   let runs = 0;
   let ballsFaced = 0;
   let fours = 0;
   let sixes = 0;
 
-  for (const b of balls) {
+  for (
+    const b of balls
+  ) {
+
     if (
-      b.extra_type !== 'wide'
+      b.extra_type !==
+      'wide'
     ) {
       ballsFaced += 1;
     }
 
     if (
       !b.extra_type ||
-      b.extra_type === 'noball'
+      b.extra_type ===
+        'noball'
     ) {
+
       const batRuns =
         Number(
           b.runs_batsman || 0
         );
 
-      runs += batRuns;
+      runs +=
+        batRuns;
 
-      if (batRuns === 4) {
+      if (
+        batRuns === 4
+      ) {
         fours += 1;
       }
 
-      if (batRuns === 6) {
+      if (
+        batRuns === 6
+      ) {
         sixes += 1;
       }
     }
@@ -1536,7 +2301,9 @@ async function computeCareerBattingStats(
       FROM balls
       WHERE dismissed_id = ?
         AND is_wicket = 1
-    `).get(playerId);
+    `).get(
+      playerId
+    );
 
   const timesOut =
     Number(
@@ -1560,6 +2327,7 @@ async function computeCareerBattingStats(
     );
 
   return {
+
     innings_batted:
       inningsBatted,
 
@@ -1586,8 +2354,10 @@ async function computeCareerBattingStats(
       ballsFaced > 0
         ? Number(
             (
-              (runs / ballsFaced) *
-              100
+              (
+                runs /
+                ballsFaced
+              ) * 100
             ).toFixed(2)
           )
         : 0,
@@ -1596,7 +2366,8 @@ async function computeCareerBattingStats(
       timesOut > 0
         ? Number(
             (
-              runs / timesOut
+              runs /
+              timesOut
             ).toFixed(2)
           )
         : runs
@@ -1615,7 +2386,9 @@ async function computeCareerBowlingStats(
       SELECT *
       FROM balls
       WHERE bowler_id = ?
-    `).all(playerId);
+    `).all(
+      playerId
+    );
 
   let legalBalls = 0;
   let runs = 0;
@@ -1623,32 +2396,48 @@ async function computeCareerBowlingStats(
   let foursGiven = 0;
   let sixesGiven = 0;
 
-  for (const b of balls) {
+  for (
+    const b of balls
+  ) {
+
     const effect =
       computeRunEffects({
-        runs: b.runs_batsman,
-        extra_type: b.extra_type,
-        extra_runs: b.extra_runs
+        runs:
+          b.runs_batsman,
+
+        extra_type:
+          b.extra_type,
+
+        extra_runs:
+          b.extra_runs
       });
 
     if (
-      Number(b.is_legal)
+      Number(
+        b.is_legal
+      )
     ) {
       legalBalls += 1;
     }
 
     const chargedRuns =
-      b.extra_type === 'bye' ||
-      b.extra_type === 'legbye'
+      b.extra_type ===
+        'bye' ||
+      b.extra_type ===
+        'legbye'
         ? 0
         : effect.teamRuns;
 
-    runs += chargedRuns;
+    runs +=
+      chargedRuns;
 
     if (
-      Number(b.is_wicket) &&
+      Number(
+        b.is_wicket
+      ) &&
       b.wicket_type &&
-      b.wicket_type !== 'run-out'
+      b.wicket_type !==
+        'run-out'
     ) {
       wickets += 1;
     }
@@ -1656,7 +2445,8 @@ async function computeCareerBowlingStats(
     if (
       (
         !b.extra_type ||
-        b.extra_type === 'noball'
+        b.extra_type ===
+          'noball'
       ) &&
       Number(
         b.runs_batsman
@@ -1668,7 +2458,8 @@ async function computeCareerBowlingStats(
     if (
       (
         !b.extra_type ||
-        b.extra_type === 'noball'
+        b.extra_type ===
+          'noball'
       ) &&
       Number(
         b.runs_batsman
@@ -1683,7 +2474,9 @@ async function computeCareerBowlingStats(
       SELECT COUNT(DISTINCT innings_id) AS c
       FROM balls
       WHERE bowler_id = ?
-    `).get(playerId);
+    `).get(
+      playerId
+    );
 
   const inningsBowled =
     Number(
@@ -1691,6 +2484,7 @@ async function computeCareerBowlingStats(
     );
 
   return {
+
     innings_bowled:
       inningsBowled,
 
@@ -1718,7 +2512,10 @@ async function computeCareerBowlingStats(
         ? Number(
             (
               runs /
-              (legalBalls / 6)
+              (
+                legalBalls /
+                6
+              )
             ).toFixed(2)
           )
         : 0
@@ -1733,6 +2530,7 @@ async function getPlayerCareerStats(
   playerId
 ) {
   return {
+
     batting:
       await computeCareerBattingStats(
         playerId
@@ -1759,19 +2557,27 @@ async function getAllTimeRecords() {
   let highestScore = null;
   let bestBowling = null;
 
-  for (const inn of inningsRows) {
+  for (
+    const inn of inningsRows
+  ) {
+
     const batting =
       await computeBattingScorecard(
         inn.id
       );
 
-    for (const b of batting) {
+    for (
+      const b of batting
+    ) {
+
       if (
         !highestScore ||
         b.runs >
           highestScore.runs
       ) {
+
         highestScore = {
+
           player_id:
             b.player_id,
 
@@ -1804,7 +2610,10 @@ async function getAllTimeRecords() {
         inn.id
       );
 
-    for (const b of bowling) {
+    for (
+      const b of bowling
+    ) {
+
       const better =
         !bestBowling ||
         b.wickets >
@@ -1817,7 +2626,9 @@ async function getAllTimeRecords() {
         );
 
       if (better) {
+
         bestBowling = {
+
           player_id:
             b.player_id,
 
@@ -1871,7 +2682,9 @@ async function getAllTimeRecords() {
     await Promise.all(
       batsmanIds.map(
         async id => ({
-          player_id: id,
+
+          player_id:
+            id,
 
           ...await computeCareerBattingStats(
             id
@@ -1884,7 +2697,9 @@ async function getAllTimeRecords() {
     await Promise.all(
       bowlerIds.map(
         async id => ({
-          player_id: id,
+
+          player_id:
+            id,
 
           ...await computeCareerBowlingStats(
             id
@@ -1893,19 +2708,25 @@ async function getAllTimeRecords() {
       )
     );
 
-  const topBy = (
-    arr,
-    key,
-    n = 10
-  ) =>
-    [...arr]
-      .sort(
-        (a, b) =>
-          b[key] - a[key]
-      )
-      .slice(0, n);
+  const topBy =
+    (
+      arr,
+      key,
+      n = 10
+    ) =>
+      [...arr]
+        .sort(
+          (a, b) =>
+            b[key] -
+            a[key]
+        )
+        .slice(
+          0,
+          n
+        );
 
   return {
+
     highestScore,
 
     bestBowling,
@@ -1966,7 +2787,10 @@ async function getAllTimeRecords() {
             a.economy -
             b.economy
         )
-        .slice(0, 10)
+        .slice(
+          0,
+          10
+        )
   };
 }
 
@@ -1983,7 +2807,9 @@ async function computeBattingScorecard(
       FROM balls
       WHERE innings_id = ?
       ORDER BY ball_sequence ASC
-    `).all(inningsId);
+    `).all(
+      inningsId
+    );
 
   return buildBattingScorecard(
     balls
@@ -1999,7 +2825,9 @@ async function computeBowlingScorecard(
       FROM balls
       WHERE innings_id = ?
       ORDER BY ball_sequence ASC
-    `).all(inningsId);
+    `).all(
+      inningsId
+    );
 
   return buildBowlingScorecard(
     balls
@@ -2015,7 +2843,9 @@ async function computeCurrentPartnership(
       FROM balls
       WHERE innings_id = ?
       ORDER BY ball_sequence ASC
-    `).all(inningsId);
+    `).all(
+      inningsId
+    );
 
   return buildPartnership(
     balls
@@ -2032,7 +2862,9 @@ async function computeCurrentOver(
       FROM balls
       WHERE innings_id = ?
       ORDER BY ball_sequence ASC
-    `).all(inningsId);
+    `).all(
+      inningsId
+    );
 
   return buildCurrentOver(
     balls,
@@ -2045,6 +2877,7 @@ async function computeCurrentOver(
 ========================================================= */
 
 module.exports = {
+
   MAX_WICKETS,
 
   oversStr,
