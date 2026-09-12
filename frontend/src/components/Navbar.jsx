@@ -1,3 +1,4 @@
+
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
@@ -27,44 +28,48 @@ export default function Navbar() {
         <div className="flex items-center justify-between">
 
           {/* =================================================
-              GOLDEN CRICKET CLUB LOGO
+              GOLDEN CRICKET CLUB LOGO + NAME
           ================================================= */}
 
           <Link
             to="/"
             onClick={() => setMenuOpen(false)}
-            className="flex items-center gap-3 group min-w-0"
+            className="flex items-center gap-4 group min-w-0"
           >
 
-            {/* ROUND LOGO */}
+            {/* =================================================
+                LARGE ROUND LOGO
+            ================================================= */}
 
             <div
               className="
-                w-14 h-14
-                sm:w-16 sm:h-16
+                w-20 h-20
+                sm:w-24 sm:h-24
                 rounded-full
                 overflow-hidden
                 flex-shrink-0
                 bg-black
                 border-2 border-yellow-400
-                shadow-lg shadow-yellow-500/20
+                shadow-xl shadow-yellow-500/30
                 group-hover:scale-105
                 transition-transform duration-200
               "
             >
               <img
-                src="frontend/public/WhatsApp Image 2026-09-12 at 9.19.32 AM.jpeg"
+                src="/WhatsApp Image 2026-09-12 at 9.19.32 AM.jpeg"
                 alt="Golden Cricket Club"
                 className="
                   w-full
                   h-full
-                  object-contain
+                  object-cover
                   rounded-full
                 "
               />
             </div>
 
-            {/* CLUB NAME */}
+            {/* =================================================
+                CLUB NAME
+            ================================================= */}
 
             <div className="min-w-0">
 
@@ -89,7 +94,7 @@ export default function Navbar() {
 
               <div
                 className="
-                  mt-1
+                  mt-2
                   text-[8px]
                   sm:text-[10px]
                   tracking-[0.25em]
@@ -122,6 +127,8 @@ export default function Navbar() {
                 <span>{item.label}</span>
               </Link>
             ))}
+
+            {/* MANAGE TEAMS */}
 
             <Link
               to="/teams"
@@ -157,10 +164,12 @@ export default function Navbar() {
               text-2xl
               text-yellow-400
               px-2
+              py-2
+              rounded-lg
+              hover:bg-slate-800
+              transition
             "
-            onClick={() =>
-              setMenuOpen((open) => !open)
-            }
+            onClick={() => setMenuOpen((open) => !open)}
             aria-label="Toggle menu"
           >
             {menuOpen ? '✕' : '☰'}
@@ -195,6 +204,8 @@ export default function Navbar() {
                 <span>{item.label}</span>
               </Link>
             ))}
+
+            {/* MOBILE MANAGE TEAMS */}
 
             <Link
               to="/teams"
