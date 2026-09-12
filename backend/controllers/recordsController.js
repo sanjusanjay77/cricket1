@@ -49,7 +49,7 @@ exports.getRecords = async (req, res) => {
 
     const attach = (entry) => {
       if (!entry) {
-        return entry;
+        return null;
       }
 
       const player =
@@ -96,20 +96,20 @@ exports.getRecords = async (req, res) => {
 
     /* =====================================================
        FINAL RESPONSE
-       
+
+       ONLY TWO SINGLE-INNINGS RECORDS:
+       1. Best Batting Figure
+       2. Best Bowling Figure
+
        IMPORTANT:
-       bestBattingFigure is included here.
+       highestScore has been completely removed.
     ===================================================== */
 
     const response = {
-      /* ===================================================
-         SINGLE-MATCH RECORDS
-      =================================================== */
 
-      highestScore:
-        attach(
-          records.highestScore
-        ),
+      /* ===================================================
+         BEST SINGLE-INNINGS RECORDS
+      =================================================== */
 
       bestBattingFigure:
         attach(
@@ -188,11 +188,6 @@ exports.getRecords = async (req, res) => {
     );
 
     console.log(
-      'HIGHEST SCORE:',
-      response.highestScore
-    );
-
-    console.log(
       'BEST BOWLING:',
       response.bestBowling
     );
@@ -213,6 +208,7 @@ exports.getRecords = async (req, res) => {
     res.json(response);
 
   } catch (error) {
+
     console.error(
       'Failed to load all-time records:',
       error
