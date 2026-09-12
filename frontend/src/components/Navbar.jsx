@@ -33,9 +33,27 @@ export default function Navbar() {
             className="flex items-center gap-3 group"
           >
 
-            {/* Cricket badge */}
-            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-300 via-yellow-500 to-amber-700 flex items-center justify-center shadow-lg shadow-yellow-500/20 border-2 border-yellow-300/70 group-hover:scale-105 transition-transform">
-              <span className="text-2xl">🏏</span>
+            {/* GOLDEN CRICKET CLUB ROUND LOGO */}
+            <div
+              className="
+                w-14 h-14
+                sm:w-16 sm:h-16
+                rounded-full
+                overflow-hidden
+                flex-shrink-0
+                bg-black
+                border-2 border-yellow-400
+                shadow-lg shadow-yellow-500/30
+                group-hover:scale-105
+                group-hover:border-yellow-300
+                transition-all duration-200
+              "
+            >
+              <img
+                src="/gcc-logo.jpeg"
+                alt="Golden Cricket Club"
+                className="w-full h-full object-cover rounded-full"
+              />
             </div>
 
             {/* Club name */}
@@ -67,7 +85,16 @@ export default function Navbar() {
 
             <Link
               to="/teams"
-              className="ml-2 px-3 py-2 rounded-xl text-xs font-semibold text-slate-300 border border-slate-700 hover:border-yellow-500 hover:text-yellow-300 hover:bg-slate-800 transition-all"
+              className="
+                ml-2 px-3 py-2 rounded-xl
+                text-xs font-semibold
+                text-slate-300
+                border border-slate-700
+                hover:border-yellow-500
+                hover:text-yellow-300
+                hover:bg-slate-800
+                transition-all
+              "
             >
               👥 Manage Teams
             </Link>
