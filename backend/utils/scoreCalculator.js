@@ -1038,16 +1038,12 @@ function buildBattingScorecard(balls) {
 
     ensure(b.non_striker_id);
 
-    /* Wide does not count as ball faced */
-
     if (b.extra_type !== 'wide') {
 
       if (striker) {
         striker.balls += 1;
       }
     }
-
-    /* Bat runs */
 
     if (
       !b.extra_type ||
@@ -1072,8 +1068,6 @@ function buildBattingScorecard(balls) {
         }
       }
     }
-
-    /* WICKET */
 
     if (
       Number(b.is_wicket) === 1 &&
@@ -1213,9 +1207,7 @@ function buildBowlingScorecard(balls) {
       chargedRuns;
 
     if (legal) {
-
-      s.overRuns[overNo].legalBalls +=
-        1;
+      s.overRuns[overNo].legalBalls += 1;
     }
   }
 
@@ -1284,7 +1276,7 @@ function buildBowlingScorecard(balls) {
 }
 
 /* =========================================================
-   PARTNERSHIP
+   CURRENT PARTNERSHIP
 ========================================================= */
 
 function buildPartnership(balls) {
@@ -1328,10 +1320,7 @@ function buildPartnership(balls) {
 
     runs += effect.teamRuns;
 
-    if (
-      b.extra_type !== 'wide'
-    ) {
-
+    if (Number(b.is_legal) === 1) {
       ballsFaced += 1;
     }
   }
@@ -1340,6 +1329,199 @@ function buildPartnership(balls) {
     runs,
     balls: ballsFaced
   };
+}
+
+/* =========================================================
+   ALL PARTNERSHIPS
+========================================================= */
+
+function buildPartnerships(balls) {
+
+  const partnerships = [];
+
+  if (!balls || balls.length === 0) {
+    return partnerships;
+  }
+
+  let partnershipRuns = 0;
+  let partnershipBalls = 0;
+
+  let batsman1Id = null;
+  let batsman2Id = null;
+
+  let partnershipNumber = 1;
+
+  for (let i = 0; i < balls.length; i++) {
+
+    const b = balls[i];
+
+    /*
+     * Start partnership using the batsmen
+     * recorded on the first delivery.
+     */
+    if (!batsman1Id || !batsman2Id) {
+
+      batsman1Id =
+        b.batsman_id;
+
+      batsman2Id =
+        b.non_striker_id;
+    }
+
+    const effect =
+      computeRunEffects({
+        runs: b.runs_batsman,
+        extra_type: b.extra_type,
+        extra_runs: b.extra_runs
+      });
+
+    /*
+     * Partnership includes team runs,
+     * including extras.
+     */
+    partnershipRuns +=
+      effect.teamRuns;
+
+    /*
+     * Only legal deliveries count.
+     */
+    if (Number(b.is_legal) === 1) {
+      partnershipBalls += 1;
+    }
+
+    /*
+     * A wicket ends the partnership.
+     */
+    if (Number(b.is_wicket) === 1) {
+
+      partnerships.push({
+
+        partnership_no:
+          partnershipNumber,
+
+        batsman1_id:
+          batsman1Id,
+
+        batsman2_id:
+          batsman2Id,
+
+        runs:
+          partnershipRuns,
+
+        balls:
+          partnershipBalls,
+
+        is_current:
+          false
+      });
+
+      partnershipNumber += 1;
+
+      /*
+       * New partnership begins
+       * with the next ball.
+       */
+      batsman1Id = null;
+      batsman2Id = null;
+
+      partnershipRuns = 0;
+      partnershipBalls = 0;
+    }
+  }
+
+  /*
+   * Remaining partnership is current.
+   */
+  if (
+    batsman1Id &&
+    batsman2Id &&
+    (
+      partnershipRuns > 0 ||
+      partnershipBalls > 0
+    )
+  ) {
+
+    partnerships.push({
+
+      partnership_no:
+        partnershipNumber,
+
+      batsman1_id:
+        batsman1Id,
+
+      batsman2_id:
+        batsman2Id,
+
+      runs:
+        partnershipRuns,
+
+      balls:
+        partnershipBalls,
+
+      is_current:
+        true
+    });
+  }
+
+  return partnerships;
+}
+
+/* =========================================================
+   FALL OF WICKETS
+========================================================= */
+
+function buildFallOfWickets(balls) {
+
+  const wickets = [];
+
+  let totalRuns = 0;
+  let legalBalls = 0;
+  let wicketNumber = 0;
+
+  for (const b of balls) {
+
+    const effect =
+      computeRunEffects({
+        runs: b.runs_batsman,
+        extra_type: b.extra_type,
+        extra_runs: b.extra_runs
+      });
+
+    totalRuns +=
+      effect.teamRuns;
+
+    if (Number(b.is_legal) === 1) {
+      legalBalls += 1;
+    }
+
+    if (Number(b.is_wicket) === 1) {
+
+      wicketNumber += 1;
+
+      wickets.push({
+
+        wicket_no:
+          wicketNumber,
+
+        score:
+          totalRuns,
+
+        overs:
+          oversStr(legalBalls),
+
+        player_id:
+          b.dismissed_id,
+
+        how_out:
+          b.wicket_type || 'out',
+
+        fielder_id:
+          b.fielder_id || null
+      });
+    }
+  }
+
+  return wickets;
 }
 
 /* =========================================================
@@ -1638,6 +1820,27 @@ async function getScoreboard(inningsId) {
       balls
     );
 
+  /*
+   * NEW:
+   * Current partnership
+   */
+  const partnership =
+    buildPartnership(balls);
+
+  /*
+   * NEW:
+   * All partnerships
+   */
+  const partnerships =
+    buildPartnerships(balls);
+
+  /*
+   * NEW:
+   * Fall of wickets
+   */
+  const fallOfWickets =
+    buildFallOfWickets(balls);
+
   return {
 
     innings,
@@ -1671,8 +1874,11 @@ async function getScoreboard(inningsId) {
 
     nonStriker,
 
-    partnership:
-      buildPartnership(balls),
+    partnership,
+
+    partnerships,
+
+    fallOfWickets,
 
     runRate,
 
@@ -1978,10 +2184,6 @@ async function getPlayerCareerStats(
 
 async function getAllTimeRecords() {
 
-  /* -------------------------------------------------------
-     FIND GCC PLAYERS
-  ------------------------------------------------------- */
-
   const gccPlayers =
     await db.prepare(`
       SELECT
@@ -2012,10 +2214,6 @@ async function getAllTimeRecords() {
     gccPlayers
   );
 
-  /* -------------------------------------------------------
-     ALL INNINGS
-  ------------------------------------------------------- */
-
   const inningsRows =
     await db.prepare(`
       SELECT
@@ -2029,29 +2227,12 @@ async function getAllTimeRecords() {
         innings_number
     `).all();
 
-  /*
-   * IMPORTANT:
-   *
-   * There is NO highestScore variable anymore.
-   *
-   * Best Batting Figure is the single-innings
-   * highest batting performance.
-   */
-
   let bestBattingFigure = null;
   let bestBowling = null;
-
-  /* =======================================================
-     SINGLE-INNINGS RECORDS
-  ======================================================= */
 
   for (
     const inn of inningsRows
   ) {
-
-    /* -----------------------------------------------------
-       BATTING
-    ----------------------------------------------------- */
 
     const batting =
       await computeBattingScorecard(
@@ -2061,8 +2242,6 @@ async function getAllTimeRecords() {
     for (
       const b of batting
     ) {
-
-      /* ONLY GCC PLAYERS */
 
       if (
         !gccPlayerIds.has(
@@ -2123,25 +2302,6 @@ async function getAllTimeRecords() {
           inn.batting_team_id
       };
 
-      /*
-       * ===================================================
-       * BEST BATTING FIGURE
-       *
-       * THIS IS THE IMPORTANT PART.
-       *
-       * It compares each player's performance
-       * in each individual innings.
-       *
-       * Priority:
-       *
-       * 1. Highest runs
-       * 2. Same runs -> fewer balls
-       * 3. Same balls -> higher strike rate
-       * 4. Same SR -> more fours
-       * 5. Same fours -> more sixes
-       * ===================================================
-       */
-
       const isBetter =
         !bestBattingFigure ||
 
@@ -2199,15 +2359,10 @@ async function getAllTimeRecords() {
         );
 
       if (isBetter) {
-
         bestBattingFigure =
           candidate;
       }
     }
-
-    /* -----------------------------------------------------
-       BOWLING
-    ----------------------------------------------------- */
 
     const bowling =
       await computeBowlingScorecard(
@@ -2217,8 +2372,6 @@ async function getAllTimeRecords() {
     for (
       const b of bowling
     ) {
-
-      /* ONLY GCC BOWLERS */
 
       if (
         !gccPlayerIds.has(
@@ -2277,14 +2430,6 @@ async function getAllTimeRecords() {
           inn.batting_team_id
       };
 
-      /*
-       * BEST BOWLING FIGURE
-       *
-       * 1. Most wickets
-       * 2. Same wickets -> fewest runs
-       * 3. Same runs -> lower economy
-       */
-
       const better =
         !bestBowling ||
 
@@ -2311,16 +2456,11 @@ async function getAllTimeRecords() {
         );
 
       if (better) {
-
         bestBowling =
           candidate;
       }
     }
   }
-
-  /* =======================================================
-     CAREER BATTING
-  ======================================================= */
 
   const battingLeaders =
     await Promise.all(
@@ -2340,10 +2480,6 @@ async function getAllTimeRecords() {
       )
     );
 
-  /* =======================================================
-     CAREER BOWLING
-  ======================================================= */
-
   const bowlingLeaders =
     await Promise.all(
       gccPlayers.map(
@@ -2361,10 +2497,6 @@ async function getAllTimeRecords() {
         })
       )
     );
-
-  /* =======================================================
-     TOP N
-  ======================================================= */
 
   const topBy =
     (
@@ -2394,22 +2526,11 @@ async function getAllTimeRecords() {
           n
         );
 
-  /* =======================================================
-     FINAL RESULT
-     
-     IMPORTANT:
-     highestScore IS NOT RETURNED.
-  ======================================================= */
-
   return {
-
-    /* SINGLE-INNINGS GCC RECORDS */
 
     bestBattingFigure,
 
     bestBowling,
-
-    /* CAREER GCC RECORDS */
 
     mostRuns:
       topBy(
