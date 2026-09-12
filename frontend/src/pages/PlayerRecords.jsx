@@ -9,11 +9,14 @@ export default function PlayerRecords() {
   const [loadingStats, setLoadingStats] = useState(false);
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [activeTab, setActiveTab] = useState('batting');
+
   const [newPlayer, setNewPlayer] = useState({
     team_id: '',
     name: '',
     role: 'batsman'
   });
+
   const [deletingId, setDeletingId] = useState(null);
 
   const loadPlayers = () => {
@@ -37,6 +40,7 @@ export default function PlayerRecords() {
   const openPlayer = async (player) => {
     setSelected(player);
     setStats(null);
+    setActiveTab('batting');
     setLoadingStats(true);
 
     try {
@@ -73,8 +77,8 @@ export default function PlayerRecords() {
 
       alert(
         err?.response?.data?.error ||
-        err?.message ||
-        'Failed to add player'
+          err?.message ||
+          'Failed to add player'
       );
     }
   };
@@ -106,8 +110,8 @@ export default function PlayerRecords() {
 
       alert(
         err?.response?.data?.error ||
-        err?.message ||
-        'Failed to remove player'
+          err?.message ||
+          'Failed to remove player'
       );
     } finally {
       setDeletingId(null);
@@ -133,19 +137,22 @@ export default function PlayerRecords() {
   }, {});
 
   return (
-    <div className="grid md:grid-cols-2 gap-6 fade-in">
+    <div className="grid md:grid-cols-2 gap-4 md:gap-6 fade-in">
 
-      {/* LEFT - PLAYERS */}
-      <div>
+      {/* =====================================================
+          LEFT - PLAYERS
+      ===================================================== */}
+      <div className="min-w-0">
 
-        <div className="flex items-center justify-between mb-1">
+        {/* HEADER */}
+        <div className="flex items-center justify-between gap-3 mb-1">
           <h1 className="text-2xl font-bold">
             Player Stats
           </h1>
 
           <button
             type="button"
-            className="btn btn-primary text-sm"
+            className="btn btn-primary text-sm whitespace-nowrap min-h-[44px]"
             onClick={() => setShowAdd((value) => !value)}
           >
             {showAdd ? 'Cancel' : '+ Add Player'}
@@ -156,14 +163,16 @@ export default function PlayerRecords() {
           Career records for players on your own teams only.
         </p>
 
-        {/* ADD PLAYER */}
+        {/* =====================================================
+            ADD PLAYER
+        ===================================================== */}
         {showAdd && (
           <form
             onSubmit={addPlayer}
             className="card space-y-3 mb-4"
           >
             <select
-              className="input"
+              className="input min-h-[46px]"
               value={newPlayer.team_id}
               onChange={(e) =>
                 setNewPlayer({
@@ -187,7 +196,7 @@ export default function PlayerRecords() {
             </select>
 
             <input
-              className="input"
+              className="input min-h-[46px]"
               placeholder="Player name"
               value={newPlayer.name}
               onChange={(e) =>
@@ -199,7 +208,7 @@ export default function PlayerRecords() {
             />
 
             <select
-              className="input"
+              className="input min-h-[46px]"
               value={newPlayer.role}
               onChange={(e) =>
                 setNewPlayer({
@@ -227,29 +236,35 @@ export default function PlayerRecords() {
 
             <button
               type="submit"
-              className="btn btn-primary w-full"
+              className="btn btn-primary w-full min-h-[46px]"
             >
               Add Player
             </button>
           </form>
         )}
 
-        {/* SEARCH */}
+        {/* =====================================================
+            SEARCH
+        ===================================================== */}
         <input
-          className="input mb-4"
+          className="input mb-4 min-h-[46px]"
           placeholder="Search player..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
 
-        {/* NO PLAYERS */}
+        {/* =====================================================
+            NO PLAYERS
+        ===================================================== */}
         {Object.keys(grouped).length === 0 && (
           <div className="card text-slate-400">
             No players found. Add one above.
           </div>
         )}
 
-        {/* PLAYER LIST */}
+        {/* =====================================================
+            PLAYER LIST
+        ===================================================== */}
         {Object.entries(grouped).map(
           ([teamName, teamPlayers]) => (
             <div
@@ -260,24 +275,41 @@ export default function PlayerRecords() {
                 {teamName}
               </h2>
 
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {teamPlayers.map((player) => (
                   <div
                     key={player.id}
                     onClick={() => openPlayer(player)}
-                    className={`card flex items-center justify-between py-2 cursor-pointer hover:border-emerald-500 ${
-                      selected?.id === player.id
-                        ? 'border-emerald-500'
-                        : ''
-                    }`}
+                    className={`
+                      card
+                      flex
+                      items-center
+                      justify-between
+                      gap-3
+                      py-3
+                      px-3
+                      cursor-pointer
+                      transition
+                      hover:border-emerald-500
+                      active:scale-[0.99]
+                      ${
+                        selected?.id === player.id
+                          ? 'border-emerald-500 bg-slate-800/60'
+                          : ''
+                      }
+                    `}
                   >
-                    <span className="font-medium">
-                      {player.name}
-                    </span>
+                    {/* PLAYER NAME */}
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">
+                        {player.name}
+                      </div>
+                    </div>
 
-                    <div className="flex items-center gap-2">
+                    {/* PLAYER ROLE + DELETE */}
+                    <div className="flex items-center gap-2 shrink-0">
 
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-slate-400 hidden sm:block">
                         {player.role || 'Player'}
                       </span>
 
@@ -289,7 +321,17 @@ export default function PlayerRecords() {
                         disabled={
                           deletingId === player.id
                         }
-                        className="text-red-400 hover:text-red-300 text-xs"
+                        className="
+                          min-w-[36px]
+                          min-h-[36px]
+                          flex
+                          items-center
+                          justify-center
+                          rounded-lg
+                          text-red-400
+                          hover:text-red-300
+                          hover:bg-red-500/10
+                        "
                       >
                         {deletingId === player.id
                           ? '...'
@@ -306,32 +348,43 @@ export default function PlayerRecords() {
 
       </div>
 
-      {/* RIGHT - CAREER RECORD */}
-      <div>
+      {/* =====================================================
+          RIGHT - CAREER RECORD
+      ===================================================== */}
+      <div className="min-w-0">
 
         <h1 className="text-2xl font-bold mb-4">
           Career Record
         </h1>
 
-        {/* NOTHING SELECTED */}
+        {/* =====================================================
+            NOTHING SELECTED
+        ===================================================== */}
         {!selected && (
           <div className="card text-slate-400">
-            Select a player to see their full batting and bowling record.
+            Select a player to see their full batting and bowling
+            record.
           </div>
         )}
 
-        {/* LOADING */}
+        {/* =====================================================
+            LOADING
+        ===================================================== */}
         {selected && loadingStats && (
           <div className="card text-slate-400">
             Loading...
           </div>
         )}
 
-        {/* STATS */}
+        {/* =====================================================
+            STATS
+        ===================================================== */}
         {selected && !loadingStats && stats && (
           <div className="space-y-4">
 
-            {/* PLAYER INFO */}
+            {/* =================================================
+                PLAYER INFO
+            ================================================= */}
             <div className="card">
 
               <h2 className="text-xl font-bold">
@@ -339,7 +392,7 @@ export default function PlayerRecords() {
                   selected.name}
               </h2>
 
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-slate-400 mt-1">
                 {stats.player?.team_name ||
                   selected.team_name ||
                   'Team'}
@@ -351,155 +404,246 @@ export default function PlayerRecords() {
 
             </div>
 
-            {/* BATTING */}
-            <div className="card">
+            {/* =================================================
+                BATTING / BOWLING TABS
+            ================================================= */}
+            <div
+              className="
+                grid
+                grid-cols-2
+                gap-2
+                p-1
+                bg-slate-900
+                rounded-xl
+                sticky
+                top-2
+                z-10
+              "
+            >
 
-              <h3 className="font-semibold mb-3 text-emerald-400">
-                🏏 Batting
-              </h3>
-
-              <div className="grid grid-cols-2 gap-3 text-sm">
-
-                <Stat
-                  label="Innings Batted"
-                  value={
-                    stats.batting?.innings_batted
+              {/* BATTING BUTTON */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('batting')}
+                className={`
+                  min-h-[48px]
+                  rounded-lg
+                  font-semibold
+                  text-sm
+                  transition
+                  flex
+                  items-center
+                  justify-center
+                  gap-2
+                  ${
+                    activeTab === 'batting'
+                      ? 'bg-emerald-500 text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }
-                />
+                `}
+              >
+                <span>🏏</span>
+                <span>Batting</span>
+              </button>
 
-                <Stat
-                  label="Runs Scored"
-                  value={
-                    stats.batting?.runs
+              {/* BOWLING BUTTON */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('bowling')}
+                className={`
+                  min-h-[48px]
+                  rounded-lg
+                  font-semibold
+                  text-sm
+                  transition
+                  flex
+                  items-center
+                  justify-center
+                  gap-2
+                  ${
+                    activeTab === 'bowling'
+                      ? 'bg-orange-500 text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }
-                />
-
-                <Stat
-                  label="Balls Faced"
-                  value={
-                    stats.batting?.balls_faced
-                  }
-                />
-
-                <Stat
-                  label="Fours"
-                  value={
-                    stats.batting?.fours
-                  }
-                />
-
-                <Stat
-                  label="Sixes"
-                  value={
-                    stats.batting?.sixes
-                  }
-                />
-
-                <Stat
-                  label="Strike Rate"
-                  value={
-                    stats.batting?.strike_rate
-                  }
-                />
-
-                <Stat
-                  label="Average"
-                  value={
-                    stats.batting?.average
-                  }
-                />
-
-                <Stat
-                  label="Times Out"
-                  value={
-                    stats.batting?.times_out
-                  }
-                />
-
-                <Stat
-                  label="Not Outs"
-                  value={
-                    stats.batting?.not_outs
-                  }
-                />
-
-              </div>
+                `}
+              >
+                <span>🎯</span>
+                <span>Bowling</span>
+              </button>
 
             </div>
 
-            {/* BOWLING */}
-            <div className="card">
+            {/* =================================================
+                BATTING DATA
+            ================================================= */}
+            {activeTab === 'batting' && (
+              <div className="card">
 
-              <h3 className="font-semibold mb-3 text-orange-400">
-                🎯 Bowling
-              </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-emerald-400">
+                    🏏 Batting
+                  </h3>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
+                  <span className="text-xs text-slate-500">
+                    Career
+                  </span>
+                </div>
 
-                <Stat
-                  label="Innings Bowled"
-                  value={
-                    stats.bowling?.innings_bowled
-                  }
-                />
+                <div className="grid grid-cols-2 gap-2 sm:gap-3 text-sm">
 
-                <Stat
-                  label="Overs Bowled"
-                  value={
-                    stats.bowling?.overs
-                  }
-                />
+                  <Stat
+                    label="Innings Batted"
+                    value={
+                      stats.batting?.innings_batted
+                    }
+                  />
 
-                <Stat
-                  label="Balls Bowled"
-                  value={
-                    stats.bowling?.balls_bowled
-                  }
-                />
+                  <Stat
+                    label="Runs Scored"
+                    value={
+                      stats.batting?.runs
+                    }
+                  />
 
-                <Stat
-                  label="Runs Given"
-                  value={
-                    stats.bowling?.runs_given
-                  }
-                />
+                  <Stat
+                    label="Balls Faced"
+                    value={
+                      stats.batting?.balls_faced
+                    }
+                  />
 
-                <Stat
-                  label="Wickets"
-                  value={
-                    stats.bowling?.wickets
-                  }
-                />
+                  <Stat
+                    label="Fours"
+                    value={
+                      stats.batting?.fours
+                    }
+                  />
 
-                <Stat
-                  label="Economy"
-                  value={
-                    stats.bowling?.economy
-                  }
-                />
+                  <Stat
+                    label="Sixes"
+                    value={
+                      stats.batting?.sixes
+                    }
+                  />
 
-                <Stat
-                  label="Fours Given"
-                  value={
-                    stats.bowling?.fours_given
-                  }
-                />
+                  <Stat
+                    label="Strike Rate"
+                    value={
+                      stats.batting?.strike_rate
+                    }
+                  />
 
-                <Stat
-                  label="Sixes Given"
-                  value={
-                    stats.bowling?.sixes_given
-                  }
-                />
+                  <Stat
+                    label="Average"
+                    value={
+                      stats.batting?.average
+                    }
+                  />
+
+                  <Stat
+                    label="Times Out"
+                    value={
+                      stats.batting?.times_out
+                    }
+                  />
+
+                  <Stat
+                    label="Not Outs"
+                    value={
+                      stats.batting?.not_outs
+                    }
+                  />
+
+                </div>
 
               </div>
+            )}
 
-            </div>
+            {/* =================================================
+                BOWLING DATA
+            ================================================= */}
+            {activeTab === 'bowling' && (
+              <div className="card">
+
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-orange-400">
+                    🎯 Bowling
+                  </h3>
+
+                  <span className="text-xs text-slate-500">
+                    Career
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:gap-3 text-sm">
+
+                  <Stat
+                    label="Innings Bowled"
+                    value={
+                      stats.bowling?.innings_bowled
+                    }
+                  />
+
+                  <Stat
+                    label="Overs Bowled"
+                    value={
+                      stats.bowling?.overs
+                    }
+                  />
+
+                  <Stat
+                    label="Balls Bowled"
+                    value={
+                      stats.bowling?.balls_bowled
+                    }
+                  />
+
+                  <Stat
+                    label="Runs Given"
+                    value={
+                      stats.bowling?.runs_given
+                    }
+                  />
+
+                  <Stat
+                    label="Wickets"
+                    value={
+                      stats.bowling?.wickets
+                    }
+                  />
+
+                  <Stat
+                    label="Economy"
+                    value={
+                      stats.bowling?.economy
+                    }
+                  />
+
+                  <Stat
+                    label="Fours Given"
+                    value={
+                      stats.bowling?.fours_given
+                    }
+                  />
+
+                  <Stat
+                    label="Sixes Given"
+                    value={
+                      stats.bowling?.sixes_given
+                    }
+                  />
+
+                </div>
+
+              </div>
+            )}
 
           </div>
         )}
 
-        {/* FAILED */}
+        {/* =====================================================
+            FAILED
+        ===================================================== */}
         {selected && !loadingStats && !stats && (
           <div className="card text-red-400">
             Unable to load this player's statistics.
@@ -512,15 +656,30 @@ export default function PlayerRecords() {
   );
 }
 
+
+/* ============================================================
+   STAT COMPONENT
+============================================================ */
+
 function Stat({ label, value }) {
   return (
-    <div className="bg-slate-900 rounded-lg p-2">
+    <div
+      className="
+        bg-slate-900
+        rounded-xl
+        p-3
+        min-h-[72px]
+        flex
+        flex-col
+        justify-center
+      "
+    >
 
-      <div className="text-slate-400 text-xs">
+      <div className="text-slate-400 text-xs leading-tight">
         {label}
       </div>
 
-      <div className="text-lg font-bold">
+      <div className="text-lg sm:text-xl font-bold mt-1">
         {value ?? 0}
       </div>
 
