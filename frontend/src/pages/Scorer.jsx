@@ -1,4 +1,3 @@
-```jsx
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
@@ -16,37 +15,35 @@ export default function Scorer() {
 
   const [showWicket, setShowWicket] = useState(false);
   const [error, setError] = useState('');
-
   const [boundary, setBoundary] = useState(null);
   const [extraPicker, setExtraPicker] = useState(null);
   const [flashWicket, setFlashWicket] = useState(false);
 
-  const [changingBowler, setChangingBowler] = useState(false);
-  const [changingBatsmen, setChangingBatsmen] = useState(false);
-
-  const [selectedBowler, setSelectedBowler] = useState(null);
-  const [selectedStriker, setSelectedStriker] = useState(null);
-  const [selectedNonStriker, setSelectedNonStriker] = useState(null);
+  const [savingBall, setSavingBall] = useState(false);
 
   const boundaryTimer = useRef(null);
 
   /*
-   * LOAD MATCH
-   */
-  const loadFull = useCallback(() => {
-    Matches.get(matchId)
-      .then((d) => {
-        setMatch(d.match);
-        setPlayers(d.players || []);
-        setInnings(d.innings || []);
-      })
-      .catch((e) => {
-        setError(
-          e?.response?.data?.error ||
-          e?.message ||
-          'Unable to load match'
-        );
-      });
+  ====================================================
+  LOAD MATCH
+  ====================================================
+  */
+
+  const loadFull = useCallback(async () => {
+    try {
+      const data = await Matches.get(matchId);
+
+      setMatch(data.match);
+      setPlayers(Array.isArray(data.players) ? data.players : []);
+      setInnings(Array.isArray(data.innings) ? data.innings : []);
+    } catch (err) {
+      console.error('Failed to load match:', err);
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to load match'
+      );
+    }
   }, [matchId]);
 
   useEffect(() => {
@@ -54,14 +51,22 @@ export default function Scorer() {
   }, [loadFull]);
 
   /*
-   * SOCKET LIVE UPDATES
-   */
+  ====================================================
+  SOCKET
+  ====================================================
+  */
+
   useEffect(() => {
     socket.emit('join-match', matchId);
 
     const onUpdate = ({ match: m, innings: i }) => {
-      setMatch(m);
-      setInnings(i || []);
+      if (m) {
+        setMatch(m);
+      }
+
+      if (Array.isArray(i)) {
+        setInnings(i);
+      }
     };
 
     socket.on('score-update', onUpdate);
@@ -73,21 +78,27 @@ export default function Scorer() {
   }, [matchId]);
 
   /*
-   * PLAYER CREATED
-   */
+  ====================================================
+  PLAYER CREATED
+  ====================================================
+  */
+
   const handlePlayerCreated = useCallback((player) => {
     setPlayers((prev) => {
-      const exists = prev.some((p) => p.id === player.id);
-
-      if (exists) return prev;
+      if (prev.some((p) => p.id === player.id)) {
+        return prev;
+      }
 
       return [...prev, player];
     });
   }, []);
 
   /*
-   * VISUAL EFFECTS
-   */
+  ====================================================
+  EFFECTS
+  ====================================================
+  */
+
   const popBoundary = (kind) => {
     clearTimeout(boundaryTimer.current);
 
@@ -107,84 +118,61 @@ export default function Scorer() {
   };
 
   /*
-   * GENERIC ACTION HANDLER
-   */
+  ====================================================
+  GENERIC ACTION
+  ====================================================
+  */
+
   const act = async (fn) => {
     setError('');
 
     try {
-      await fn();
+      return await fn();
+    } catch (err) {
+      console.error(err);
 
-      /*
-       * Small refresh after action.
-       * Socket update should normally update immediately.
-       * This also protects against missing socket events.
-       */
-      setTimeout(() => {
-        loadFull();
-      }, 100);
-    } catch (e) {
-      setError(
-        e?.response?.data?.error ||
-        e?.message ||
-        'Something went wrong'
-      );
+      const message =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Something went wrong';
+
+      setError(message);
+
+      throw err;
     }
   };
 
   /*
-   * PLAY BALL
-   */
-  const playBall = async (payload) => {
-    if (!payload.extra_type && payload.runs === 4) {
-      popBoundary('four');
-    }
+  ====================================================
+  BASIC LOADING
+  ====================================================
+  */
 
-    if (!payload.extra_type && payload.runs === 6) {
-      popBoundary('six');
-    }
-
-    setError('');
-
-    try {
-      await Innings.ball(inn.id, payload);
-
-      /*
-       * Reset extra selector after scoring.
-       */
-      setExtraPicker(null);
-
-      /*
-       * Refresh state immediately.
-       */
-      setTimeout(() => {
-        loadFull();
-      }, 80);
-    } catch (e) {
-      setError(
-        e?.response?.data?.error ||
-        e?.message ||
-        'Unable to record ball'
-      );
-    }
-  };
-
-  /*
-   * WAIT FOR MATCH
-   */
   if (!match) {
     return (
-      <div className="max-w-2xl mx-auto card text-center">
-        <p className="text-slate-400">Loading…</p>
-      </div>
+      <p className="text-slate-400">
+        Loading…
+      </p>
     );
   }
 
-  const currentInnings = innings[innings.length - 1];
+  /*
+  ====================================================
+  CURRENT INNINGS
+  ====================================================
+  */
+
+  const currentInnings =
+    innings.length > 0
+      ? innings[innings.length - 1]
+      : null;
 
   /*
-   * MATCH COMPLETED
-   */
+  ====================================================
+  MATCH COMPLETED
+  ====================================================
+  */
+
   if (match.status === 'completed') {
     return (
       <div className="max-w-lg mx-auto card text-center space-y-3 fade-in">
@@ -193,7 +181,7 @@ export default function Scorer() {
         </h1>
 
         <p className="text-emerald-400 text-lg font-semibold">
-          {match.result_text}
+          {match.result_text || 'Match completed'}
         </p>
 
         <button
@@ -209,48 +197,47 @@ export default function Scorer() {
   }
 
   /*
-   * SAFETY
-   */
-  if (!currentInnings) {
-    return (
-      <div className="max-w-lg mx-auto card text-center">
-        <p className="text-slate-400">
-          Setting up innings…
-        </p>
-      </div>
-    );
-  }
+  ====================================================
+  INNINGS BREAK
+  ====================================================
+  */
 
-  const inn = currentInnings.innings;
-
-  /*
-   * INNINGS BREAK
-   */
   if (match.status === 'innings-break') {
+    if (!currentInnings) {
+      return (
+        <p className="text-slate-400">
+          Loading innings…
+        </p>
+      );
+    }
+
+    const breakInn = currentInnings.innings;
+
     return (
       <div className="max-w-lg mx-auto card text-center space-y-4 fade-in">
         <h1 className="text-2xl font-bold">
-          🏏 Innings Break
+          Innings Break
         </h1>
 
         <p className="text-slate-300 text-lg">
-          {inn.total_runs}/{inn.total_wickets}
-          {' '}in{' '}
-          {currentInnings.overs}
-          {' '}overs
+          {breakInn.total_runs}/{breakInn.total_wickets}
+          {' '}in {currentInnings.overs} overs
         </p>
 
         <button
           className="btn btn-primary w-full"
           onClick={async () => {
             try {
+              setError('');
+
               await Matches.startSecondInnings(matchId);
-              loadFull();
-            } catch (e) {
+
+              await loadFull();
+            } catch (err) {
               setError(
-                e?.response?.data?.error ||
-                e?.message ||
-                'Unable to start second innings'
+                err?.response?.data?.error ||
+                err?.message ||
+                'Failed to start second innings'
               );
             }
           }}
@@ -259,7 +246,7 @@ export default function Scorer() {
         </button>
 
         {error && (
-          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
+          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-2 text-sm">
             {error}
           </div>
         )}
@@ -268,23 +255,45 @@ export default function Scorer() {
   }
 
   /*
-   * PLAYERS
-   */
+  ====================================================
+  NO INNINGS
+  ====================================================
+  */
+
+  if (!currentInnings) {
+    return (
+      <p className="text-slate-400">
+        Setting up…
+      </p>
+    );
+  }
+
+  const inn = currentInnings.innings;
+
+  /*
+  ====================================================
+  PLAYERS
+  ====================================================
+  */
+
   const battingTeamPlayers = players.filter(
     (p) =>
       p.team_id === inn.batting_team_id &&
-      p.active
+      p.active !== false
   );
 
   const bowlingTeamPlayers = players.filter(
     (p) =>
       p.team_id === inn.bowling_team_id &&
-      p.active
+      p.active !== false
   );
 
   /*
-   * OUT PLAYERS
-   */
+  ====================================================
+  OUT PLAYERS
+  ====================================================
+  */
+
   const outIds = new Set(
     (currentInnings.battingCard || [])
       .filter((b) => b.is_out)
@@ -292,8 +301,11 @@ export default function Scorer() {
   );
 
   /*
-   * CURRENT BATSMEN / BOWLER
-   */
+  ====================================================
+  CURRENT PLAYERS
+  ====================================================
+  */
+
   const striker = players.find(
     (p) => p.id === inn.striker_id
   );
@@ -307,175 +319,261 @@ export default function Scorer() {
   );
 
   /*
-   * BATSMEN REQUIRED
-   */
+  ====================================================
+  WHAT NEEDS TO BE SELECTED?
+  ====================================================
+  */
+
   const needBatsmen =
     !inn.striker_id ||
     !inn.non_striker_id;
 
-  /*
-   * BOWLER REQUIRED
-   */
   const needBowler =
     !needBatsmen &&
     !inn.current_bowler_id;
 
   /*
-   * CURRENT OVER
-   *
-   * If overs string is something like 3.0,
-   * then the last completed over has 6 balls.
-   *
-   * The backend remains the authority.
-   */
-  const ballsInOver =
-    Number.isFinite(Number(currentInnings.overs))
-      ? Math.round(
-          (Number(currentInnings.overs) -
-            Math.floor(Number(currentInnings.overs))) * 10
-        )
-      : 0;
+  ====================================================
+  BALL
+  ====================================================
+  */
+
+  const playBall = async (payload) => {
+    if (savingBall) {
+      return;
+    }
+
+    setError('');
+    setSavingBall(true);
+
+    try {
+      /*
+      Boundary animation
+      */
+
+      if (
+        !payload.extra_type &&
+        payload.runs === 4
+      ) {
+        popBoundary('four');
+      }
+
+      if (
+        !payload.extra_type &&
+        payload.runs === 6
+      ) {
+        popBoundary('six');
+      }
+
+      /*
+      Send ball to backend
+      */
+
+      const result = await Innings.ball(
+        inn.id,
+        payload
+      );
+
+      /*
+      IMPORTANT:
+      Update the current innings immediately
+      from the API response.
+
+      This prevents waiting for Socket.IO
+      before the scorer screen changes.
+      */
+
+      if (result?.innings) {
+        setInnings((prev) =>
+          prev.map((item) => {
+            if (
+              item?.innings?.id === inn.id
+            ) {
+              return {
+                ...item,
+                innings: result.innings
+              };
+            }
+
+            return item;
+          })
+        );
+      }
+
+      /*
+      Refresh full scoreboard data so batting,
+      bowling and recent balls are immediately
+      correct too.
+      */
+
+      try {
+        await loadFull();
+      } catch {
+        // Socket/API local update already happened.
+      }
+
+    } catch (err) {
+      console.error('Ball error:', err);
+
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to record ball'
+      );
+    } finally {
+      setSavingBall(false);
+    }
+  };
 
   /*
-   * SAME SCREEN BATSMEN SELECTION
-   */
-  if (needBatsmen || changingBatsmen) {
+  ====================================================
+  SELECT BATSMEN
+  ====================================================
+  */
+
+  if (needBatsmen) {
     return (
-      <div className="max-w-2xl mx-auto space-y-4 fade-in">
-
-        <div className="card">
-          <div className="flex justify-between items-center">
-            <div>
-              <div className="text-sm text-slate-400">
-                {match.team1_short} vs {match.team2_short}
-              </div>
-
-              <h1 className="text-2xl font-bold mt-1">
-                Select Batsmen
-              </h1>
-            </div>
-
-            {!needBatsmen && (
-              <button
-                className="text-sm text-slate-400 hover:text-white"
-                onClick={() => {
-                  setChangingBatsmen(false);
-                  setSelectedStriker(null);
-                  setSelectedNonStriker(null);
-                }}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </div>
-
-        <SelectBatsmen
-          team={battingTeamPlayers}
-          outIds={outIds}
-          teamId={inn.batting_team_id}
-          onPlayerCreated={handlePlayerCreated}
-          hasStriker={false}
-          hasNonStriker={false}
-          initialStriker={striker}
-          initialNonStriker={nonStriker}
-          onSelect={(strikerId, nonStrikerId) =>
-            act(async () => {
-              await Innings.setBatsmen(inn.id, {
+      <SelectBatsmen
+        team={battingTeamPlayers}
+        outIds={outIds}
+        teamId={inn.batting_team_id}
+        onPlayerCreated={handlePlayerCreated}
+        hasStriker={!!inn.striker_id}
+        hasNonStriker={!!inn.non_striker_id}
+        onSelect={async (strikerId, nonStrikerId) => {
+          await act(async () => {
+            const result = await Innings.setBatsmen(
+              inn.id,
+              {
                 striker_id:
                   strikerId || inn.striker_id,
                 non_striker_id:
-                  nonStrikerId || inn.non_striker_id,
-              });
+                  nonStrikerId || inn.non_striker_id
+              }
+            );
 
-              setChangingBatsmen(false);
-              setSelectedStriker(null);
-              setSelectedNonStriker(null);
-            })
-          }
-        />
+            /*
+            Update locally immediately.
+            */
+
+            if (result) {
+              setInnings((prev) =>
+                prev.map((item) =>
+                  item?.innings?.id === inn.id
+                    ? {
+                        ...item,
+                        innings:
+                          result.innings ||
+                          result
+                      }
+                    : item
+                )
+              );
+            }
+
+            await loadFull();
+          });
+        }}
+      />
+    );
+  }
+
+  /*
+  ====================================================
+  BOWLER SELECTION
+  ====================================================
+
+  IMPORTANT:
+  This is the ONLY place where the bowler
+  is selected.
+
+  It is NOT selected during scoreboard creation.
+  */
+
+  if (needBowler) {
+    return (
+      <div className="max-w-md mx-auto card space-y-4 fade-in">
+        <div className="text-center">
+          <div className="text-4xl mb-2">
+            🎯
+          </div>
+
+          <h1 className="text-xl font-bold">
+            Select Bowler
+          </h1>
+
+          <p className="text-sm text-slate-400 mt-1">
+            Choose the bowler before the next ball.
+          </p>
+        </div>
 
         {error && (
-          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
+          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-2 text-sm">
             {error}
           </div>
         )}
-      </div>
-    );
-  }
 
-  /*
-   * BOWLER SELECTION
-   *
-   * IMPORTANT:
-   * This is now shown inside the scorer page,
-   * not as a separate navigation page.
-   */
-  if (needBowler || changingBowler) {
-    return (
-      <div className="max-w-2xl mx-auto space-y-4 fade-in">
+        <PlayerAutocomplete
+          players={bowlingTeamPlayers}
+          value={null}
+          onChange={async (bowlerId) => {
+            if (!bowlerId) {
+              return;
+            }
 
-        <div className="card">
-          <div className="flex justify-between items-center">
-            <div>
-              <div className="text-sm text-slate-400">
-                {match.team1_short} vs {match.team2_short}
-              </div>
+            await act(async () => {
+              const result =
+                await Innings.setBowler(
+                  inn.id,
+                  {
+                    bowler_id: bowlerId
+                  }
+                );
 
-              <div className="text-3xl font-extrabold mt-1">
-                {inn.total_runs}
-                <span className="text-slate-400">
-                  /{inn.total_wickets}
-                </span>
-              </div>
+              /*
+              Immediately update local innings.
+              */
 
-              <div className="text-sm text-slate-400">
-                {currentInnings.overs} overs
-              </div>
-            </div>
+              if (result) {
+                setInnings((prev) =>
+                  prev.map((item) =>
+                    item?.innings?.id === inn.id
+                      ? {
+                          ...item,
+                          innings:
+                            result.innings ||
+                            result
+                        }
+                      : item
+                  )
+                );
+              }
 
-            {!needBowler && (
-              <button
-                className="text-sm text-slate-400 hover:text-white"
-                onClick={() => {
-                  setChangingBowler(false);
-                  setSelectedBowler(null);
-                }}
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </div>
-
-        <SelectBowler
-          team={bowlingTeamPlayers}
+              await loadFull();
+            });
+          }}
           teamId={inn.bowling_team_id}
-          onPlayerCreated={handlePlayerCreated}
-          initialBowler={bowler}
-          onSelect={(bowlerId) =>
-            act(async () => {
-              await Innings.setBowler(inn.id, {
-                bowler_id: bowlerId,
-              });
-
-              setChangingBowler(false);
-              setSelectedBowler(null);
-            })
-          }
-          error={error}
+          onCreated={handlePlayerCreated}
+          placeholder="Type or select bowler…"
         />
+
+        <div className="text-xs text-slate-500 text-center">
+          The bowler is selected here, not when creating the scoreboard.
+        </div>
       </div>
     );
   }
 
   /*
-   * MAIN SCORER
-   */
+  ====================================================
+  SCORER
+  ====================================================
+  */
+
   return (
     <div className="max-w-2xl mx-auto space-y-4 fade-in">
 
-      {/* BOUNDARY ANIMATION */}
+      {/* BOUNDARY */}
       {boundary && (
         <div className="boundary-overlay">
           <div
@@ -491,110 +589,86 @@ export default function Scorer() {
       {/* SCORE HEADER */}
       <div
         className={`card ${
-          flashWicket ? 'wicket-flash' : ''
+          flashWicket
+            ? 'wicket-flash'
+            : ''
         }`}
       >
-        <div className="flex justify-between items-center gap-3">
+        <div className="flex justify-between items-center flex-wrap gap-2">
 
-          <div className="min-w-0">
-            <div className="text-sm text-slate-400 truncate">
-              {match.team1_short} vs {match.team2_short}
-              {' · '}
-              {match.overs_limit} overs
+          <div>
+            <div className="text-sm text-slate-400">
+              {match.team1_short}
+              {' '}vs{' '}
+              {match.team2_short}
+              {' '}·{' '}
+              {match.overs_limit}
+              {' '}overs
             </div>
 
-            <div className="text-4xl sm:text-5xl font-extrabold tracking-tight mt-1">
+            <div className="text-3xl sm:text-4xl font-extrabold tracking-tight">
               {inn.total_runs}
+
               <span className="text-slate-400">
                 /{inn.total_wickets}
               </span>
-            </div>
 
-            <div className="text-base text-slate-400 mt-1">
-              ({currentInnings.overs} ov)
+              <span className="text-lg text-slate-400 font-medium">
+                {' '}({currentInnings.overs} ov)
+              </span>
             </div>
           </div>
 
           <div className="text-right text-sm text-slate-400">
             <div>
-              RR:{' '}
-              <span className="text-white font-semibold">
-                {currentInnings.runRate}
-              </span>
+              RR: {currentInnings.runRate}
             </div>
 
             {inn.target && (
-              <div className="mt-1">
-                Target:{' '}
-                <span className="text-white font-semibold">
-                  {inn.target}
-                </span>
+              <div>
+                Target: {inn.target}
               </div>
             )}
           </div>
         </div>
 
         {/* PLAYERS */}
-        <div className="grid grid-cols-2 gap-2 mt-4">
+        <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
 
-          <button
-            className="bg-slate-900/80 rounded-xl p-3 text-left hover:bg-slate-800 transition"
-            onClick={() => {
-              setChangingBatsmen(true);
-              setSelectedStriker(striker);
-              setSelectedNonStriker(nonStriker);
-            }}
-          >
-            <div className="text-xs text-slate-500">
-              ON STRIKE
+          <div className="bg-slate-900/70 rounded-xl p-3">
+            <div className="text-xs text-slate-500 mb-1">
+              STRIKER
             </div>
 
-            <div className="font-semibold truncate">
-              🏏 {striker?.name || 'Select'}
+            <div className="font-semibold">
+              🏏 {striker?.name || '—'}
               {' '}
               <span className="text-emerald-400">
                 ●
               </span>
             </div>
-          </button>
+          </div>
 
-          <button
-            className="bg-slate-900/80 rounded-xl p-3 text-left hover:bg-slate-800 transition"
-            onClick={() => {
-              setChangingBatsmen(true);
-              setSelectedStriker(striker);
-              setSelectedNonStriker(nonStriker);
-            }}
-          >
-            <div className="text-xs text-slate-500">
+          <div className="bg-slate-900/70 rounded-xl p-3">
+            <div className="text-xs text-slate-500 mb-1">
               NON-STRIKER
             </div>
 
-            <div className="font-semibold truncate">
-              🏏 {nonStriker?.name || 'Select'}
+            <div className="font-semibold">
+              🏏 {nonStriker?.name || '—'}
             </div>
-          </button>
+          </div>
 
           {/* BOWLER */}
-          <button
-            className="bg-slate-900/80 rounded-xl p-3 text-left hover:bg-slate-800 transition col-span-2"
-            onClick={() => {
-              setChangingBowler(true);
-              setSelectedBowler(bowler);
-            }}
-          >
-            <div className="text-xs text-slate-500">
-              BOWLER
+          <div className="bg-slate-900/70 rounded-xl p-3 col-span-2">
+            <div className="text-xs text-slate-500 mb-1">
+              BOWLING
             </div>
 
-            <div className="font-semibold truncate">
-              🎯 {bowler?.name || 'Select bowler'}
+            <div className="font-semibold">
+              🎯 {bowler?.name || '—'}
             </div>
-
-            <div className="text-xs text-slate-500 mt-1">
-              Tap to change bowler
-            </div>
-          </button>
+          </div>
         </div>
       </div>
 
@@ -605,29 +679,24 @@ export default function Scorer() {
         </div>
       )}
 
-      {/* RUN BUTTONS */}
+      {/* RUNS */}
       <div className="card">
 
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-semibold text-sm text-slate-400">
-            RUNS
-          </h3>
-
-          <span className="text-xs text-slate-500">
-            Tap to score
-          </span>
-        </div>
+        <h3 className="font-semibold mb-2 text-sm text-slate-400">
+          Runs
+        </h3>
 
         <div className="grid grid-cols-4 gap-2">
 
           {[0, 1, 2, 3].map((r) => (
             <button
               key={r}
-              className="run-btn bg-slate-700 hover:bg-slate-600 active:scale-95 transition"
+              disabled={savingBall}
+              className="run-btn bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
               onClick={() =>
                 playBall({
                   runs: r,
-                  extra_type: null,
+                  extra_type: null
                 })
               }
             >
@@ -636,11 +705,12 @@ export default function Scorer() {
           ))}
 
           <button
-            className="run-btn bg-gold hover:brightness-110 text-slate-900 active:scale-95 transition"
+            disabled={savingBall}
+            className="run-btn bg-gold hover:brightness-110 text-slate-900 disabled:opacity-50"
             onClick={() =>
               playBall({
                 runs: 4,
-                extra_type: null,
+                extra_type: null
               })
             }
           >
@@ -648,11 +718,12 @@ export default function Scorer() {
           </button>
 
           <button
-            className="run-btn bg-purple-600 hover:bg-purple-500 active:scale-95 transition"
+            disabled={savingBall}
+            className="run-btn bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
             onClick={() =>
               playBall({
                 runs: 6,
-                extra_type: null,
+                extra_type: null
               })
             }
           >
@@ -660,11 +731,12 @@ export default function Scorer() {
           </button>
 
           <button
-            className="run-btn bg-slate-700 hover:bg-slate-600 active:scale-95 transition"
+            disabled={savingBall}
+            className="run-btn bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
             onClick={() =>
               playBall({
                 runs: 5,
-                extra_type: null,
+                extra_type: null
               })
             }
           >
@@ -672,171 +744,198 @@ export default function Scorer() {
           </button>
 
           <button
-            className="run-btn bg-gradient-to-br from-red-600 to-red-800 active:scale-95 transition"
-            onClick={() => setShowWicket(true)}
+            disabled={savingBall}
+            className="run-btn bg-gradient-to-br from-red-600 to-red-800 disabled:opacity-50"
+            onClick={() =>
+              setShowWicket(true)
+            }
           >
             OUT
           </button>
         </div>
+
+        {savingBall && (
+          <div className="text-center text-xs text-slate-500 mt-3">
+            Saving ball…
+          </div>
+        )}
       </div>
 
       {/* EXTRAS */}
       <div className="card">
 
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-semibold text-sm text-slate-400">
-            EXTRAS
-          </h3>
-
-          {extraPicker && (
-            <button
-              className="text-xs text-slate-400 hover:text-white"
-              onClick={() => setExtraPicker(null)}
-            >
-              ✕ Cancel
-            </button>
-          )}
-        </div>
+        <h3 className="font-semibold mb-2 text-sm text-slate-400">
+          Extras
+        </h3>
 
         {!extraPicker ? (
           <div className="grid grid-cols-4 gap-2">
 
             <button
-              className="btn btn-secondary text-sm"
-              onClick={() => setExtraPicker('wide')}
+              disabled={savingBall}
+              className="btn btn-secondary text-sm disabled:opacity-50"
+              onClick={() =>
+                setExtraPicker('wide')
+              }
             >
               Wide
             </button>
 
             <button
-              className="btn btn-secondary text-sm"
-              onClick={() => setExtraPicker('noball')}
+              disabled={savingBall}
+              className="btn btn-secondary text-sm disabled:opacity-50"
+              onClick={() =>
+                setExtraPicker('noball')
+              }
             >
               No Ball
             </button>
 
             <button
-              className="btn btn-secondary text-sm"
-              onClick={() => setExtraPicker('bye')}
+              disabled={savingBall}
+              className="btn btn-secondary text-sm disabled:opacity-50"
+              onClick={() =>
+                setExtraPicker('bye')
+              }
             >
               Bye
             </button>
 
             <button
-              className="btn btn-secondary text-sm"
-              onClick={() => setExtraPicker('legbye')}
+              disabled={savingBall}
+              className="btn btn-secondary text-sm disabled:opacity-50"
+              onClick={() =>
+                setExtraPicker('legbye')
+              }
             >
               Leg Bye
             </button>
+
           </div>
         ) : (
           <div className="fade-in">
 
-            <div className="mb-3 text-sm font-medium text-slate-300">
-              {extraPicker === 'wide' &&
-                'Wide — select total extra runs'}
+            <div className="flex items-center justify-between mb-2">
 
-              {extraPicker === 'noball' &&
-                'No Ball — select bat runs'}
+              <span className="text-sm font-medium text-slate-300">
 
-              {extraPicker === 'bye' &&
-                'Bye — select runs'}
+                {extraPicker === 'wide' &&
+                  'Wide — extra runs'}
 
-              {extraPicker === 'legbye' &&
-                'Leg Bye — select runs'}
+                {extraPicker === 'noball' &&
+                  'No Ball — runs off bat'}
+
+                {extraPicker === 'bye' &&
+                  'Bye — runs'}
+
+                {extraPicker === 'legbye' &&
+                  'Leg Bye — runs'}
+
+              </span>
+
+              <button
+                className="text-xs text-slate-400 hover:text-white"
+                onClick={() =>
+                  setExtraPicker(null)
+                }
+              >
+                ✕ Cancel
+              </button>
+
             </div>
 
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            <div className="grid grid-cols-6 gap-2">
 
               {[0, 1, 2, 3, 4, 6].map((r) => (
+
                 <button
                   key={r}
-                  className="run-btn bg-slate-700 hover:bg-slate-600 !text-base !py-3 active:scale-95 transition"
+                  disabled={savingBall}
+                  className="run-btn bg-slate-700 hover:bg-slate-600 !text-base !py-3 disabled:opacity-50"
                   onClick={() => {
 
-                    const type = extraPicker;
+                    const type =
+                      extraPicker;
 
                     setExtraPicker(null);
 
                     if (type === 'wide') {
+
                       playBall({
                         extra_type: 'wide',
-                        extra_runs: 1 + r,
+                        extra_runs: 1 + r
                       });
-                    }
 
-                    else if (type === 'noball') {
+                    } else if (
+                      type === 'noball'
+                    ) {
+
                       playBall({
                         extra_type: 'noball',
                         extra_runs: 1,
-                        runs: r,
+                        runs: r
                       });
-                    }
 
-                    else if (type === 'bye') {
-                      playBall({
-                        extra_type: 'bye',
-                        extra_runs: Math.max(r, 1),
-                      });
-                    }
+                    } else {
 
-                    else if (type === 'legbye') {
                       playBall({
-                        extra_type: 'legbye',
-                        extra_runs: Math.max(r, 1),
+                        extra_type: type,
+                        extra_runs:
+                          Math.max(r, 1)
                       });
+
                     }
                   }}
                 >
                   {r}
                 </button>
+
               ))}
+
             </div>
           </div>
         )}
       </div>
 
-      {/* QUICK ACTIONS */}
+      {/* ACTIONS */}
       <div className="grid grid-cols-2 gap-2">
 
         <button
-          className="btn btn-secondary"
-          onClick={() =>
-            act(() => Innings.undo(inn.id))
-          }
+          disabled={savingBall}
+          className="btn btn-secondary disabled:opacity-50"
+          onClick={async () => {
+            await act(async () => {
+              await Innings.undo(inn.id);
+              await loadFull();
+            });
+          }}
         >
           ↺ Undo
         </button>
 
         <button
-          className="btn btn-secondary"
-          onClick={() =>
-            act(() => Innings.swapStrike(inn.id))
-          }
+          disabled={savingBall}
+          className="btn btn-secondary disabled:opacity-50"
+          onClick={async () => {
+            await act(async () => {
+              await Innings.swapStrike(inn.id);
+              await loadFull();
+            });
+          }}
         >
-          ⇄ Swap
+          ⇄ Swap Batsmen
         </button>
+
       </div>
 
-      {/* CHANGE BOWLER */}
-      <button
-        className="btn btn-secondary w-full"
-        onClick={() => {
-          setChangingBowler(true);
-          setSelectedBowler(bowler);
-        }}
-      >
-        🎯 Change Bowler
-      </button>
-
-      {/* SCOREBOARD */}
+      {/* FULL SCOREBOARD */}
       <button
         className="btn btn-secondary w-full"
         onClick={() =>
           navigate(`/match/${matchId}/live`)
         }
       >
-        📊 View Full Scoreboard
+        View Full Scoreboard
       </button>
 
       {/* WICKET MODAL */}
@@ -847,29 +946,35 @@ export default function Scorer() {
           fieldingPlayers={bowlingTeamPlayers}
           fieldingTeamId={inn.bowling_team_id}
           onPlayerCreated={handlePlayerCreated}
-          onClose={() => setShowWicket(false)}
-
-          onConfirm={({
+          onClose={() =>
+            setShowWicket(false)
+          }
+          onConfirm={async ({
             wicketType,
             dismissedId,
             fielderId,
-            runsBeforeWicket,
+            runsBeforeWicket
           }) => {
 
             setShowWicket(false);
-
             popWicket();
 
-            playBall({
+            await playBall({
               runs:
                 wicketType === 'run-out'
                   ? runsBeforeWicket
                   : 0,
 
               is_wicket: true,
-              wicket_type: wicketType,
-              dismissed_id: dismissedId,
-              fielder_id: fielderId,
+
+              wicket_type:
+                wicketType,
+
+              dismissed_id:
+                dismissedId,
+
+              fielder_id:
+                fielderId
             });
           }}
         />
@@ -880,162 +985,100 @@ export default function Scorer() {
 
 
 /*
- * ============================================================
- * SELECT BATSMEN
- * ============================================================
- */
+====================================================
+SELECT BATSMEN
+====================================================
+*/
 
 function SelectBatsmen({
   team,
   outIds,
+  hasStriker,
+  hasNonStriker,
   teamId,
   onPlayerCreated,
-  onSelect,
-  initialStriker,
-  initialNonStriker,
+  onSelect
 }) {
-  const [striker, setStriker] =
-    useState(initialStriker || null);
-
-  const [nonStriker, setNonStriker] =
-    useState(initialNonStriker || null);
+  const [striker, setStriker] = useState(null);
+  const [nonStriker, setNonStriker] = useState(null);
 
   const available = team.filter(
     (p) => !outIds.has(p.id)
   );
 
-  const canConfirm =
-    striker &&
-    nonStriker &&
-    striker.id !== nonStriker.id;
-
   return (
-    <div className="card space-y-5">
+    <div className="max-w-md mx-auto card space-y-4 fade-in">
 
-      <div>
-        <h2 className="text-xl font-bold">
-          🏏 Select Batsmen
-        </h2>
+      <div className="text-center">
+        <div className="text-4xl mb-2">
+          🏏
+        </div>
 
-        <p className="text-sm text-slate-400 mt-1">
-          Choose the two batsmen currently at the crease.
-        </p>
+        <h1 className="text-xl font-bold">
+          Select Batsmen
+        </h1>
       </div>
 
-      {/* STRIKER */}
-      <div>
-        <label className="text-sm text-slate-400 mb-2 block">
-          On Strike
-        </label>
+      {!hasStriker && (
+        <div>
+          <label className="text-sm text-slate-400 mb-1 block">
+            On strike
+          </label>
 
-        <PlayerAutocomplete
-          players={available}
-          value={striker}
-          onChange={setStriker}
-          teamId={teamId}
-          onCreated={onPlayerCreated}
-          excludeIds={
-            nonStriker
-              ? [nonStriker]
-              : []
-          }
-          placeholder="Type or add striker's name…"
-        />
-      </div>
-
-      {/* NON STRIKER */}
-      <div>
-        <label className="text-sm text-slate-400 mb-2 block">
-          Non-striker
-        </label>
-
-        <PlayerAutocomplete
-          players={available}
-          value={nonStriker}
-          onChange={setNonStriker}
-          teamId={teamId}
-          onCreated={onPlayerCreated}
-          excludeIds={
-            striker
-              ? [striker]
-              : []
-          }
-          placeholder="Type or add non-striker's name…"
-        />
-      </div>
-
-      <button
-        className="btn btn-primary w-full"
-        disabled={!canConfirm}
-        onClick={() =>
-          onSelect(
-            striker.id,
-            nonStriker.id
-          )
-        }
-      >
-        Confirm Batsmen
-      </button>
-    </div>
-  );
-}
-
-
-/*
- * ============================================================
- * SELECT BOWLER
- * ============================================================
- */
-
-function SelectBowler({
-  team,
-  teamId,
-  onPlayerCreated,
-  onSelect,
-  error,
-  initialBowler,
-}) {
-  const [bowler, setBowler] =
-    useState(initialBowler || null);
-
-  return (
-    <div className="card space-y-5">
-
-      <div>
-        <h2 className="text-xl font-bold">
-          🎯 Select Bowler
-        </h2>
-
-        <p className="text-sm text-slate-400 mt-1">
-          Select the bowler for the next over.
-        </p>
-      </div>
-
-      {error && (
-        <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
-          {error}
+          <PlayerAutocomplete
+            players={available}
+            value={striker}
+            onChange={setStriker}
+            teamId={teamId}
+            onCreated={onPlayerCreated}
+            excludeIds={
+              nonStriker
+                ? [nonStriker]
+                : []
+            }
+            placeholder="Type or add striker's name…"
+          />
         </div>
       )}
 
-      <PlayerAutocomplete
-        players={team}
-        value={bowler}
-        onChange={setBowler}
-        teamId={teamId}
-        onCreated={onPlayerCreated}
-        placeholder="Type or add bowler's name…"
-      />
+      {!hasNonStriker && (
+        <div>
+          <label className="text-sm text-slate-400 mb-1 block">
+            Non-striker
+          </label>
+
+          <PlayerAutocomplete
+            players={available}
+            value={nonStriker}
+            onChange={setNonStriker}
+            teamId={teamId}
+            onCreated={onPlayerCreated}
+            excludeIds={
+              striker
+                ? [striker]
+                : []
+            }
+            placeholder="Type or add non-striker's name…"
+          />
+        </div>
+      )}
 
       <button
         className="btn btn-primary w-full"
-        disabled={!bowler}
+        disabled={
+          (!hasStriker && !striker) ||
+          (!hasNonStriker && !nonStriker)
+        }
         onClick={() =>
-          onSelect(bowler.id)
+          onSelect(
+            striker || null,
+            nonStriker || null
+          )
         }
       >
-        🎯 Confirm Bowler
+        Continue
       </button>
+
     </div>
   );
 }
-```
