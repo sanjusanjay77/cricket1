@@ -2546,16 +2546,50 @@ async function getPlayerCareerStats(
 /* =========================================================
    ALL TIME RECORDS
 ========================================================= */
+/* =========================================================
+   ALL TIME RECORDS
+========================================================= */
 
 async function getAllTimeRecords() {
+
+  /*
+   * IMPORTANT
+   *
+   * highestScore / bestBattingFigure are calculated
+   * from ONE PLAYER'S ONE INNINGS.
+   *
+   * They are NOT career totals.
+   *
+   * Example:
+   *
+   * Sanjay
+   * 85 runs
+   * 42 balls
+   * 8 fours
+   * 5 sixes
+   * SR 202.38
+   *
+   * This is the performance from one particular innings.
+   */
+
   const inningsRows =
     await db.prepare(`
-      SELECT id, match_id
+      SELECT
+        id,
+        match_id,
+        batting_team_id,
+        innings_number
       FROM innings
+      ORDER BY match_id, innings_number
     `).all();
 
   let highestScore = null;
+  let bestBattingFigure = null;
   let bestBowling = null;
+
+  /* -------------------------------------------------------
+     SINGLE INNINGS RECORDS
+  ------------------------------------------------------- */
 
   for (
     const inn of inningsRows
@@ -2566,44 +2600,142 @@ async function getAllTimeRecords() {
         inn.id
       );
 
+    /* -----------------------------------------------------
+       BEST BATTING FIGURE
+
+       Compare individual innings only.
+
+       Primary:
+         highest runs
+
+       Tie breaker:
+         fewer balls
+
+       Next:
+         higher strike rate
+
+       Next:
+         more fours
+
+       Next:
+         more sixes
+    ----------------------------------------------------- */
+
     for (
       const b of batting
     ) {
 
+      const candidate = {
+
+        player_id:
+          b.player_id,
+
+        runs:
+          Number(
+            b.runs || 0
+          ),
+
+        balls:
+          Number(
+            b.balls || 0
+          ),
+
+        fours:
+          Number(
+            b.fours || 0
+          ),
+
+        sixes:
+          Number(
+            b.sixes || 0
+          ),
+
+        strike_rate:
+          Number(
+            b.strike_rate || 0
+          ),
+
+        innings_id:
+          inn.id,
+
+        match_id:
+          inn.match_id,
+
+        innings_number:
+          inn.innings_number,
+
+        batting_team_id:
+          inn.batting_team_id
+      };
+
+      const isBetter =
+        !bestBattingFigure ||
+
+        candidate.runs >
+          bestBattingFigure.runs ||
+
+        (
+          candidate.runs ===
+            bestBattingFigure.runs &&
+
+          candidate.balls <
+            bestBattingFigure.balls
+        ) ||
+
+        (
+          candidate.runs ===
+            bestBattingFigure.runs &&
+
+          candidate.balls ===
+            bestBattingFigure.balls &&
+
+          candidate.strike_rate >
+            bestBattingFigure.strike_rate
+        ) ||
+
+        (
+          candidate.runs ===
+            bestBattingFigure.runs &&
+
+          candidate.balls ===
+            bestBattingFigure.balls &&
+
+          candidate.strike_rate ===
+            bestBattingFigure.strike_rate &&
+
+          candidate.fours >
+            bestBattingFigure.fours
+        ) ||
+
+        (
+          candidate.runs ===
+            bestBattingFigure.runs &&
+
+          candidate.balls ===
+            bestBattingFigure.balls &&
+
+          candidate.strike_rate ===
+            bestBattingFigure.strike_rate &&
+
+          candidate.fours ===
+            bestBattingFigure.fours &&
+
+          candidate.sixes >
+            bestBattingFigure.sixes
+        );
+
       if (
-        !highestScore ||
-        b.runs >
-          highestScore.runs
+        isBetter
       ) {
 
-        highestScore = {
-
-          player_id:
-            b.player_id,
-
-          runs:
-            b.runs,
-
-          balls:
-            b.balls,
-
-          fours:
-            b.fours,
-
-          sixes:
-            b.sixes,
-
-          strike_rate:
-            b.strike_rate,
-
-          innings_id:
-            inn.id,
-
-          match_id:
-            inn.match_id
-        };
+        bestBattingFigure =
+          candidate;
       }
     }
+
+    /* -----------------------------------------------------
+       BEST BOWLING FIGURE
+    ----------------------------------------------------- */
 
     const bowling =
       await computeBowlingScorecard(
@@ -2614,45 +2746,95 @@ async function getAllTimeRecords() {
       const b of bowling
     ) {
 
+      const candidate = {
+
+        player_id:
+          b.player_id,
+
+        wickets:
+          Number(
+            b.wickets || 0
+          ),
+
+        runs:
+          Number(
+            b.runs || 0
+          ),
+
+        overs:
+          b.overs,
+
+        economy:
+          Number(
+            b.economy || 0
+          ),
+
+        innings_id:
+          inn.id,
+
+        match_id:
+          inn.match_id,
+
+        innings_number:
+          inn.innings_number,
+
+        bowling_team_id:
+          inn.batting_team_id
+      };
+
       const better =
         !bestBowling ||
-        b.wickets >
+
+        candidate.wickets >
           bestBowling.wickets ||
+
         (
-          b.wickets ===
+          candidate.wickets ===
             bestBowling.wickets &&
-          b.runs <
+
+          candidate.runs <
             bestBowling.runs
+        ) ||
+
+        (
+          candidate.wickets ===
+            bestBowling.wickets &&
+
+          candidate.runs ===
+            bestBowling.runs &&
+
+          candidate.economy <
+            bestBowling.economy
         );
 
-      if (better) {
+      if (
+        better
+      ) {
 
-        bestBowling = {
-
-          player_id:
-            b.player_id,
-
-          wickets:
-            b.wickets,
-
-          runs:
-            b.runs,
-
-          overs:
-            b.overs,
-
-          economy:
-            b.economy,
-
-          innings_id:
-            inn.id,
-
-          match_id:
-            inn.match_id
-        };
+        bestBowling =
+          candidate;
       }
     }
   }
+
+  /*
+   * Keep highestScore for compatibility
+   * with the existing Records controller.
+   *
+   * It represents the same SINGLE-INNINGS
+   * performance as bestBattingFigure.
+   */
+
+  highestScore =
+    bestBattingFigure
+      ? {
+          ...bestBattingFigure
+        }
+      : null;
+
+  /* -------------------------------------------------------
+     CAREER LEADERBOARDS
+  ------------------------------------------------------- */
 
   const batsmanIds =
     (
@@ -2708,6 +2890,10 @@ async function getAllTimeRecords() {
       )
     );
 
+  /* -------------------------------------------------------
+     TOP N HELPER
+  ------------------------------------------------------- */
+
   const topBy =
     (
       arr,
@@ -2716,20 +2902,63 @@ async function getAllTimeRecords() {
     ) =>
       [...arr]
         .sort(
-          (a, b) =>
-            b[key] -
-            a[key]
+          (a, b) => {
+
+            const av =
+              Number(
+                a[key] || 0
+              );
+
+            const bv =
+              Number(
+                b[key] || 0
+              );
+
+            return bv - av;
+          }
         )
         .slice(
           0,
           n
         );
 
+  /* -------------------------------------------------------
+     RETURN
+  ------------------------------------------------------- */
+
   return {
+
+    /*
+     * TRUE SINGLE-INNINGS RECORD
+     *
+     * Example:
+     *
+     * {
+     *   player_id: "...",
+     *   runs: 85,
+     *   balls: 42,
+     *   fours: 8,
+     *   sixes: 5,
+     *   strike_rate: 202.38,
+     *   innings_id: "...",
+     *   match_id: "..."
+     * }
+     */
+
+    bestBattingFigure,
+
+    /*
+     * Existing name kept so old frontend/backend
+     * code does not break.
+     */
 
     highestScore,
 
     bestBowling,
+
+    /*
+     * CAREER RECORDS
+     */
 
     mostRuns:
       topBy(
@@ -2759,7 +2988,9 @@ async function getAllTimeRecords() {
       topBy(
         battingLeaders.filter(
           b =>
-            b.balls_faced >= 10
+            Number(
+              b.balls_faced || 0
+            ) >= 10
         ),
         'strike_rate'
       ),
@@ -2780,12 +3011,18 @@ async function getAllTimeRecords() {
       [...bowlingLeaders]
         .filter(
           b =>
-            b.balls_bowled >= 12
+            Number(
+              b.balls_bowled || 0
+            ) >= 12
         )
         .sort(
           (a, b) =>
-            a.economy -
-            b.economy
+            Number(
+              a.economy || 0
+            ) -
+            Number(
+              b.economy || 0
+            )
         )
         .slice(
           0,
@@ -2793,85 +3030,6 @@ async function getAllTimeRecords() {
         )
   };
 }
-
-/* =========================================================
-   COMPATIBILITY FUNCTIONS
-========================================================= */
-
-async function computeBattingScorecard(
-  inningsId
-) {
-  const balls =
-    await db.prepare(`
-      SELECT *
-      FROM balls
-      WHERE innings_id = ?
-      ORDER BY ball_sequence ASC
-    `).all(
-      inningsId
-    );
-
-  return buildBattingScorecard(
-    balls
-  );
-}
-
-async function computeBowlingScorecard(
-  inningsId
-) {
-  const balls =
-    await db.prepare(`
-      SELECT *
-      FROM balls
-      WHERE innings_id = ?
-      ORDER BY ball_sequence ASC
-    `).all(
-      inningsId
-    );
-
-  return buildBowlingScorecard(
-    balls
-  );
-}
-
-async function computeCurrentPartnership(
-  inningsId
-) {
-  const balls =
-    await db.prepare(`
-      SELECT *
-      FROM balls
-      WHERE innings_id = ?
-      ORDER BY ball_sequence ASC
-    `).all(
-      inningsId
-    );
-
-  return buildPartnership(
-    balls
-  );
-}
-
-async function computeCurrentOver(
-  inningsId,
-  totalBalls
-) {
-  const balls =
-    await db.prepare(`
-      SELECT *
-      FROM balls
-      WHERE innings_id = ?
-      ORDER BY ball_sequence ASC
-    `).all(
-      inningsId
-    );
-
-  return buildCurrentOver(
-    balls,
-    totalBalls
-  );
-}
-
 /* =========================================================
    EXPORTS
 ========================================================= */
