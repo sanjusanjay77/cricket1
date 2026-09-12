@@ -1,35 +1,70 @@
 const scoreCalculator = require('../utils/scoreCalculator');
 const db = require('../db/database');
 
+/* =========================================================
+   GET ALL TIME RECORDS
+========================================================= */
+
 exports.getRecords = async (req, res) => {
   try {
+    /* =====================================================
+       GET RECORDS FROM SCORE CALCULATOR
+    ===================================================== */
+
     const records =
       await scoreCalculator.getAllTimeRecords();
 
-    const players = await db
-      .prepare(`
-        SELECT id, name
-        FROM players
-      `)
-      .all();
+    /* =====================================================
+       LOAD ALL PLAYERS
+    ===================================================== */
 
-    const matches = await db
-      .prepare(`
-        SELECT id, match_date, created_at
-        FROM matches
-      `)
-      .all();
+    const players =
+      await db
+        .prepare(`
+          SELECT
+            id,
+            name
+          FROM players
+        `)
+        .all();
+
+    /* =====================================================
+       LOAD ALL MATCHES
+    ===================================================== */
+
+    const matches =
+      await db
+        .prepare(`
+          SELECT
+            id,
+            match_date,
+            created_at
+          FROM matches
+        `)
+        .all();
+
+    /* =====================================================
+       ATTACH PLAYER + MATCH INFORMATION
+    ===================================================== */
 
     const attach = (entry) => {
-      if (!entry) return entry;
+      if (!entry) {
+        return entry;
+      }
 
-      const player = players.find(
-        p => String(p.id) === String(entry.player_id)
-      );
+      const player =
+        players.find(
+          (p) =>
+            String(p.id) ===
+            String(entry.player_id)
+        );
 
-      const match = matches.find(
-        m => String(m.id) === String(entry.match_id)
-      );
+      const match =
+        matches.find(
+          (m) =>
+            String(m.id) ===
+            String(entry.match_id)
+        );
 
       return {
         ...entry,
@@ -47,6 +82,10 @@ exports.getRecords = async (req, res) => {
       };
     };
 
+    /* =====================================================
+       ATTACH LIST
+    ===================================================== */
+
     const attachList = (list) => {
       if (!Array.isArray(list)) {
         return [];
@@ -55,41 +94,121 @@ exports.getRecords = async (req, res) => {
       return list.map(attach);
     };
 
+    /* =====================================================
+       FINAL RESPONSE
+       
+       IMPORTANT:
+       bestBattingFigure is included here.
+    ===================================================== */
+
     const response = {
-      highestScore: attach(
-        records.highestScore
-      ),
+      /* ===================================================
+         SINGLE-MATCH RECORDS
+      =================================================== */
 
-      bestBowling: attach(
-        records.bestBowling
-      ),
+      highestScore:
+        attach(
+          records.highestScore
+        ),
 
-      mostRuns: attachList(
-        records.mostRuns
-      ),
+      bestBattingFigure:
+        attach(
+          records.bestBattingFigure
+        ),
 
-      mostWickets: attachList(
-        records.mostWickets
-      ),
+      bestBowling:
+        attach(
+          records.bestBowling
+        ),
 
-      mostFours: attachList(
-        records.mostFours
-      ),
+      /* ===================================================
+         CAREER BATTING RECORDS
+      =================================================== */
 
-      mostSixes: attachList(
-        records.mostSixes
-      ),
+      mostRuns:
+        attachList(
+          records.mostRuns
+        ),
 
-      bestStrikeRate: attachList(
-        records.bestStrikeRate
-      ),
+      mostFours:
+        attachList(
+          records.mostFours
+        ),
 
-      bestEconomy: attachList(
-        records.bestEconomy
-      )
+      mostSixes:
+        attachList(
+          records.mostSixes
+        ),
+
+      mostBallsFaced:
+        attachList(
+          records.mostBallsFaced
+        ),
+
+      bestStrikeRate:
+        attachList(
+          records.bestStrikeRate
+        ),
+
+      /* ===================================================
+         CAREER BOWLING RECORDS
+      =================================================== */
+
+      mostWickets:
+        attachList(
+          records.mostWickets
+        ),
+
+      mostBallsBowled:
+        attachList(
+          records.mostBallsBowled
+        ),
+
+      bestEconomy:
+        attachList(
+          records.bestEconomy
+        )
     };
 
-    console.log('ALL TIME RECORDS LOADED');
+    /* =====================================================
+       DEBUG LOGS
+    ===================================================== */
+
+    console.log(
+      '=============================================='
+    );
+
+    console.log(
+      'ALL TIME RECORDS LOADED'
+    );
+
+    console.log(
+      'BEST BATTING FIGURE:',
+      response.bestBattingFigure
+    );
+
+    console.log(
+      'HIGHEST SCORE:',
+      response.highestScore
+    );
+
+    console.log(
+      'BEST BOWLING:',
+      response.bestBowling
+    );
+
+    console.log(
+      'MOST RUNS:',
+      response.mostRuns
+    );
+
+    console.log(
+      '=============================================='
+    );
+
+    /* =====================================================
+       SEND RESPONSE
+    ===================================================== */
 
     res.json(response);
 
