@@ -18,7 +18,6 @@ export default function Scorer() {
 
   const [nextBowlerId, setNextBowlerId] = useState(null);
 
-  // wide | noball | bye | null
   const [showExtraPicker, setShowExtraPicker] = useState(null);
 
   const [error, setError] = useState('');
@@ -29,9 +28,16 @@ export default function Scorer() {
   const [pendingBall, setPendingBall] = useState(null);
 
   const [selectingBowler, setSelectingBowler] = useState(false);
+  const [swappingBatsmen, setSwappingBatsmen] = useState(false);
 
-  // Full scoreboard is CLOSED by default
-  const [showFullScoreboard, setShowFullScoreboard] = useState(false);
+  const [showFullScoreboard, setShowFullScoreboard] =
+    useState(false);
+
+  const [showPartnership, setShowPartnership] =
+    useState(true);
+
+  const [showFallOfWickets, setShowFallOfWickets] =
+    useState(true);
 
   const boundaryTimer = useRef(null);
   const wicketTimer = useRef(null);
@@ -180,68 +186,78 @@ export default function Scorer() {
   ===================================================== */
 
   const optimisticBall = useCallback(
-    (payload, currentInn, currentBattingCard, currentBowlingCard, currentOver) => {
+    (
+      payload,
+      currentInn,
+      currentBattingCard,
+      currentBowlingCard,
+      currentOver
+    ) => {
       const runs = Number(payload.runs || 0);
-      const extraRuns = Number(payload.extra_runs || 0);
+      const extraRuns = Number(
+        payload.extra_runs || 0
+      );
 
       let teamRuns = runs;
       let legalBall = true;
       let batsmanRuns = runs;
 
       if (payload.extra_type === 'wide') {
-        // extra_runs already contains TOTAL wide runs
         teamRuns = Math.max(1, extraRuns);
         batsmanRuns = 0;
         legalBall = false;
-      } else if (payload.extra_type === 'noball') {
-        // extra_runs = 1 penalty, runs = bat runs
+      } else if (
+        payload.extra_type === 'noball'
+      ) {
         teamRuns = 1 + runs;
         batsmanRuns = runs;
         legalBall = false;
-      } else if (payload.extra_type === 'bye') {
+      } else if (
+        payload.extra_type === 'bye'
+      ) {
         teamRuns = Math.max(0, extraRuns);
         batsmanRuns = 0;
         legalBall = true;
-      } else if (payload.extra_type === 'legbye') {
+      } else if (
+        payload.extra_type === 'legbye'
+      ) {
         teamRuns = Math.max(0, extraRuns);
         batsmanRuns = 0;
         legalBall = true;
-      } else if (payload.extra_type === 'penalty') {
+      } else if (
+        payload.extra_type === 'penalty'
+      ) {
         teamRuns = Math.max(0, extraRuns);
         batsmanRuns = 0;
         legalBall = false;
       }
 
-      const oldTotalRuns = Number(currentInn.total_runs || 0);
-      const oldTotalBalls = Number(currentInn.total_balls || 0);
-      const oldTotalWickets = Number(
-        currentInn.total_wickets || 0
-      );
+      const oldTotalRuns =
+        Number(currentInn.total_runs || 0);
+
+      const oldTotalBalls =
+        Number(currentInn.total_balls || 0);
+
+      const oldTotalWickets =
+        Number(currentInn.total_wickets || 0);
 
       const newTotalRuns =
         oldTotalRuns + teamRuns;
 
       const newTotalBalls =
-        oldTotalBalls + (legalBall ? 1 : 0);
+        oldTotalBalls +
+        (legalBall ? 1 : 0);
 
       const newTotalWickets =
         oldTotalWickets +
         (payload.wicket ? 1 : 0);
 
-      let newStrikerId = currentInn.striker_id;
+      let newStrikerId =
+        currentInn.striker_id;
+
       let newNonStrikerId =
         currentInn.non_striker_id;
 
-      /*
-       * Odd completed runs change strike.
-       *
-       * Wide:
-       * WD + 1 = 2 team runs -> strike does NOT change
-       * WD + 2 = 3 team runs -> strike changes
-       *
-       * No ball:
-       * NB + 1 = 2 -> changes
-       */
       const runsForStrike =
         payload.extra_type === 'wide'
           ? teamRuns
@@ -253,15 +269,12 @@ export default function Scorer() {
           ? runs
           : runs;
 
-      if (
-        runsForStrike % 2 === 1
-      ) {
+      if (runsForStrike % 2 === 1) {
         const temp = newStrikerId;
         newStrikerId = newNonStrikerId;
         newNonStrikerId = temp;
       }
 
-      // End of over changes strike
       if (
         legalBall &&
         newTotalBalls > 0 &&
@@ -273,7 +286,7 @@ export default function Scorer() {
       }
 
       /* -----------------------------
-         Batting card optimistic update
+         Batting card
       ----------------------------- */
 
       const battingCard =
@@ -284,11 +297,12 @@ export default function Scorer() {
           : [];
 
       if (currentInn.striker_id) {
-        let strikerRow = battingCard.find(
-          (row) =>
-            row.player_id ===
-            currentInn.striker_id
-        );
+        let strikerRow =
+          battingCard.find(
+            (row) =>
+              row.player_id ===
+              currentInn.striker_id
+          );
 
         if (!strikerRow) {
           strikerRow = {
@@ -308,10 +322,6 @@ export default function Scorer() {
           Number(strikerRow.runs || 0) +
           batsmanRuns;
 
-        /*
-         * Batsman does NOT face a ball for
-         * wide/no-ball/penalty.
-         */
         if (
           legalBall &&
           !payload.wicket
@@ -338,10 +348,18 @@ export default function Scorer() {
             Number(strikerRow.sixes || 0) +
             1;
         }
+
+        if (
+          payload.wicket &&
+          payload.dismissed_player_id ===
+            currentInn.striker_id
+        ) {
+          strikerRow.is_out = true;
+        }
       }
 
       /* -----------------------------
-         Bowling card optimistic update
+         Bowling card
       ----------------------------- */
 
       const bowlingCard =
@@ -391,8 +409,8 @@ export default function Scorer() {
         const bowlingBalls =
           Number(
             bowlerRow.balls ||
-              bowlerRow.legalBalls ||
-              0
+            bowlerRow.legalBalls ||
+            0
           );
 
         bowlerRow.economy =
@@ -405,7 +423,7 @@ export default function Scorer() {
       }
 
       /* -----------------------------
-         Current over optimistic ball
+         Current over
       ----------------------------- */
 
       const optimisticDisplay =
@@ -420,14 +438,10 @@ export default function Scorer() {
           payload.extra_type || null,
         extra_runs:
           payload.extra_runs || 0,
-        wicket:
-          !!payload.wicket,
-        display:
-          optimisticDisplay,
-        ball_display:
-          optimisticDisplay,
-        result:
-          optimisticDisplay
+        wicket: !!payload.wicket,
+        display: optimisticDisplay,
+        ball_display: optimisticDisplay,
+        result: optimisticDisplay
       };
 
       const newCurrentOver =
@@ -435,10 +449,6 @@ export default function Scorer() {
           ? [...currentOver, newBall]
           : [newBall];
 
-      /*
-       * If six legal balls are completed,
-       * start a new visual over.
-       */
       const visualCurrentOver =
         legalBall &&
         newTotalBalls % 6 === 0
@@ -477,7 +487,6 @@ export default function Scorer() {
             },
 
             battingCard,
-
             bowlingCard,
 
             currentOver:
@@ -550,10 +559,6 @@ export default function Scorer() {
       popWicket();
     }
 
-    /*
-     * FAST UI:
-     * update screen BEFORE waiting for API.
-     */
     optimisticBall(
       payload,
       inn,
@@ -571,11 +576,6 @@ export default function Scorer() {
           payload
         );
 
-      /*
-       * Server result is authoritative.
-       * Replace optimistic values with
-       * actual database values.
-       */
       if (result?.innings) {
         updateCurrentInnings(
           result.innings
@@ -616,10 +616,6 @@ export default function Scorer() {
 
       setPendingBall(null);
 
-      /*
-       * Restore actual database state
-       * if server rejected the ball.
-       */
       await loadFull();
 
       setError(
@@ -661,33 +657,6 @@ export default function Scorer() {
         : type
     );
   };
-
-  /*
-   * WIDE:
-   *
-   * 0 = WD       = 1 total
-   * 1 = WD+1     = 2 total
-   * 2 = WD+2     = 3 total
-   * ...
-   * 6 = WD+6     = 7 total
-   *
-   * Backend expects extra_runs
-   * to contain TOTAL wide runs.
-   *
-   * NO BALL:
-   *
-   * 0 = NB       = 1 total
-   * 1 = NB+1     = 2 total
-   * ...
-   * 6 = NB+6     = 7 total
-   *
-   * BYE:
-   *
-   * 0 = B0
-   * 1 = B1
-   * ...
-   * 6 = B6
-   */
 
   const confirmExtraNumber = (number) => {
     if (!showExtraPicker) {
@@ -753,6 +722,74 @@ export default function Scorer() {
       fielder_id:
         data?.fielder_id || null
     });
+  };
+
+  /* =====================================================
+     SWAP BATSMEN
+  ===================================================== */
+
+  const swapBatsmen = async () => {
+    if (
+      swappingBatsmen ||
+      savingBall
+    ) {
+      return;
+    }
+
+    if (
+      !inn.striker_id ||
+      !inn.non_striker_id
+    ) {
+      setError(
+        'Both batsmen must be selected.'
+      );
+
+      return;
+    }
+
+    try {
+      setError('');
+      setSwappingBatsmen(true);
+
+      /*
+       * We use the existing setBatsmen
+       * endpoint so this works even if
+       * api.js does not yet expose
+       * swapBatsmen().
+       */
+      const result =
+        await Innings.setBatsmen(
+          inn.id,
+          {
+            striker_id:
+              inn.non_striker_id,
+
+            non_striker_id:
+              inn.striker_id
+          }
+        );
+
+      if (result?.innings) {
+        updateCurrentInnings(
+          result.innings
+        );
+      }
+
+      await loadFull();
+    } catch (err) {
+      console.error(
+        'Swap batsmen error:',
+        err
+      );
+
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Failed to swap batsmen'
+      );
+    } finally {
+      setSwappingBatsmen(false);
+    }
   };
 
   /* =====================================================
@@ -930,6 +967,37 @@ export default function Scorer() {
     )
       ? currentInnings.recentBalls
       : [];
+
+  /* =====================================================
+     FALL OF WICKETS
+  ===================================================== */
+
+  const fallOfWickets =
+    Array.isArray(
+      currentInnings.fallOfWickets
+    )
+      ? currentInnings.fallOfWickets
+      : [];
+
+  /* =====================================================
+     PARTNERSHIP
+  ===================================================== */
+
+  const partnership =
+    currentInnings.partnership || {
+      runs: 0,
+      balls: 0
+    };
+
+  const partnershipRuns =
+    Number(
+      partnership.runs || 0
+    );
+
+  const partnershipBalls =
+    Number(
+      partnership.balls || 0
+    );
 
   /* =====================================================
      EXTRAS
@@ -1199,19 +1267,20 @@ export default function Scorer() {
     <div className="max-w-2xl mx-auto space-y-3 pb-10">
 
       {/* =================================================
-          HEADER
+          LIVE HEADER
       ================================================= */}
 
-      <div className="card p-4">
+      <div className="card p-3 sm:p-4">
 
-        <div className="flex justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
 
-          <div>
-            <div className="text-xs text-slate-400 uppercase">
-              Live Scoring
+          <div className="min-w-0">
+
+            <div className="text-[10px] sm:text-xs text-slate-400 uppercase font-bold">
+              LIVE SCORING
             </div>
 
-            <h1 className="text-xl font-black mt-1">
+            <h1 className="text-base sm:text-xl font-black mt-1 truncate">
               {match.team1_name ||
                 match.team1?.name ||
                 'Team'}{' '}
@@ -1220,16 +1289,17 @@ export default function Scorer() {
                 match.team2?.name ||
                 'Team'}
             </h1>
+
           </div>
 
-          <div className="text-right">
+          <div className="text-right shrink-0">
 
-            <div className="text-3xl font-black">
+            <div className="text-3xl sm:text-4xl font-black leading-none">
               {totalRuns}/
               {totalWickets}
             </div>
 
-            <div className="text-xs text-slate-400">
+            <div className="text-[11px] text-slate-400 mt-1">
               {oversText} overs
             </div>
 
@@ -1237,27 +1307,23 @@ export default function Scorer() {
 
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mt-3">
+        <div className="grid grid-cols-3 gap-2 mt-3">
 
-          <div className="bg-slate-900 rounded-xl p-3">
-            <div className="text-xs text-slate-400">
-              RUN RATE
-            </div>
+          <SmallScoreBox
+            label="RUN RATE"
+            value={runRate}
+          />
 
-            <div className="text-lg font-bold">
-              {runRate}
-            </div>
-          </div>
+          <SmallScoreBox
+            label="TARGET"
+            value={inn.target || '—'}
+          />
 
-          <div className="bg-slate-900 rounded-xl p-3">
-            <div className="text-xs text-slate-400">
-              TARGET
-            </div>
-
-            <div className="text-lg font-bold">
-              {inn.target || '—'}
-            </div>
-          </div>
+          <SmallScoreBox
+            label="PARTNERSHIP"
+            value={partnershipRuns}
+            suffix={` (${partnershipBalls})`}
+          />
 
         </div>
 
@@ -1268,16 +1334,40 @@ export default function Scorer() {
       )}
 
       {/* =================================================
-          CURRENT PLAYERS
+          CURRENT BATSMEN
       ================================================= */}
 
-      <div className="card p-4">
+      <div className="card p-3 sm:p-4">
 
-        <h2 className="font-bold mb-3">
-          Current Players
-        </h2>
+        <div className="flex items-center justify-between mb-3">
 
-        <div className="space-y-2">
+          <div>
+            <h2 className="font-black text-lg">
+              🏏 Batting
+            </h2>
+
+            <div className="text-[11px] text-slate-500">
+              Current batsmen
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={
+              swappingBatsmen ||
+              savingBall
+            }
+            onClick={swapBatsmen}
+            className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-xs sm:text-sm font-black disabled:opacity-40"
+          >
+            {swappingBatsmen
+              ? 'SWAPPING…'
+              : '🔄 SWAP'}
+          </button>
+
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
 
           <BatterRow
             player={striker}
@@ -1292,21 +1382,73 @@ export default function Scorer() {
 
         </div>
 
-        <div className="border-t border-slate-700/60 mt-4 pt-4">
+        {/* PARTNERSHIP */}
 
-          <div className="text-sm font-semibold mb-2">
-            🎯 Bowling
+        <div className="mt-3 bg-gradient-to-r from-emerald-900/40 to-slate-900 border border-emerald-700/30 rounded-2xl p-3">
+
+          <div className="flex justify-between items-center">
+
+            <div>
+              <div className="text-[10px] uppercase font-bold text-emerald-400">
+                CURRENT PARTNERSHIP
+              </div>
+
+              <div className="text-sm text-slate-400 mt-1">
+                {striker?.name || 'Striker'}{' '}
+                +{' '}
+                {nonStriker?.name || 'Non-striker'}
+              </div>
+            </div>
+
+            <div className="text-right">
+
+              <div className="text-2xl font-black">
+                {partnershipRuns}
+              </div>
+
+              <div className="text-[11px] text-slate-400">
+                {partnershipBalls} balls
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* BOWLER */}
+
+        <div className="border-t border-slate-700/60 mt-3 pt-3">
+
+          <div className="flex items-center justify-between mb-2">
+
+            <div className="text-sm font-bold">
+              🎯 Current Bowler
+            </div>
+
+            {!bowler && (
+              <button
+                type="button"
+                onClick={() =>
+                  setShowNextBowler(true)
+                }
+                className="text-xs px-3 py-2 rounded-lg bg-amber-600 font-bold"
+              >
+                SELECT
+              </button>
+            )}
+
           </div>
 
           {bowler ? (
             <div className="bg-slate-900 rounded-xl p-3 flex justify-between">
 
               <div>
-                <div className="font-bold text-lg">
+                <div className="font-bold">
                   {bowler.name}
                 </div>
 
-                <div className="text-xs text-slate-400">
+                <div className="text-xs text-slate-400 mt-1">
                   {formatOvers(
                     bowlerStats.balls
                   )}{' '}
@@ -1319,19 +1461,21 @@ export default function Scorer() {
               </div>
 
               <div className="text-right">
+
                 <div className="font-bold">
                   {bowlerStats.economy}
                 </div>
 
-                <div className="text-xs text-slate-500">
+                <div className="text-[10px] text-slate-500">
                   ECON
                 </div>
+
               </div>
 
             </div>
           ) : (
-            <div className="text-center text-amber-400 bg-slate-900 rounded-xl p-3">
-              Select bowler from popup
+            <div className="text-center text-amber-400 bg-slate-900 rounded-xl p-3 text-sm">
+              Select bowler to start scoring
             </div>
           )}
 
@@ -1343,19 +1487,26 @@ export default function Scorer() {
           CURRENT OVER
       ================================================= */}
 
-      <div className="card p-4">
+      <div className="card p-3 sm:p-4">
 
-        <div className="flex justify-between mb-3">
+        <div className="flex justify-between items-center mb-3">
 
-          <h2 className="font-bold">
-            Current Over
-          </h2>
+          <div>
+            <h2 className="font-black">
+              Current Over
+            </h2>
 
-          <span className="text-xs text-slate-400">
-            {Math.floor(
-              totalBalls / 6
-            ) + 1}
-          </span>
+            <div className="text-[10px] text-slate-500">
+              Over{' '}
+              {Math.floor(
+                totalBalls / 6
+              ) + 1}
+            </div>
+          </div>
+
+          <div className="text-sm font-bold text-emerald-400">
+            {currentOver.length} balls
+          </div>
 
         </div>
 
@@ -1382,7 +1533,9 @@ export default function Scorer() {
           {pendingBall &&
             !currentOver.some(
               (b) =>
-                String(b.id || '').startsWith(
+                String(
+                  b.id || ''
+                ).startsWith(
                   'pending-'
                 )
             ) && (
@@ -1398,13 +1551,29 @@ export default function Scorer() {
       </div>
 
       {/* =================================================
-          SCORE RUNS
+          SCORE BUTTONS
       ================================================= */}
 
-      <div className="card p-4">
+      <div className="card p-3 sm:p-4">
 
-        <div className="text-sm font-semibold mb-3">
-          Score Runs
+        <div className="flex justify-between items-center mb-3">
+
+          <div>
+            <div className="text-lg font-black">
+              Score Runs
+            </div>
+
+            <div className="text-[11px] text-slate-500">
+              Tap once to record ball
+            </div>
+          </div>
+
+          {savingBall && (
+            <div className="text-xs text-amber-400 animate-pulse font-bold">
+              SAVING…
+            </div>
+          )}
+
         </div>
 
         <div className="grid grid-cols-4 gap-2">
@@ -1420,7 +1589,7 @@ export default function Scorer() {
                 onClick={() =>
                   recordRuns(run)
                 }
-                className="h-14 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 font-black text-xl disabled:opacity-40"
+                className="h-14 sm:h-16 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-95 font-black text-xl sm:text-2xl disabled:opacity-40"
               >
                 {run}
               </button>
@@ -1435,7 +1604,7 @@ export default function Scorer() {
             onClick={() =>
               recordRuns(4)
             }
-            className="h-14 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 font-black text-xl disabled:opacity-40"
+            className="h-14 sm:h-16 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-95 font-black text-xl sm:text-2xl disabled:opacity-40"
           >
             4
           </button>
@@ -1448,7 +1617,7 @@ export default function Scorer() {
             onClick={() =>
               recordRuns(6)
             }
-            className="h-14 rounded-xl bg-purple-600 hover:bg-purple-500 active:scale-95 font-black text-xl disabled:opacity-40"
+            className="h-14 sm:h-16 rounded-2xl bg-purple-600 hover:bg-purple-500 active:scale-95 font-black text-xl sm:text-2xl disabled:opacity-40"
           >
             6
           </button>
@@ -1461,7 +1630,7 @@ export default function Scorer() {
             onClick={() =>
               openExtraPicker('wide')
             }
-            className="h-14 rounded-xl bg-slate-700 hover:bg-slate-600 font-bold disabled:opacity-40"
+            className="h-14 sm:h-16 rounded-2xl bg-slate-700 hover:bg-slate-600 active:scale-95 font-bold text-sm disabled:opacity-40"
           >
             WIDE
           </button>
@@ -1474,21 +1643,17 @@ export default function Scorer() {
             onClick={() =>
               openExtraPicker('noball')
             }
-            className="h-14 rounded-xl bg-slate-700 hover:bg-slate-600 font-bold disabled:opacity-40"
+            className="h-14 sm:h-16 rounded-2xl bg-slate-700 hover:bg-slate-600 active:scale-95 font-bold text-sm disabled:opacity-40"
           >
             NO BALL
           </button>
 
         </div>
 
-        {/* =================================================
-            INLINE EXTRA NUMBER ROW
-        ================================================= */}
-
         {showExtraPicker && (
-          <div className="mt-3">
+          <div className="mt-3 bg-slate-900 rounded-2xl p-3">
 
-            <div className="text-xs text-slate-400 mb-2 text-center uppercase font-bold">
+            <div className="text-xs text-slate-400 mb-2 text-center uppercase font-black">
               {showExtraPicker === 'wide'
                 ? 'Wide — additional runs'
                 : showExtraPicker === 'noball'
@@ -1502,13 +1667,15 @@ export default function Scorer() {
                 (number) => (
                   <button
                     key={number}
-                    disabled={savingBall}
+                    disabled={
+                      savingBall
+                    }
                     onClick={() =>
                       confirmExtraNumber(
                         number
                       )
                     }
-                    className="h-12 rounded-xl bg-emerald-700 hover:bg-emerald-600 active:scale-95 font-black text-lg disabled:opacity-40"
+                    className="h-11 sm:h-12 rounded-xl bg-emerald-700 hover:bg-emerald-600 active:scale-95 font-black text-lg disabled:opacity-40"
                   >
                     {number}
                   </button>
@@ -1519,10 +1686,6 @@ export default function Scorer() {
 
           </div>
         )}
-
-        {/* =================================================
-            BYE / WICKET
-        ================================================= */}
 
         <div className="grid grid-cols-2 gap-2 mt-2">
 
@@ -1535,7 +1698,7 @@ export default function Scorer() {
               openExtraPicker('bye')
             }
             className={[
-              'h-12 rounded-xl font-bold disabled:opacity-40',
+              'h-12 sm:h-14 rounded-2xl font-bold active:scale-95 disabled:opacity-40',
               showExtraPicker === 'bye'
                 ? 'bg-emerald-600'
                 : 'bg-slate-800 hover:bg-slate-700'
@@ -1552,7 +1715,7 @@ export default function Scorer() {
             onClick={() =>
               setShowWicket(true)
             }
-            className="h-12 rounded-xl bg-red-700 hover:bg-red-600 font-black disabled:opacity-40"
+            className="h-12 sm:h-14 rounded-2xl bg-red-700 hover:bg-red-600 active:scale-95 font-black disabled:opacity-40"
           >
             WICKET
           </button>
@@ -1562,14 +1725,152 @@ export default function Scorer() {
       </div>
 
       {/* =================================================
-          EXTRAS SUMMARY
+          FALL OF WICKETS
       ================================================= */}
 
-      <div className="card p-4">
+      <div className="card p-3 sm:p-4">
+
+        <button
+          type="button"
+          onClick={() =>
+            setShowFallOfWickets(
+              (prev) => !prev
+            )
+          }
+          className="w-full flex items-center justify-between"
+        >
+
+          <div className="text-left">
+
+            <div className="font-black text-lg">
+              💥 Fall of Wickets
+            </div>
+
+            <div className="text-xs text-slate-500">
+              {fallOfWickets.length} wicket
+              {fallOfWickets.length !== 1
+                ? 's'
+                : ''}
+            </div>
+
+          </div>
+
+          <div className="text-slate-400 text-xl">
+            {showFallOfWickets
+              ? '▲'
+              : '▼'}
+          </div>
+
+        </button>
+
+        {showFallOfWickets && (
+          <div className="mt-3">
+
+            {fallOfWickets.length === 0 ? (
+              <div className="bg-slate-900 rounded-xl p-4 text-center text-sm text-slate-500">
+                No wickets yet
+              </div>
+            ) : (
+              <div className="space-y-2">
+
+                {fallOfWickets.map(
+                  (wicket, index) => {
+
+                    const dismissed =
+                      players.find(
+                        (p) =>
+                          p.id ===
+                          wicket.dismissed_id
+                      );
+
+                    const wicketScore =
+                      Number(
+                        wicket.score ??
+                        wicket.total_runs ??
+                        0
+                      );
+
+                    const wicketNumber =
+                      Number(
+                        wicket.wicket_number ||
+                        index + 1
+                      );
+
+                    const wicketOver =
+                      wicket.over ||
+                      wicket.over_number_display ||
+                      formatBallOver(
+                        wicket.legal_balls ||
+                        wicket.ball_sequence ||
+                        0
+                      );
+
+                    return (
+                      <div
+                        key={
+                          wicket.id ||
+                          `${wicket.dismissed_id}-${index}`
+                        }
+                        className="bg-slate-900 rounded-2xl p-3 flex items-center gap-3"
+                      >
+
+                        <div className="w-10 h-10 shrink-0 rounded-full bg-red-900/50 border border-red-600 flex items-center justify-center text-red-300 font-black">
+                          {wicketNumber}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+
+                          <div className="font-bold truncate">
+                            {dismissed?.name ||
+                              wicket.dismissed_name ||
+                              'Unknown batter'}
+                          </div>
+
+                          <div className="text-xs text-slate-500 mt-1">
+                            {formatWicketType(
+                              wicket.wicket_type
+                            )}
+                            {wicketOver
+                              ? ` · ${wicketOver}`
+                              : ''}
+                          </div>
+
+                        </div>
+
+                        <div className="text-right shrink-0">
+
+                          <div className="text-lg font-black text-red-300">
+                            {wicketScore}
+                          </div>
+
+                          <div className="text-[10px] text-slate-500">
+                            TEAM SCORE
+                          </div>
+
+                        </div>
+
+                      </div>
+                    );
+                  }
+                )}
+
+              </div>
+            )}
+
+          </div>
+        )}
+
+      </div>
+
+      {/* =================================================
+          EXTRAS
+      ================================================= */}
+
+      <div className="card p-3 sm:p-4">
 
         <div className="flex justify-between items-center mb-3">
 
-          <h2 className="font-bold text-lg">
+          <h2 className="font-black text-lg">
             Extras
           </h2>
 
@@ -1623,7 +1924,7 @@ export default function Scorer() {
       </div>
 
       {/* =================================================
-          FULL SCOREBOARD TOGGLE
+          FULL SCOREBOARD
       ================================================= */}
 
       <button
@@ -1644,18 +1945,15 @@ export default function Scorer() {
           : '▼ FULL SCOREBOARD'}
       </button>
 
-      {/* =================================================
-          FULL SCOREBOARD
-      ================================================= */}
-
       {showFullScoreboard && (
-        <div className="card p-4">
+        <div className="card p-3 sm:p-4">
 
-          {/* SCORE HEADER */}
+          {/* SCORE */}
 
           <div className="flex justify-between items-center mb-5">
 
             <div>
+
               <div className="text-xs text-slate-500 uppercase">
                 Full Scoreboard
               </div>
@@ -1668,6 +1966,7 @@ export default function Scorer() {
               <div className="text-sm text-slate-400 mt-1">
                 {oversText} overs · RR {runRate}
               </div>
+
             </div>
 
             <div className="text-right">
@@ -1678,6 +1977,40 @@ export default function Scorer() {
 
               <div className="text-xl font-black">
                 {inn.target || '—'}
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* PARTNERSHIP */}
+
+          <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-2xl p-4 mb-5">
+
+            <div className="text-xs text-emerald-400 font-black uppercase">
+              Current Partnership
+            </div>
+
+            <div className="flex justify-between items-center mt-2">
+
+              <div className="text-sm">
+                {striker?.name ||
+                  'Striker'}
+                {' + '}
+                {nonStriker?.name ||
+                  'Non-striker'}
+              </div>
+
+              <div className="text-right">
+
+                <div className="text-2xl font-black">
+                  {partnershipRuns}
+                </div>
+
+                <div className="text-xs text-slate-500">
+                  {partnershipBalls} balls
+                </div>
+
               </div>
 
             </div>
@@ -1774,6 +2107,7 @@ export default function Scorer() {
 
                   {battingCard.map(
                     (row) => {
+
                       const player =
                         players.find(
                           (p) =>
@@ -1902,6 +2236,84 @@ export default function Scorer() {
 
           </div>
 
+          {/* FALL OF WICKETS */}
+
+          <div className="mb-7">
+
+            <h3 className="font-bold mb-3">
+              💥 FALL OF WICKETS
+            </h3>
+
+            {fallOfWickets.length === 0 ? (
+              <div className="bg-slate-900 rounded-xl p-4 text-center text-sm text-slate-500">
+                No wickets yet
+              </div>
+            ) : (
+              <div className="space-y-2">
+
+                {fallOfWickets.map(
+                  (wicket, index) => {
+
+                    const dismissed =
+                      players.find(
+                        (p) =>
+                          p.id ===
+                          wicket.dismissed_id
+                      );
+
+                    return (
+                      <div
+                        key={
+                          wicket.id ||
+                          index
+                        }
+                        className="bg-slate-900 rounded-xl p-3 flex justify-between"
+                      >
+
+                        <div>
+
+                          <div className="font-bold">
+                            {index + 1}.{' '}
+                            {dismissed?.name ||
+                              wicket.dismissed_name ||
+                              'Unknown'}
+                          </div>
+
+                          <div className="text-xs text-slate-500 mt-1">
+                            {formatWicketType(
+                              wicket.wicket_type
+                            )}
+                            {wicket.over
+                              ? ` · ${wicket.over}`
+                              : ''}
+                          </div>
+
+                        </div>
+
+                        <div className="text-right">
+
+                          <div className="font-black text-red-300">
+                            {wicket.score ??
+                              wicket.total_runs ??
+                              0}
+                          </div>
+
+                          <div className="text-[10px] text-slate-500">
+                            SCORE
+                          </div>
+
+                        </div>
+
+                      </div>
+                    );
+                  }
+                )}
+
+              </div>
+            )}
+
+          </div>
+
           {/* BOWLING */}
 
           <div>
@@ -1944,6 +2356,7 @@ export default function Scorer() {
 
                   {bowlingCard.map(
                     (row) => {
+
                       const player =
                         players.find(
                           (p) =>
@@ -2256,6 +2669,36 @@ export default function Scorer() {
 
 
 /* =====================================================
+   SMALL SCORE BOX
+===================================================== */
+
+function SmallScoreBox({
+  label,
+  value,
+  suffix = ''
+}) {
+  return (
+    <div className="bg-slate-900 rounded-xl p-2.5 min-w-0">
+
+      <div className="text-[9px] sm:text-[10px] text-slate-500 font-black truncate">
+        {label}
+      </div>
+
+      <div className="text-base sm:text-lg font-black mt-1 truncate">
+        {value}
+        {suffix && (
+          <span className="text-xs text-slate-400">
+            {suffix}
+          </span>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+
+/* =====================================================
    MINI STAT
 ===================================================== */
 
@@ -2315,49 +2758,56 @@ function BatterRow({
   return (
     <div
       className={[
-        'flex justify-between items-center rounded-xl p-3',
+        'rounded-2xl p-3 min-w-0',
         striker
-          ? 'bg-emerald-900/25 border border-emerald-500/30'
-          : 'bg-slate-900/60'
+          ? 'bg-emerald-900/25 border border-emerald-500/40'
+          : 'bg-slate-900/70 border border-slate-800'
       ].join(' ')}
     >
 
-      <div className="flex gap-2 items-center">
+      <div className="flex items-center gap-1">
 
-        <span>
-          {striker ? '🏏' : ''}
-        </span>
+        {striker && (
+          <span className="text-sm">
+            🏏
+          </span>
+        )}
+
+        <div className="font-bold truncate text-sm">
+          {player?.name ||
+            'Not selected'}
+        </div>
+
+      </div>
+
+      <div className="flex items-end justify-between mt-2">
 
         <div>
 
-          <div className="font-bold">
-            {player?.name ||
-              'Not selected'}
+          <div className="text-2xl font-black">
+            {stats.runs}
           </div>
+
+          <div className="text-[11px] text-slate-400">
+            {stats.balls} balls
+          </div>
+
+        </div>
+
+        <div className="text-right">
 
           <div className="text-xs text-slate-400">
             {stats.fours}×4 ·{' '}
             {stats.sixes}×6
           </div>
 
+          {stats.is_out && (
+            <div className="text-[10px] text-red-400 font-bold mt-1">
+              OUT
+            </div>
+          )}
+
         </div>
-
-      </div>
-
-      <div className="text-right">
-
-        <div className="text-xl font-black">
-          {stats.runs}
-          <span className="text-sm text-slate-400">
-            {' '}({stats.balls})
-          </span>
-        </div>
-
-        {stats.is_out && (
-          <div className="text-xs text-red-400">
-            OUT
-          </div>
-        )}
 
       </div>
 
@@ -2604,6 +3054,44 @@ function formatOvers(balls) {
   return `${Math.floor(
     total / 6
   )}.${total % 6}`;
+}
+
+
+/* =====================================================
+   WICKET OVER
+===================================================== */
+
+function formatBallOver(legalBalls) {
+  const total =
+    Number(legalBalls || 0);
+
+  if (total <= 0) {
+    return '';
+  }
+
+  return `${Math.floor(
+    (total - 1) / 6
+  )}.${((total - 1) % 6) + 1}`;
+}
+
+
+/* =====================================================
+   WICKET TYPE
+===================================================== */
+
+function formatWicketType(type) {
+  if (!type) {
+    return 'Wicket';
+  }
+
+  const text =
+    String(type)
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) =>
+        c.toUpperCase()
+      );
+
+  return text;
 }
 
 
