@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Matches } from '../api/api.js';
 import socket from '../socket.js';
 import { exportMatchPdf } from '../utils/exportPdf.js';
 
 const statusBadge = {
-  upcoming: 'bg-yellow-600',
-  live: 'bg-red-600',
-  'innings-break': 'bg-orange-600',
-  completed: 'bg-slate-600',
+  upcoming: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30',
+  live: 'bg-red-500/15 text-red-400 border border-red-500/30',
+  'innings-break':
+    'bg-orange-500/15 text-orange-400 border border-orange-500/30',
+  completed:
+    'bg-slate-500/15 text-slate-300 border border-slate-500/30',
 };
 
 function LiveHero({ matchId, onDeleted }) {
@@ -16,7 +18,11 @@ function LiveHero({ matchId, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
-    Matches.get(matchId).then(setData).catch(console.error);
+    Matches.get(matchId)
+      .then(setData)
+      .catch((error) => {
+        console.error('Failed to load live match:', error);
+      });
   }, [matchId]);
 
   useEffect(() => {
@@ -27,7 +33,15 @@ function LiveHero({ matchId, onDeleted }) {
     socket.emit('join-match', matchId);
 
     const onUpdate = ({ match, innings }) => {
-      setData((d) => (d ? { ...d, match, innings } : d));
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              match,
+              innings,
+            }
+          : current
+      );
     };
 
     socket.on('score-update', onUpdate);
@@ -41,7 +55,8 @@ function LiveHero({ matchId, onDeleted }) {
   if (!data) return null;
 
   const { match } = data;
-  const innings = data.innings?.[data.innings.length - 1];
+  const innings =
+    data.innings?.[data.innings.length - 1];
 
   if (!innings) return null;
 
@@ -88,58 +103,126 @@ function LiveHero({ matchId, onDeleted }) {
   };
 
   return (
-    <div className="card border-red-600/50 hover:border-red-500 fade-in mb-6 relative overflow-hidden">
-      <Link to={`/match/${matchId}/live`} className="block">
-        <div className="absolute top-3 right-3 flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-red-500 pulse-live" />
-          <span className="text-xs font-bold text-red-400 tracking-wider">
-            LIVE
-          </span>
-        </div>
+    <div className="mb-5 overflow-hidden rounded-2xl border border-red-500/30 bg-slate-900/90 shadow-lg shadow-red-950/20">
 
-        <div className="text-sm text-slate-400 mb-1">
-          {match.team1_short} vs {match.team2_short} · {match.overs_limit} overs
-        </div>
+      {/* LIVE TOP BAR */}
+      <Link
+        to={`/match/${matchId}/live`}
+        className="block active:scale-[0.99] transition-transform"
+      >
+        <div className="border-b border-slate-700/70 px-4 py-3 sm:px-5">
 
-        <div className="flex items-end gap-3 flex-wrap">
-          <div>
-            <div className="text-xs text-slate-500">
-              {battingShort} batting
+          <div className="flex items-center justify-between gap-3">
+
+            <div className="min-w-0">
+
+              <div className="flex items-center gap-2">
+
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+                </span>
+
+                <span className="text-xs font-bold uppercase tracking-widest text-red-400">
+                  Live
+                </span>
+
+              </div>
+
             </div>
 
-            <div className="text-4xl font-extrabold tracking-tight">
+            <span className="text-xs text-slate-500">
+              Tap to view →
+            </span>
+
+          </div>
+
+        </div>
+
+        {/* TEAMS */}
+        <div className="px-4 pt-4 sm:px-5">
+
+          <div className="flex items-center justify-center gap-3 sm:gap-5">
+
+            <div className="min-w-0 flex-1 text-right">
+
+              <div className="truncate text-base font-bold text-white sm:text-lg">
+                {match.team1_short}
+              </div>
+
+              <div className="mt-0.5 truncate text-[11px] text-slate-500 sm:text-xs">
+                {match.team1_name}
+              </div>
+
+            </div>
+
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[11px] font-bold text-slate-500 ring-1 ring-slate-700">
+              VS
+            </div>
+
+            <div className="min-w-0 flex-1 text-left">
+
+              <div className="truncate text-base font-bold text-white sm:text-lg">
+                {match.team2_short}
+              </div>
+
+              <div className="mt-0.5 truncate text-[11px] text-slate-500 sm:text-xs">
+                {match.team2_name}
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* SCORE */}
+        <div className="px-4 pb-5 pt-4 sm:px-5">
+
+          <div className="text-center">
+
+            <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+              {battingTeam} batting
+            </div>
+
+            <div className="mt-1 text-5xl font-black tracking-tight text-white sm:text-6xl">
               {innings.innings.total_runs}
-              <span className="text-slate-400">
+              <span className="text-slate-500">
                 /{innings.innings.total_wickets}
               </span>
             </div>
-          </div>
 
-          <div className="text-slate-400 pb-1.5 text-sm">
-            {innings.overs} overs · RR {innings.runRate}
+            <div className="mt-1 flex items-center justify-center gap-2 text-sm text-slate-400">
+              <span>{innings.overs} overs</span>
+              <span className="text-slate-600">•</span>
+              <span>RR {innings.runRate}</span>
+            </div>
 
             {innings.innings.target && (
-              <span> · Target {innings.innings.target}</span>
+              <div className="mt-2 inline-flex rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
+                Target {innings.innings.target}
+              </div>
             )}
+
           </div>
+
         </div>
 
-        <div className="text-xs text-slate-500 mt-2">
-          {battingTeam} — tap for the full live scoreboard →
-        </div>
       </Link>
 
-      <div className="flex gap-2 mt-4 pt-3 border-t border-slate-700">
+      {/* ACTION BUTTONS */}
+      <div className="grid grid-cols-3 gap-2 border-t border-slate-700/70 p-3 sm:flex sm:gap-2">
+
         <Link
           to={`/match/${matchId}/live`}
-          className="btn btn-secondary text-sm"
+          className="btn btn-primary min-h-[42px] justify-center text-xs sm:text-sm"
         >
-          View
+          📺 View
         </Link>
 
         <button
           type="button"
-          className="btn btn-secondary text-sm"
+          className="btn btn-secondary min-h-[42px] justify-center text-xs sm:text-sm"
           onClick={downloadPdf}
         >
           ⬇ PDF
@@ -147,13 +230,136 @@ function LiveHero({ matchId, onDeleted }) {
 
         <button
           type="button"
-          className="btn btn-danger text-sm"
+          className="btn btn-danger min-h-[42px] justify-center text-xs sm:text-sm"
           disabled={deleting}
           onClick={deleteMatch}
         >
           {deleting ? 'Deleting…' : '🗑 Delete'}
         </button>
+
       </div>
+
+    </div>
+  );
+}
+
+function MatchCard({
+  match,
+  onDelete,
+  onDownload,
+}) {
+  const statusText =
+    match.status === 'innings-break'
+      ? 'Innings Break'
+      : match.status;
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/70 shadow-sm transition hover:border-slate-600">
+
+      {/* MAIN CARD */}
+      <div className="p-4 sm:p-5">
+
+        {/* TOP */}
+        <div className="flex items-start justify-between gap-3">
+
+          <div className="min-w-0 flex-1">
+
+            <div className="flex flex-wrap items-center gap-2">
+
+              <span className="text-base font-bold text-white sm:text-lg">
+                {match.team1_short}
+              </span>
+
+              <span className="text-xs font-medium text-slate-500">
+                VS
+              </span>
+
+              <span className="text-base font-bold text-white sm:text-lg">
+                {match.team2_short}
+              </span>
+
+            </div>
+
+            <div className="mt-1 text-xs text-slate-500">
+              {match.overs_limit} overs
+            </div>
+
+          </div>
+
+          <span
+            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+              statusBadge[match.status] ||
+              statusBadge.completed
+            }`}
+          >
+            {statusText}
+          </span>
+
+        </div>
+
+        {/* RESULT */}
+        {match.result_text && (
+          <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
+
+            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-500">
+              Result
+            </div>
+
+            <div className="mt-0.5 text-sm font-semibold text-emerald-400">
+              🏆 {match.result_text}
+            </div>
+
+          </div>
+        )}
+
+      </div>
+
+      {/* ACTIONS */}
+      <div className="grid grid-cols-2 gap-2 border-t border-slate-700/70 p-3 sm:flex">
+
+        {match.status === 'upcoming' && (
+          <Link
+            to={`/match/${match.id}/setup`}
+            className="btn btn-primary min-h-[42px] justify-center text-xs sm:text-sm"
+          >
+            🏏 Start Toss
+          </Link>
+        )}
+
+        {match.status === 'innings-break' && (
+          <Link
+            to={`/match/${match.id}/score`}
+            className="btn btn-primary min-h-[42px] justify-center text-xs sm:text-sm"
+          >
+            ▶ Continue
+          </Link>
+        )}
+
+        <Link
+          to={`/match/${match.id}/live`}
+          className="btn btn-secondary min-h-[42px] justify-center text-xs sm:text-sm"
+        >
+          📺 View
+        </Link>
+
+        <button
+          type="button"
+          className="btn btn-secondary min-h-[42px] justify-center text-xs sm:text-sm"
+          onClick={() => onDownload(match.id)}
+        >
+          ⬇ PDF
+        </button>
+
+        <button
+          type="button"
+          className="btn btn-danger min-h-[42px] justify-center text-xs sm:text-sm"
+          onClick={() => onDelete(match.id)}
+        >
+          🗑 Delete
+        </button>
+
+      </div>
+
     </div>
   );
 }
@@ -161,7 +367,6 @@ function LiveHero({ matchId, onDeleted }) {
 export default function Home() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
 
   const loadMatches = useCallback(() => {
     setLoading(true);
@@ -204,8 +409,6 @@ export default function Home() {
 
   const downloadPdf = async (matchId) => {
     try {
-      // Get the complete match data.
-      // Matches.list() normally contains only match summary information.
       const detail = await Matches.get(matchId);
 
       exportMatchPdf({
@@ -220,126 +423,146 @@ export default function Home() {
   };
 
   if (loading) {
-    return <p className="text-slate-400">Loading matches…</p>;
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <div className="text-sm text-slate-400">
+          Loading matches…
+        </div>
+      </div>
+    );
   }
 
-  const liveMatches = matches.filter((m) => m.status === 'live');
-  const others = matches.filter((m) => m.status !== 'live');
+  const liveMatches = matches.filter(
+    (m) => m.status === 'live'
+  );
+
+  const others = matches.filter(
+    (m) => m.status !== 'live'
+  );
 
   return (
-    <div className="fade-in">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Matches</h1>
+    <div className="fade-in mx-auto w-full max-w-4xl pb-6">
 
-        <Link
-          to="/create-match"
-          className="btn btn-primary text-sm"
-        >
-          + New Scoreboard
-        </Link>
+      {/* PAGE HEADER */}
+      <div className="mb-5">
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+          <div>
+
+            <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              Matches
+            </h1>
+
+            <p className="mt-1 text-xs text-slate-500 sm:text-sm">
+              Live scores and match records
+            </p>
+
+          </div>
+
+          <Link
+            to="/create-match"
+            className="btn btn-primary min-h-[44px] w-full justify-center text-sm sm:w-auto"
+          >
+            + New Scoreboard
+          </Link>
+
+        </div>
+
       </div>
 
-      {liveMatches.map((m) => (
-        <LiveHero
-          key={m.id}
-          matchId={m.id}
-          onDeleted={(id) => {
-            setMatches((current) =>
-              current.filter((match) => match.id !== id)
-            );
-          }}
-        />
-      ))}
+      {/* LIVE MATCHES */}
+      {liveMatches.length > 0 && (
+        <section className="mb-6">
 
+          <div className="mb-3 flex items-center gap-2">
+
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            </span>
+
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+              Live now
+            </h2>
+
+          </div>
+
+          {liveMatches.map((match) => (
+            <LiveHero
+              key={match.id}
+              matchId={match.id}
+              onDeleted={(id) => {
+                setMatches((current) =>
+                  current.filter(
+                    (match) => match.id !== id
+                  )
+                );
+              }}
+            />
+          ))}
+
+        </section>
+      )}
+
+      {/* EMPTY STATE */}
       {matches.length === 0 && (
-        <div className="card text-center text-slate-400">
-          No matches yet. Create teams first, then start a new scoreboard.
+        <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 px-5 py-10 text-center">
+
+          <div className="text-4xl">
+            🏏
+          </div>
+
+          <h2 className="mt-3 font-semibold text-white">
+            No matches yet
+          </h2>
+
+          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
+            Create your first scoreboard to start recording a match.
+          </p>
+
+          <Link
+            to="/create-match"
+            className="btn btn-primary mt-5 min-h-[44px] justify-center"
+          >
+            + Create Scoreboard
+          </Link>
+
         </div>
       )}
 
-      <div className="grid gap-3">
-        {others.map((m) => (
-          <div
-            key={m.id}
-            className="card flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-          >
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold">
-                  {m.team1_short}
-                </span>
+      {/* OTHER MATCHES */}
+      {others.length > 0 && (
+        <section>
 
-                <span className="text-slate-400">vs</span>
+          <div className="mb-3 flex items-center justify-between">
 
-                <span className="font-semibold">
-                  {m.team2_short}
-                </span>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+              All matches
+            </h2>
 
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
-                    statusBadge[m.status] || 'bg-slate-600'
-                  }`}
-                >
-                  {m.status}
-                </span>
-              </div>
+            <span className="text-xs text-slate-500">
+              {others.length}
+            </span>
 
-              <div className="text-sm text-slate-400">
-                {m.overs_limit} overs
-              </div>
-
-              {m.result_text && (
-                <div className="text-emerald-400 text-sm mt-1">
-                  {m.result_text}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-2 flex-wrap">
-              {m.status === 'upcoming' && (
-                <Link
-                  to={`/match/${m.id}/setup`}
-                  className="btn btn-secondary text-sm"
-                >
-                  Start Toss
-                </Link>
-              )}
-
-              {m.status === 'innings-break' && (
-                <Link
-                  to={`/match/${m.id}/score`}
-                  className="btn btn-primary text-sm"
-                >
-                  Continue
-                </Link>
-              )}
-
-              <Link
-                to={`/match/${m.id}/live`}
-                className="btn btn-secondary text-sm"
-              >
-                View
-              </Link>
-
-              <button
-                type="button"
-                className="btn btn-secondary text-sm"
-                onClick={() => downloadPdf(m.id)}
-              >
-                ⬇ PDF
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-danger text-sm"
-                onClick={() => deleteMatch(m.id)}
-              >
-                🗑 Delete
-              </button>
-            </div>
           </div>
-        ))}
-      </div>
+
+          <div className="grid gap-3">
+
+            {others.map((match) => (
+              <MatchCard
+                key={match.id}
+                match={match}
+                onDelete={deleteMatch}
+                onDownload={downloadPdf}
+              />
+            ))}
+
+          </div>
+
+        </section>
+      )}
+
     </div>
   );
 }
