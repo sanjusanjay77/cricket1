@@ -113,15 +113,21 @@ function PremiumRecordCard({
           relative overflow-hidden rounded-2xl
           border border-slate-700
           bg-slate-900
-          p-5 sm:p-6
+          p-5 sm:p-7
           shadow-lg
         "
       >
-        <div className="text-sm text-slate-500">
-          {icon} {title}
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">
+            {icon}
+          </span>
+
+          <span className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            {title}
+          </span>
         </div>
 
-        <div className="mt-4 text-slate-500">
+        <div className="mt-5 text-slate-500">
           No record available yet.
         </div>
       </div>
@@ -134,35 +140,37 @@ function PremiumRecordCard({
         relative overflow-hidden rounded-2xl
         border border-slate-700
         bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800
-        p-5 sm:p-6
-        shadow-lg
+        p-5 sm:p-7
+        shadow-xl
       "
     >
       {/* HEADER */}
 
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">
             {icon}
           </span>
 
-          <span className="text-sm font-bold uppercase tracking-wider text-slate-300">
+          <span className="text-sm sm:text-base font-black uppercase tracking-wider text-slate-300">
             {title}
           </span>
         </div>
 
-        <span className="text-xl">
+        <span className="text-2xl">
           🥇
         </span>
       </div>
 
-      {/* PLAYER */}
+      {/* RECORD TYPE */}
 
       <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">
-        GCC single-match record
+        GCC single-innings record
       </div>
 
-      <div className="text-xl sm:text-2xl font-black truncate">
+      {/* PLAYER */}
+
+      <div className="text-2xl sm:text-3xl font-black truncate">
         {entry.player_name ||
           entry.name ||
           'Unknown Player'}
@@ -170,21 +178,21 @@ function PremiumRecordCard({
 
       {/* MAIN FIGURE */}
 
-      <div className="mt-4">
-        <div className="text-4xl sm:text-5xl font-black tracking-tight">
+      <div className="mt-5">
+        <div className="text-5xl sm:text-6xl font-black tracking-tight">
           {mainValue}
         </div>
 
         {subtitle && (
-          <div className="text-sm text-slate-400 mt-1">
+          <div className="text-sm text-slate-400 mt-2">
             {subtitle}
           </div>
         )}
       </div>
 
-      {/* MATCH INFORMATION */}
+      {/* MATCH */}
 
-      <div className="mt-4 rounded-xl bg-slate-800/70 border border-slate-700/60 px-3 py-3">
+      <div className="mt-5 rounded-xl bg-slate-800/70 border border-slate-700/60 px-4 py-3">
         <div className="text-[10px] uppercase tracking-wide text-slate-500">
           Particular Match
         </div>
@@ -211,18 +219,23 @@ function PremiumRecordCard({
 
       {details &&
         details.length > 0 && (
-          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
             {details.map(
               (item, index) => (
                 <div
                   key={index}
-                  className="rounded-xl bg-slate-800/80 border border-slate-700/60 px-3 py-2"
+                  className="
+                    rounded-xl
+                    bg-slate-800/80
+                    border border-slate-700/60
+                    px-3 py-3
+                  "
                 >
                   <div className="text-[10px] uppercase tracking-wide text-slate-500">
                     {item.label}
                   </div>
 
-                  <div className="font-extrabold text-sm mt-0.5">
+                  <div className="font-extrabold text-sm mt-1">
                     {item.value}
                   </div>
                 </div>
@@ -233,7 +246,7 @@ function PremiumRecordCard({
 
       {/* DECORATION */}
 
-      <div className="absolute -right-10 -bottom-10 text-8xl opacity-[0.04]">
+      <div className="absolute -right-10 -bottom-10 text-9xl opacity-[0.04]">
         {icon}
       </div>
     </div>
@@ -383,7 +396,10 @@ export default function Records() {
         }
 
         /* =================================================
-           SINGLE MATCH RECORDS
+           ONLY TWO PREMIUM RECORDS
+           
+           IMPORTANT:
+           highestScore is intentionally removed.
         ================================================= */
 
         const gccBestBatting =
@@ -394,11 +410,6 @@ export default function Records() {
         const gccBestBowling =
           filterSingle(
             recordsData?.bestBowling
-          );
-
-        const gccHighestScore =
-          filterSingle(
-            recordsData?.highestScore
           );
 
         /* =================================================
@@ -414,8 +425,11 @@ export default function Records() {
           bestBowling:
             gccBestBowling,
 
+          /*
+           * Remove highestScore completely
+           */
           highestScore:
-            gccHighestScore,
+            undefined,
 
           mostRuns:
             filterList(
@@ -432,6 +446,11 @@ export default function Records() {
               recordsData?.mostSixes
             ),
 
+          mostBallsFaced:
+            filterList(
+              recordsData?.mostBallsFaced
+            ),
+
           bestStrikeRate:
             filterList(
               recordsData?.bestStrikeRate
@@ -440,6 +459,11 @@ export default function Records() {
           mostWickets:
             filterList(
               recordsData?.mostWickets
+            ),
+
+          mostBallsBowled:
+            filterList(
+              recordsData?.mostBallsBowled
             ),
 
           bestEconomy:
@@ -456,11 +480,6 @@ export default function Records() {
         console.log(
           'GCC BEST BOWLING FIGURE:',
           gccBestBowling
-        );
-
-        console.log(
-          'GCC HIGHEST SCORE:',
-          gccHighestScore
         );
 
         console.log(
@@ -531,7 +550,7 @@ export default function Records() {
   ======================================================= */
 
   return (
-    <div className="fade-in space-y-5">
+    <div className="fade-in space-y-6">
 
       {/* =================================================
           HEADER
@@ -553,17 +572,19 @@ export default function Records() {
 
       <div>
 
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xl">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-2xl">
             👑
           </span>
 
-          <h2 className="text-lg font-black">
+          <h2 className="text-xl font-black">
             Best of GCC
           </h2>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-4">
+        {/* TWO PREMIUM RECORDS ONLY */}
+
+        <div className="grid lg:grid-cols-2 gap-5">
 
           {/* =================================================
               BEST BOWLING FIGURE
@@ -648,7 +669,7 @@ export default function Records() {
                   )})`
                 : '—'
             }
-            subtitle="Best batting performance in a single innings"
+            subtitle="Most runs scored in a particular single innings"
             details={[
               {
                 label: 'Strike Rate',
@@ -675,11 +696,11 @@ export default function Records() {
                   0
               },
               {
-                label: 'Runs',
+                label: 'Balls',
                 value:
                   records
                     .bestBattingFigure
-                    ?.runs ??
+                    ?.balls ??
                   0
               }
             ]}
@@ -687,73 +708,6 @@ export default function Records() {
 
         </div>
       </div>
-
-      {/* =================================================
-          HIGHEST SCORE
-      ================================================= */}
-
-      {records.highestScore && (
-        <div>
-
-          <h2 className="text-lg font-black mb-3">
-            🏏 Highest Score
-          </h2>
-
-          <div className="max-w-xl">
-
-            <PremiumRecordCard
-              title="Highest Score"
-              icon="🏏"
-              entry={
-                records.highestScore
-              }
-              mainValue={
-                Number(
-                  records
-                    .highestScore
-                    .runs || 0
-                )
-              }
-              subtitle="Highest individual score in one innings"
-              details={[
-                {
-                  label: 'Balls',
-                  value:
-                    records
-                      .highestScore
-                      ?.balls ??
-                    0
-                },
-                {
-                  label: 'Fours',
-                  value:
-                    records
-                      .highestScore
-                      ?.fours ??
-                    0
-                },
-                {
-                  label: 'Sixes',
-                  value:
-                    records
-                      .highestScore
-                      ?.sixes ??
-                    0
-                },
-                {
-                  label: 'Strike Rate',
-                  value:
-                    records
-                      .highestScore
-                      ?.strike_rate ??
-                    0
-                }
-              ]}
-            />
-
-          </div>
-        </div>
-      )}
 
       {/* =================================================
           CAREER BATTING RECORDS
@@ -766,6 +720,8 @@ export default function Records() {
         </h2>
 
         <div className="grid sm:grid-cols-2 gap-4">
+
+          {/* MOST CAREER RUNS */}
 
           <LeaderboardCard
             title="Most Runs"
@@ -785,6 +741,8 @@ export default function Records() {
             }
           />
 
+          {/* MOST FOURS */}
+
           <LeaderboardCard
             title="Most Fours"
             icon="🔥"
@@ -803,6 +761,8 @@ export default function Records() {
             }
           />
 
+          {/* MOST SIXES */}
+
           <LeaderboardCard
             title="Most Sixes"
             icon="🚀"
@@ -820,6 +780,8 @@ export default function Records() {
               )
             }
           />
+
+          {/* BEST STRIKE RATE */}
 
           <LeaderboardCard
             title="Best Strike Rate"
@@ -855,6 +817,8 @@ export default function Records() {
 
         <div className="grid sm:grid-cols-2 gap-4">
 
+          {/* MOST WICKETS */}
+
           <LeaderboardCard
             title="Most Wickets"
             icon="🏆"
@@ -872,6 +836,8 @@ export default function Records() {
               )
             }
           />
+
+          {/* BEST ECONOMY */}
 
           <LeaderboardCard
             title="Best Economy"
