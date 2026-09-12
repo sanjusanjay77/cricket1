@@ -357,9 +357,7 @@ export default function PlayerRecords() {
           Career Record
         </h1>
 
-        {/* =====================================================
-            NOTHING SELECTED
-        ===================================================== */}
+        {/* NOTHING SELECTED */}
         {!selected && (
           <div className="card text-slate-400">
             Select a player to see their full batting and bowling
@@ -367,18 +365,14 @@ export default function PlayerRecords() {
           </div>
         )}
 
-        {/* =====================================================
-            LOADING
-        ===================================================== */}
+        {/* LOADING */}
         {selected && loadingStats && (
           <div className="card text-slate-400">
             Loading...
           </div>
         )}
 
-        {/* =====================================================
-            STATS
-        ===================================================== */}
+        {/* STATS */}
         {selected && !loadingStats && stats && (
           <div className="space-y-4">
 
@@ -405,7 +399,7 @@ export default function PlayerRecords() {
             </div>
 
             {/* =================================================
-                BATTING / BOWLING TABS
+                BATTING / BOWLING BUTTONS
             ================================================= */}
             <div
               className="
@@ -421,7 +415,7 @@ export default function PlayerRecords() {
               "
             >
 
-              {/* BATTING BUTTON */}
+              {/* BATTING */}
               <button
                 type="button"
                 onClick={() => setActiveTab('batting')}
@@ -446,7 +440,7 @@ export default function PlayerRecords() {
                 <span>Batting</span>
               </button>
 
-              {/* BOWLING BUTTON */}
+              {/* BOWLING */}
               <button
                 type="button"
                 onClick={() => setActiveTab('bowling')}
@@ -474,14 +468,14 @@ export default function PlayerRecords() {
             </div>
 
             {/* =================================================
-                BATTING DATA
+                BATTING DETAILS
             ================================================= */}
             {activeTab === 'batting' && (
               <div className="card">
 
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold text-emerald-400">
-                    🏏 Batting
+                    🏏 Batting Details
                   </h3>
 
                   <span className="text-xs text-slate-500">
@@ -502,6 +496,13 @@ export default function PlayerRecords() {
                     label="Runs Scored"
                     value={
                       stats.batting?.runs
+                    }
+                  />
+
+                  <Stat
+                    label="Highest Score"
+                    value={
+                      stats.batting?.highest_score
                     }
                   />
 
@@ -560,14 +561,14 @@ export default function PlayerRecords() {
             )}
 
             {/* =================================================
-                BOWLING DATA
+                BOWLING DETAILS
             ================================================= */}
             {activeTab === 'bowling' && (
               <div className="card">
 
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold text-orange-400">
-                    🎯 Bowling
+                    🎯 Bowling Details
                   </h3>
 
                   <span className="text-xs text-slate-500">
@@ -641,9 +642,7 @@ export default function PlayerRecords() {
           </div>
         )}
 
-        {/* =====================================================
-            FAILED
-        ===================================================== */}
+        {/* FAILED */}
         {selected && !loadingStats && !stats && (
           <div className="card text-red-400">
             Unable to load this player's statistics.
@@ -674,7 +673,6 @@ function Stat({ label, value }) {
         justify-center
       "
     >
-
       <div className="text-slate-400 text-xs leading-tight">
         {label}
       </div>
@@ -682,7 +680,6 @@ function Stat({ label, value }) {
       <div className="text-lg sm:text-xl font-bold mt-1">
         {value ?? 0}
       </div>
-
     </div>
   );
 }
