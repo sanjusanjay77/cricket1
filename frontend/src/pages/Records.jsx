@@ -5,7 +5,7 @@ import { Records as RecordsApi, Players } from '../api/api.js';
    TOP FIVE HELPER
 ========================================================= */
 
-function getTopFive(list, sortFn) {
+function getTopFive(list, sortFn, valueKey) {
   if (!Array.isArray(list)) {
     return [];
   }
@@ -35,10 +35,8 @@ function LeaderboardCard({
 }) {
   const topFive = getTopFive(
     list,
-    sortFn ||
-      ((a, b) =>
-        Number(b[valueKey] || 0) -
-        Number(a[valueKey] || 0))
+    sortFn,
+    valueKey
   );
 
   if (topFive.length === 0) {
@@ -330,18 +328,14 @@ export default function Records() {
 
         console.log(
           'GCC PLAYER IDS:',
-          [
-            ...gccPlayerIds
-          ]
+          [...gccPlayerIds]
         );
 
         /* =================================================
            CHECK GCC PLAYER
         ================================================= */
 
-        function isGccPlayer(
-          entry
-        ) {
+        function isGccPlayer(entry) {
           if (!entry) {
             return false;
           }
@@ -363,12 +357,8 @@ export default function Records() {
            FILTER CAREER LIST
         ================================================= */
 
-        function filterList(
-          list
-        ) {
-          if (
-            !Array.isArray(list)
-          ) {
+        function filterList(list) {
+          if (!Array.isArray(list)) {
             return [];
           }
 
@@ -381,9 +371,7 @@ export default function Records() {
            FILTER SINGLE RECORD
         ================================================= */
 
-        function filterSingle(
-          entry
-        ) {
+        function filterSingle(entry) {
           if (
             !entry ||
             !isGccPlayer(entry)
@@ -395,15 +383,7 @@ export default function Records() {
         }
 
         /* =================================================
-           IMPORTANT
-
-           DO NOT calculate best batting
-           from mostRuns.
-
-           mostRuns = CAREER TOTAL.
-
-           bestBattingFigure =
-           ONE PARTICULAR INNINGS.
+           SINGLE MATCH RECORDS
         ================================================= */
 
         const gccBestBatting =
@@ -422,15 +402,11 @@ export default function Records() {
           );
 
         /* =================================================
-           GCC RECORDS
+           FINAL GCC RECORDS
         ================================================= */
 
         const gccRecords = {
           ...recordsData,
-
-          /*
-           * SINGLE MATCH RECORDS
-           */
 
           bestBattingFigure:
             gccBestBatting,
@@ -440,10 +416,6 @@ export default function Records() {
 
           highestScore:
             gccHighestScore,
-
-          /*
-           * CAREER RECORDS
-           */
 
           mostRuns:
             filterList(
@@ -499,6 +471,7 @@ export default function Records() {
         setRecords(
           gccRecords
         );
+
       } catch (err) {
         console.error(
           'Failed to load GCC records:',
@@ -508,6 +481,7 @@ export default function Records() {
         setError(
           'Failed to load GCC records.'
         );
+
       } finally {
         setLoading(false);
       }
@@ -578,6 +552,7 @@ export default function Records() {
       ================================================= */}
 
       <div>
+
         <div className="flex items-center gap-2 mb-3">
           <span className="text-xl">
             👑
@@ -591,12 +566,7 @@ export default function Records() {
         <div className="grid lg:grid-cols-2 gap-4">
 
           {/* =================================================
-              1. BEST BOWLING FIGURE
-              
-              THIS IS ONE PARTICULAR MATCH.
-              
-              Example:
-              5/12
+              BEST BOWLING FIGURE
           ================================================= */}
 
           <PremiumRecordCard
@@ -608,10 +578,12 @@ export default function Records() {
             mainValue={
               records.bestBowling
                 ? `${Number(
-                    records.bestBowling
+                    records
+                      .bestBowling
                       .wickets || 0
                   )}/${Number(
-                    records.bestBowling
+                    records
+                      .bestBowling
                       .runs || 0
                   )}`
                 : '—'
@@ -654,14 +626,7 @@ export default function Records() {
           />
 
           {/* =================================================
-              2. BEST BATTING FIGURE
-              
-              THIS IS ONE PARTICULAR MATCH.
-              
-              Example:
-              85 (42)
-              
-              Not career 89.
+              BEST BATTING FIGURE
           ================================================= */}
 
           <PremiumRecordCard
@@ -690,7 +655,7 @@ export default function Records() {
                 value:
                   records
                     .bestBattingFigure
-                    ?.strike_rate ||
+                    ?.strike_rate ??
                   0
               },
               {
@@ -698,7 +663,7 @@ export default function Records() {
                 value:
                   records
                     .bestBattingFigure
-                    ?.fours ||
+                    ?.fours ??
                   0
               },
               {
@@ -706,7 +671,7 @@ export default function Records() {
                 value:
                   records
                     .bestBattingFigure
-                    ?.sixes ||
+                    ?.sixes ??
                   0
               },
               {
@@ -714,7 +679,7 @@ export default function Records() {
                 value:
                   records
                     .bestBattingFigure
-                    ?.runs ||
+                    ?.runs ??
                   0
               }
             ]}
@@ -725,17 +690,17 @@ export default function Records() {
 
       {/* =================================================
           HIGHEST SCORE
-          
-          SAME SINGLE-INNINGS RECORD DATA.
       ================================================= */}
 
       {records.highestScore && (
         <div>
+
           <h2 className="text-lg font-black mb-3">
             🏏 Highest Score
           </h2>
 
           <div className="max-w-xl">
+
             <PremiumRecordCard
               title="Highest Score"
               icon="🏏"
@@ -756,7 +721,7 @@ export default function Records() {
                   value:
                     records
                       .highestScore
-                      ?.balls ||
+                      ?.balls ??
                     0
                 },
                 {
@@ -764,7 +729,7 @@ export default function Records() {
                   value:
                     records
                       .highestScore
-                      ?.fours ||
+                      ?.fours ??
                     0
                 },
                 {
@@ -772,7 +737,7 @@ export default function Records() {
                   value:
                     records
                       .highestScore
-                      ?.sixes ||
+                      ?.sixes ??
                     0
                 },
                 {
@@ -780,11 +745,12 @@ export default function Records() {
                   value:
                     records
                       .highestScore
-                      ?.strike_rate ||
+                      ?.strike_rate ??
                     0
                 }
               ]}
             />
+
           </div>
         </div>
       )}
@@ -794,6 +760,7 @@ export default function Records() {
       ================================================= */}
 
       <div>
+
         <h2 className="text-lg font-black mb-3">
           🏏 Batting Records
         </h2>
@@ -881,6 +848,7 @@ export default function Records() {
       ================================================= */}
 
       <div>
+
         <h2 className="text-lg font-black mb-3">
           🎯 Bowling Records
         </h2>
