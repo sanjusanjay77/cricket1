@@ -5,13 +5,19 @@ import socket from '../socket.js';
 import { exportMatchPdf } from '../utils/exportPdf.js';
 
 const statusBadge = {
-  upcoming: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30',
-  live: 'bg-red-500/15 text-red-400 border border-red-500/30',
+  upcoming:
+    'bg-amber-500/10 text-amber-400 border border-amber-500/20',
+  live:
+    'bg-red-500/10 text-red-400 border border-red-500/20',
   'innings-break':
-    'bg-orange-500/15 text-orange-400 border border-orange-500/30',
+    'bg-orange-500/10 text-orange-400 border border-orange-500/20',
   completed:
-    'bg-slate-500/15 text-slate-300 border border-slate-500/30',
+    'bg-slate-500/10 text-slate-400 border border-slate-600/30',
 };
+
+/* =========================================================
+   LIVE MATCH CARD
+========================================================= */
 
 function LiveHero({ matchId, onDeleted }) {
   const [data, setData] = useState(null);
@@ -55,6 +61,7 @@ function LiveHero({ matchId, onDeleted }) {
   if (!data) return null;
 
   const { match } = data;
+
   const innings =
     data.innings?.[data.innings.length - 1];
 
@@ -103,71 +110,56 @@ function LiveHero({ matchId, onDeleted }) {
   };
 
   return (
-    <div className="mb-5 overflow-hidden rounded-2xl border border-red-500/30 bg-slate-900/90 shadow-lg shadow-red-950/20">
+    <div className="mb-4 overflow-hidden rounded-xl border border-red-500/25 bg-slate-900 shadow-md shadow-black/10">
 
-      {/* LIVE TOP BAR */}
+      {/* LIVE HEADER */}
       <Link
         to={`/match/${matchId}/live`}
-        className="block active:scale-[0.99] transition-transform"
+        className="block"
       >
-        <div className="border-b border-slate-700/70 px-4 py-3 sm:px-5">
 
-          <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
 
-            <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
 
-              <div className="flex items-center gap-2">
-
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
-                </span>
-
-                <span className="text-xs font-bold uppercase tracking-widest text-red-400">
-                  Live
-                </span>
-
-              </div>
-
-            </div>
-
-            <span className="text-xs text-slate-500">
-              Tap to view →
+            <span className="relative flex h-2 w-2">
+              <span className="absolute h-full w-full animate-ping rounded-full bg-red-400 opacity-70" />
+              <span className="relative h-2 w-2 rounded-full bg-red-500" />
             </span>
 
+            <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">
+              Live
+            </span>
+
+          </div>
+
+          <div className="text-[10px] text-slate-600">
+            {match.overs_limit} overs
           </div>
 
         </div>
 
         {/* TEAMS */}
-        <div className="px-4 pt-4 sm:px-5">
+        <div className="px-3 pt-3">
 
-          <div className="flex items-center justify-center gap-3 sm:gap-5">
+          <div className="flex items-center justify-center gap-2">
 
             <div className="min-w-0 flex-1 text-right">
 
-              <div className="truncate text-base font-bold text-white sm:text-lg">
+              <div className="truncate text-sm font-bold text-white">
                 {match.team1_short}
-              </div>
-
-              <div className="mt-0.5 truncate text-[11px] text-slate-500 sm:text-xs">
-                {match.team1_name}
               </div>
 
             </div>
 
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-800 text-[11px] font-bold text-slate-500 ring-1 ring-slate-700">
+            <div className="shrink-0 text-[9px] font-bold text-slate-600">
               VS
             </div>
 
             <div className="min-w-0 flex-1 text-left">
 
-              <div className="truncate text-base font-bold text-white sm:text-lg">
+              <div className="truncate text-sm font-bold text-white">
                 {match.team2_short}
-              </div>
-
-              <div className="mt-0.5 truncate text-[11px] text-slate-500 sm:text-xs">
-                {match.team2_name}
               </div>
 
             </div>
@@ -176,65 +168,80 @@ function LiveHero({ matchId, onDeleted }) {
 
         </div>
 
-        {/* SCORE */}
-        <div className="px-4 pb-5 pt-4 sm:px-5">
+        {/* SCORE AREA */}
+        <div className="px-3 pb-3 pt-2 text-center">
 
-          <div className="text-center">
+          <div className="mb-0.5 text-[9px] uppercase tracking-wider text-slate-600">
+            {battingShort} batting
+          </div>
 
-            <div className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-              {battingTeam} batting
-            </div>
+          <div className="text-[38px] font-black leading-none tracking-tight text-white">
+            {innings.innings.total_runs}
+            <span className="text-slate-500">
+              /{innings.innings.total_wickets}
+            </span>
+          </div>
 
-            <div className="mt-1 text-5xl font-black tracking-tight text-white sm:text-6xl">
-              {innings.innings.total_runs}
-              <span className="text-slate-500">
-                /{innings.innings.total_wickets}
-              </span>
-            </div>
+          <div className="mt-1 text-[11px] text-slate-500">
 
-            <div className="mt-1 flex items-center justify-center gap-2 text-sm text-slate-400">
-              <span>{innings.overs} overs</span>
-              <span className="text-slate-600">•</span>
-              <span>RR {innings.runRate}</span>
-            </div>
+            {innings.overs}
+
+            <span className="mx-1.5 text-slate-700">
+              •
+            </span>
+
+            RR {innings.runRate}
 
             {innings.innings.target && (
-              <div className="mt-2 inline-flex rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
+              <>
+                <span className="mx-1.5 text-slate-700">
+                  •
+                </span>
+
                 Target {innings.innings.target}
-              </div>
+              </>
             )}
 
           </div>
 
         </div>
 
+        {/* BATTING TEAM */}
+        <div className="px-3 pb-3 text-center">
+
+          <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-medium text-slate-500">
+            {battingTeam}
+          </span>
+
+        </div>
+
       </Link>
 
-      {/* ACTION BUTTONS */}
-      <div className="grid grid-cols-3 gap-2 border-t border-slate-700/70 p-3 sm:flex sm:gap-2">
+      {/* ACTION BAR */}
+      <div className="grid grid-cols-3 gap-1.5 border-t border-slate-800 p-2">
 
         <Link
           to={`/match/${matchId}/live`}
-          className="btn btn-primary min-h-[42px] justify-center text-xs sm:text-sm"
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-700"
         >
-          📺 View
+          View
         </Link>
 
         <button
           type="button"
-          className="btn btn-secondary min-h-[42px] justify-center text-xs sm:text-sm"
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-700"
           onClick={downloadPdf}
         >
-          ⬇ PDF
+          PDF
         </button>
 
         <button
           type="button"
-          className="btn btn-danger min-h-[42px] justify-center text-xs sm:text-sm"
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-red-500/10 text-[11px] font-semibold text-red-400 transition hover:bg-red-500/20"
           disabled={deleting}
           onClick={deleteMatch}
         >
-          {deleting ? 'Deleting…' : '🗑 Delete'}
+          {deleting ? '...' : 'Delete'}
         </button>
 
       </div>
@@ -242,6 +249,10 @@ function LiveHero({ matchId, onDeleted }) {
     </div>
   );
 }
+
+/* =========================================================
+   NORMAL MATCH CARD
+========================================================= */
 
 function MatchCard({
   match,
@@ -254,40 +265,31 @@ function MatchCard({
       : match.status;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-900/70 shadow-sm transition hover:border-slate-600">
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
 
-      {/* MAIN CARD */}
-      <div className="p-4 sm:p-5">
+      <div className="px-3 py-3">
 
-        {/* TOP */}
-        <div className="flex items-start justify-between gap-3">
+        {/* TOP ROW */}
+        <div className="flex items-center justify-between gap-2">
 
-          <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
 
-            <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-bold text-white">
+              {match.team1_short}
+            </span>
 
-              <span className="text-base font-bold text-white sm:text-lg">
-                {match.team1_short}
-              </span>
+            <span className="text-[9px] font-bold text-slate-600">
+              VS
+            </span>
 
-              <span className="text-xs font-medium text-slate-500">
-                VS
-              </span>
-
-              <span className="text-base font-bold text-white sm:text-lg">
-                {match.team2_short}
-              </span>
-
-            </div>
-
-            <div className="mt-1 text-xs text-slate-500">
-              {match.overs_limit} overs
-            </div>
+            <span className="text-sm font-bold text-white">
+              {match.team2_short}
+            </span>
 
           </div>
 
           <span
-            className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${
               statusBadge[match.status] ||
               statusBadge.completed
             }`}
@@ -297,30 +299,35 @@ function MatchCard({
 
         </div>
 
+        {/* MATCH INFO */}
+        <div className="mt-1 text-[10px] text-slate-600">
+          {match.overs_limit} overs
+        </div>
+
         {/* RESULT */}
         {match.result_text && (
-          <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5">
+          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-emerald-500/5 px-2 py-1.5">
 
-            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-500">
-              Result
-            </div>
+            <span className="text-xs">
+              🏆
+            </span>
 
-            <div className="mt-0.5 text-sm font-semibold text-emerald-400">
-              🏆 {match.result_text}
-            </div>
+            <span className="truncate text-[11px] font-medium text-emerald-400">
+              {match.result_text}
+            </span>
 
           </div>
         )}
 
       </div>
 
-      {/* ACTIONS */}
-      <div className="grid grid-cols-2 gap-2 border-t border-slate-700/70 p-3 sm:flex">
+      {/* BUTTONS */}
+      <div className="grid grid-cols-2 gap-1.5 border-t border-slate-800 p-2">
 
         {match.status === 'upcoming' && (
           <Link
             to={`/match/${match.id}/setup`}
-            className="btn btn-primary min-h-[42px] justify-center text-xs sm:text-sm"
+            className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
           >
             🏏 Start Toss
           </Link>
@@ -329,7 +336,7 @@ function MatchCard({
         {match.status === 'innings-break' && (
           <Link
             to={`/match/${match.id}/score`}
-            className="btn btn-primary min-h-[42px] justify-center text-xs sm:text-sm"
+            className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
           >
             ▶ Continue
           </Link>
@@ -337,25 +344,25 @@ function MatchCard({
 
         <Link
           to={`/match/${match.id}/live`}
-          className="btn btn-secondary min-h-[42px] justify-center text-xs sm:text-sm"
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
         >
-          📺 View
+          View
         </Link>
 
         <button
           type="button"
-          className="btn btn-secondary min-h-[42px] justify-center text-xs sm:text-sm"
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
           onClick={() => onDownload(match.id)}
         >
-          ⬇ PDF
+          PDF
         </button>
 
         <button
           type="button"
-          className="btn btn-danger min-h-[42px] justify-center text-xs sm:text-sm"
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-red-500/10 text-[11px] font-semibold text-red-400 hover:bg-red-500/20"
           onClick={() => onDelete(match.id)}
         >
-          🗑 Delete
+          Delete
         </button>
 
       </div>
@@ -363,6 +370,10 @@ function MatchCard({
     </div>
   );
 }
+
+/* =========================================================
+   HOME
+========================================================= */
 
 export default function Home() {
   const [matches, setMatches] = useState([]);
@@ -373,10 +384,16 @@ export default function Home() {
 
     Matches.list()
       .then((data) => {
-        setMatches(Array.isArray(data) ? data : []);
+        setMatches(
+          Array.isArray(data) ? data : []
+        );
       })
       .catch((error) => {
-        console.error('Failed to load matches:', error);
+        console.error(
+          'Failed to load matches:',
+          error
+        );
+
         setMatches([]);
       })
       .finally(() => {
@@ -399,17 +416,24 @@ export default function Home() {
       await Matches.remove(matchId);
 
       setMatches((current) =>
-        current.filter((match) => match.id !== matchId)
+        current.filter(
+          (match) => match.id !== matchId
+        )
       );
     } catch (error) {
-      console.error('Delete match failed:', error);
+      console.error(
+        'Delete match failed:',
+        error
+      );
+
       alert('Unable to delete this match.');
     }
   };
 
   const downloadPdf = async (matchId) => {
     try {
-      const detail = await Matches.get(matchId);
+      const detail =
+        await Matches.get(matchId);
 
       exportMatchPdf({
         match: detail.match,
@@ -417,17 +441,25 @@ export default function Home() {
         players: detail.players || [],
       });
     } catch (error) {
-      console.error('PDF export failed:', error);
-      alert('Unable to create PDF. Please try again.');
+      console.error(
+        'PDF export failed:',
+        error
+      );
+
+      alert(
+        'Unable to create PDF. Please try again.'
+      );
     }
   };
 
   if (loading) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <div className="text-sm text-slate-400">
+      <div className="flex min-h-[30vh] items-center justify-center">
+
+        <div className="text-xs text-slate-500">
           Loading matches…
         </div>
+
       </div>
     );
   }
@@ -441,48 +473,53 @@ export default function Home() {
   );
 
   return (
-    <div className="fade-in mx-auto w-full max-w-4xl pb-6">
+    <div className="fade-in mx-auto w-full max-w-3xl pb-5">
 
-      {/* PAGE HEADER */}
-      <div className="mb-5">
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-4 flex items-center justify-between gap-3">
 
-          <div>
+        <div className="min-w-0">
 
-            <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-              Matches
-            </h1>
+          <h1 className="text-xl font-bold tracking-tight text-white">
+            Matches
+          </h1>
 
-            <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-              Live scores and match records
-            </p>
-
-          </div>
-
-          <Link
-            to="/create-match"
-            className="btn btn-primary min-h-[44px] w-full justify-center text-sm sm:w-auto"
-          >
-            + New Scoreboard
-          </Link>
+          <p className="mt-0.5 text-[10px] text-slate-600">
+            Scores & match records
+          </p>
 
         </div>
 
+        <Link
+          to="/create-match"
+          className="flex min-h-[36px] shrink-0 items-center justify-center rounded-lg bg-white px-3 text-[11px] font-bold text-slate-950 transition hover:bg-slate-200"
+        >
+          + New Match
+        </Link>
+
       </div>
 
-      {/* LIVE MATCHES */}
+      {/* =================================================
+          LIVE SECTION
+      ================================================= */}
+
       {liveMatches.length > 0 && (
-        <section className="mb-6">
+        <section className="mb-5">
 
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-2 flex items-center gap-1.5">
 
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            <span className="relative flex h-2 w-2">
+
+              <span className="absolute h-full w-full animate-ping rounded-full bg-red-400 opacity-60" />
+
+              <span className="relative h-2 w-2 rounded-full bg-red-500" />
+
             </span>
 
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
               Live now
             </h2>
 
@@ -495,7 +532,8 @@ export default function Home() {
               onDeleted={(id) => {
                 setMatches((current) =>
                   current.filter(
-                    (match) => match.id !== id
+                    (match) =>
+                      match.id !== id
                   )
                 );
               }}
@@ -505,49 +543,56 @@ export default function Home() {
         </section>
       )}
 
-      {/* EMPTY STATE */}
-      {matches.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 px-5 py-10 text-center">
+      {/* =================================================
+          EMPTY STATE
+      ================================================= */}
 
-          <div className="text-4xl">
+      {matches.length === 0 && (
+        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
+
+          <div className="text-3xl">
             🏏
           </div>
 
-          <h2 className="mt-3 font-semibold text-white">
+          <h2 className="mt-2 text-sm font-semibold text-white">
             No matches yet
           </h2>
 
-          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">
-            Create your first scoreboard to start recording a match.
+          <p className="mx-auto mt-1 max-w-xs text-[11px] leading-relaxed text-slate-600">
+            Create your first scoreboard
+            to start recording a match.
           </p>
 
           <Link
             to="/create-match"
-            className="btn btn-primary mt-5 min-h-[44px] justify-center"
+            className="mt-4 inline-flex min-h-[36px] items-center justify-center rounded-lg bg-white px-4 text-[11px] font-bold text-slate-950"
           >
-            + Create Scoreboard
+            + Create Match
           </Link>
 
         </div>
       )}
 
-      {/* OTHER MATCHES */}
+      {/* =================================================
+          OTHER MATCHES
+      ================================================= */}
+
       {others.length > 0 && (
         <section>
 
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between">
 
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
               All matches
             </h2>
 
-            <span className="text-xs text-slate-500">
+            <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[9px] text-slate-600">
               {others.length}
             </span>
 
           </div>
 
-          <div className="grid gap-3">
+          <div className="grid gap-2">
 
             {others.map((match) => (
               <MatchCard
