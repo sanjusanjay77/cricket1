@@ -26,14 +26,18 @@ export default function Navbar() {
 
         <div className="flex items-center justify-between">
 
-          {/* GOLDEN CRICKET CLUB */}
+          {/* =================================================
+              GOLDEN CRICKET CLUB LOGO
+          ================================================= */}
+
           <Link
             to="/"
             onClick={() => setMenuOpen(false)}
-            className="flex items-center gap-3 group"
+            className="flex items-center gap-3 group min-w-0"
           >
 
-            {/* GOLDEN CRICKET CLUB ROUND LOGO */}
+            {/* ROUND LOGO */}
+
             <div
               className="
                 w-14 h-14
@@ -43,33 +47,69 @@ export default function Navbar() {
                 flex-shrink-0
                 bg-black
                 border-2 border-yellow-400
-                shadow-lg shadow-yellow-500/30
+                shadow-lg shadow-yellow-500/20
                 group-hover:scale-105
-                group-hover:border-yellow-300
-                transition-all duration-200
+                transition-transform duration-200
               "
             >
               <img
-                src="/gcc-logo.jpeg"
+                src="/gcc-logo.png"
                 alt="Golden Cricket Club"
-                className="w-full h-full object-cover rounded-full"
+                className="
+                  w-full
+                  h-full
+                  object-contain
+                  rounded-full
+                "
               />
             </div>
 
-            {/* Club name */}
-            <div>
-              <div className="text-lg sm:text-2xl font-black tracking-wide leading-none bg-gradient-to-r from-yellow-200 via-yellow-400 to-amber-500 bg-clip-text text-transparent">
+            {/* CLUB NAME */}
+
+            <div className="min-w-0">
+
+              <div
+                className="
+                  text-lg
+                  sm:text-2xl
+                  font-black
+                  tracking-wide
+                  leading-none
+                  bg-gradient-to-r
+                  from-yellow-200
+                  via-yellow-400
+                  to-amber-500
+                  bg-clip-text
+                  text-transparent
+                  truncate
+                "
+              >
                 GOLDEN CRICKET CLUB
               </div>
 
-              <div className="mt-1 text-[9px] sm:text-[10px] tracking-[0.3em] font-bold text-slate-400 uppercase">
+              <div
+                className="
+                  mt-1
+                  text-[8px]
+                  sm:text-[10px]
+                  tracking-[0.25em]
+                  sm:tracking-[0.3em]
+                  font-bold
+                  text-slate-400
+                  uppercase
+                "
+              >
                 Official Cricket Scoreboard
               </div>
+
             </div>
 
           </Link>
 
-          {/* Desktop Navigation */}
+          {/* =================================================
+              DESKTOP NAVIGATION
+          ================================================= */}
+
           <div className="hidden md:flex items-center gap-1">
 
             {NAV_ITEMS.map((item) => (
@@ -86,10 +126,15 @@ export default function Navbar() {
             <Link
               to="/teams"
               className="
-                ml-2 px-3 py-2 rounded-xl
-                text-xs font-semibold
+                ml-2
+                px-3
+                py-2
+                rounded-xl
+                text-xs
+                font-semibold
                 text-slate-300
-                border border-slate-700
+                border
+                border-slate-700
                 hover:border-yellow-500
                 hover:text-yellow-300
                 hover:bg-slate-800
@@ -101,11 +146,21 @@ export default function Navbar() {
 
           </div>
 
-          {/* Mobile menu button */}
+          {/* =================================================
+              MOBILE MENU BUTTON
+          ================================================= */}
+
           <button
             type="button"
-            className="md:hidden text-2xl text-yellow-400 px-2"
-            onClick={() => setMenuOpen((open) => !open)}
+            className="
+              md:hidden
+              text-2xl
+              text-yellow-400
+              px-2
+            "
+            onClick={() =>
+              setMenuOpen((open) => !open)
+            }
             aria-label="Toggle menu"
           >
             {menuOpen ? '✕' : '☰'}
@@ -113,9 +168,21 @@ export default function Navbar() {
 
         </div>
 
-        {/* Mobile Navigation */}
+        {/* =================================================
+            MOBILE NAVIGATION
+        ================================================= */}
+
         {menuOpen && (
-          <div className="md:hidden mt-4 pt-3 border-t border-yellow-500/20 space-y-1">
+          <div
+            className="
+              md:hidden
+              mt-4
+              pt-3
+              border-t
+              border-yellow-500/20
+              space-y-1
+            "
+          >
 
             {NAV_ITEMS.map((item) => (
               <Link
@@ -142,6 +209,7 @@ export default function Navbar() {
         )}
 
       </div>
+
     </nav>
   );
 }
