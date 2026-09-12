@@ -2010,24 +2010,58 @@ async function getPlayerCareerStats(
    ALL TIME RECORDS
 ========================================================= */
 
+/* =========================================================
+   ALL TIME RECORDS — GCC ONLY
+========================================================= */
+
 async function getAllTimeRecords() {
 
   /*
-   * IMPORTANT:
+   * =======================================================
+   * FIND GCC PLAYERS
    *
-   * bestBattingFigure is calculated from
-   * ONE PLAYER + ONE INNINGS.
+   * We identify GCC players directly from:
    *
-   * It is NOT a career total.
+   * players.team_id -> teams.id -> teams.name
    *
-   * Example:
-   *
-   * Sanjay
-   * 85 runs
-   * 42 balls
-   * 8 fours
-   * 5 sixes
-   * SR 202.38
+   * This means records are calculated only from GCC players.
+   * =======================================================
+   */
+
+  const gccPlayers =
+    await db.prepare(`
+      SELECT
+        p.id,
+        p.name,
+        p.team_id,
+        t.name AS team_name
+      FROM players p
+      LEFT JOIN teams t
+        ON t.id = p.team_id
+      WHERE LOWER(TRIM(t.name)) = 'gcc'
+    `).all();
+
+  const gccPlayerIds =
+    new Set(
+      gccPlayers.map(
+        p => String(p.id)
+      )
+    );
+
+  console.log(
+    'GCC PLAYER IDS:',
+    [...gccPlayerIds]
+  );
+
+  console.log(
+    'GCC PLAYERS:',
+    gccPlayers
+  );
+
+  /*
+   * =======================================================
+   * ALL INNINGS
+   * =======================================================
    */
 
   const inningsRows =
@@ -2047,13 +2081,17 @@ async function getAllTimeRecords() {
   let bestBattingFigure = null;
   let bestBowling = null;
 
-  /* -------------------------------------------------------
+  /* =======================================================
      SINGLE-INNINGS RECORDS
-  ------------------------------------------------------- */
+  ======================================================= */
 
   for (
     const inn of inningsRows
   ) {
+
+    /* -----------------------------------------------------
+       BATTING
+    ----------------------------------------------------- */
 
     const batting =
       await computeBattingScorecard(
@@ -2064,10 +2102,30 @@ async function getAllTimeRecords() {
       const b of batting
     ) {
 
+      /*
+       * ONLY GCC PLAYERS
+       */
+
+      if (
+        !gccPlayerIds.has(
+          String(b.player_id)
+        )
+      ) {
+        continue;
+      }
+
       const candidate = {
 
         player_id:
           b.player_id,
+
+        player_name:
+          gccPlayers.find(
+            p =>
+              String(p.id) ===
+              String(b.player_id)
+          )?.name ||
+          'Unknown Player',
 
         runs:
           Number(
@@ -2106,6 +2164,18 @@ async function getAllTimeRecords() {
         batting_team_id:
           inn.batting_team_id
       };
+
+      /*
+       * BEST BATTING FIGURE
+       *
+       * Priority:
+       *
+       * 1. Highest runs
+       * 2. Same runs -> fewer balls
+       * 3. Same balls -> higher SR
+       * 4. Same SR -> more fours
+       * 5. Same fours -> more sixes
+       */
 
       const isBetter =
         !bestBattingFigure ||
@@ -2168,10 +2238,36 @@ async function getAllTimeRecords() {
         bestBattingFigure =
           candidate;
       }
+
+      /*
+       * HIGHEST SCORE
+       *
+       * This is also a single innings record.
+       */
+
+      const isHigherScore =
+        !highestScore ||
+
+        candidate.runs >
+        highestScore.runs ||
+
+        (
+          candidate.runs ===
+          highestScore.runs &&
+
+          candidate.balls <
+          highestScore.balls
+        );
+
+      if (isHigherScore) {
+
+        highestScore =
+          candidate;
+      }
     }
 
     /* -----------------------------------------------------
-       BEST BOWLING FIGURE
+       BOWLING
     ----------------------------------------------------- */
 
     const bowling =
@@ -2183,10 +2279,30 @@ async function getAllTimeRecords() {
       const b of bowling
     ) {
 
+      /*
+       * ONLY GCC BOWLERS
+       */
+
+      if (
+        !gccPlayerIds.has(
+          String(b.player_id)
+        )
+      ) {
+        continue;
+      }
+
       const candidate = {
 
         player_id:
           b.player_id,
+
+        player_name:
+          gccPlayers.find(
+            p =>
+              String(p.id) ===
+              String(b.player_id)
+          )?.name ||
+          'Unknown Player',
 
         wickets:
           Number(
@@ -2200,6 +2316,11 @@ async function getAllTimeRecords() {
 
         overs:
           b.overs,
+
+        balls:
+          Number(
+            b.balls || 0
+          ),
 
         economy:
           Number(
@@ -2218,6 +2339,16 @@ async function getAllTimeRecords() {
         bowling_team_id:
           inn.batting_team_id
       };
+
+      /*
+       * BEST BOWLING FIGURE
+       *
+       * Priority:
+       *
+       * 1. Most wickets
+       * 2. Same wickets -> fewest runs
+       * 3. Same runs -> lower economy
+       */
 
       const better =
         !bestBowling ||
@@ -2252,81 +2383,53 @@ async function getAllTimeRecords() {
     }
   }
 
-  /*
-   * Compatibility:
-   *
-   * highestScore uses the same single-innings
-   * record.
-   */
-
-  highestScore =
-    bestBattingFigure
-      ? {
-          ...bestBattingFigure
-        }
-      : null;
-
-  /* -------------------------------------------------------
-     CAREER LEADERBOARDS
-  ------------------------------------------------------- */
-
-  const batsmanIds =
-    (
-      await db.prepare(`
-        SELECT DISTINCT
-          batsman_id AS id
-        FROM balls
-        WHERE batsman_id IS NOT NULL
-      `).all()
-    ).map(
-      r => r.id
-    );
-
-  const bowlerIds =
-    (
-      await db.prepare(`
-        SELECT DISTINCT
-          bowler_id AS id
-        FROM balls
-        WHERE bowler_id IS NOT NULL
-      `).all()
-    ).map(
-      r => r.id
-    );
+  /* =======================================================
+     CAREER BATTING PLAYERS
+  ======================================================= */
 
   const battingLeaders =
     await Promise.all(
-      batsmanIds.map(
-        async id => ({
+      gccPlayers.map(
+        async player => ({
 
           player_id:
-            id,
+            player.id,
+
+          player_name:
+            player.name,
 
           ...await computeCareerBattingStats(
-            id
+            player.id
           )
         })
       )
     );
+
+  /* =======================================================
+     CAREER BOWLING PLAYERS
+  ======================================================= */
 
   const bowlingLeaders =
     await Promise.all(
-      bowlerIds.map(
-        async id => ({
+      gccPlayers.map(
+        async player => ({
 
           player_id:
-            id,
+            player.id,
+
+          player_name:
+            player.name,
 
           ...await computeCareerBowlingStats(
-            id
+            player.id
           )
         })
       )
     );
 
-  /* -------------------------------------------------------
-     TOP N
-  ------------------------------------------------------- */
+  /* =======================================================
+     TOP N HELPER
+  ======================================================= */
 
   const topBy =
     (
@@ -2356,14 +2459,16 @@ async function getAllTimeRecords() {
           n
         );
 
-  /* -------------------------------------------------------
-     RETURN
-  ------------------------------------------------------- */
+  /* =======================================================
+     RETURN GCC RECORDS
+  ======================================================= */
 
   return {
 
     /*
-     * SINGLE INNINGS
+     * =====================================================
+     * SINGLE MATCH — GCC ONLY
+     * =====================================================
      */
 
     bestBattingFigure,
@@ -2373,7 +2478,9 @@ async function getAllTimeRecords() {
     bestBowling,
 
     /*
-     * CAREER
+     * =====================================================
+     * CAREER — GCC ONLY
+     * =====================================================
      */
 
     mostRuns:
@@ -2446,7 +2553,6 @@ async function getAllTimeRecords() {
         )
   };
 }
-
 /* =========================================================
    EXPORTS
 ========================================================= */
