@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Records as RecordsApi } from '../api/api.js';
+import { Records as RecordsApi, Players } from '../api/api.js';
 
 function getTopFive(list, sortFn) {
   if (!Array.isArray(list)) {
@@ -126,25 +126,154 @@ export default function Records() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    RecordsApi
-      .get()
-      .then((data) => {
-        console.log('ALL TIME RECORDS:', data);
-        setRecords(data);
-      })
-      .catch((err) => {
-        console.error('Failed to load records:', err);
-        setError('Failed to load records.');
-      })
-      .finally(() => {
+    async function loadGccRecords() {
+      try {
+        setLoading(true);
+        setError('');
+
+        // Load all records and all players
+        const [recordsData, allPlayers] = await Promise.all([
+          RecordsApi.get(),
+          Players.listAll()
+        ]);
+
+        console.log('ALL TIME RECORDS:', recordsData);
+        console.log('ALL PLAYERS:', allPlayers);
+
+        /*
+         * Find only GCC players.
+         *
+         * This supports different possible team structures:
+         * player.team_name
+         * player.team
+         * player.team?.name
+         * player.team_name/name
+         */
+        const playersArray = Array.isArray(allPlayers)
+          ? allPlayers
+          : [];
+
+        const gccPlayerIds = new Set();
+
+        playersArray.forEach((player) => {
+          const teamName =
+            player.team_name ||
+            player.team?.name ||
+            player.team ||
+            '';
+
+          if (
+            String(teamName).trim().toLowerCase() === 'gcc'
+          ) {
+            if (player.id != null) {
+              gccPlayerIds.add(String(player.id));
+            }
+
+            if (player.player_id != null) {
+              gccPlayerIds.add(String(player.player_id));
+            }
+          }
+        });
+
+        console.log(
+          'GCC PLAYER IDS:',
+          [...gccPlayerIds]
+        );
+
+        // Check whether a record belongs to a GCC player
+        const isGccPlayer = (entry) => {
+          if (!entry) {
+            return false;
+          }
+
+          const playerId =
+            entry.player_id ??
+            entry.id ??
+            entry.playerId;
+
+          return (
+            playerId != null &&
+            gccPlayerIds.has(String(playerId))
+          );
+        };
+
+        // Filter every leaderboard
+        const filterList = (list) => {
+          if (!Array.isArray(list)) {
+            return [];
+          }
+
+          return list.filter(isGccPlayer);
+        };
+
+        // Filter best individual records
+        const filterSingle = (entry) => {
+          return isGccPlayer(entry) ? entry : null;
+        };
+
+        const gccRecords = {
+          ...recordsData,
+
+          highestScore: filterSingle(
+            recordsData?.highestScore
+          ),
+
+          bestBowling: filterSingle(
+            recordsData?.bestBowling
+          ),
+
+          mostRuns: filterList(
+            recordsData?.mostRuns
+          ),
+
+          mostFours: filterList(
+            recordsData?.mostFours
+          ),
+
+          mostSixes: filterList(
+            recordsData?.mostSixes
+          ),
+
+          bestStrikeRate: filterList(
+            recordsData?.bestStrikeRate
+          ),
+
+          mostWickets: filterList(
+            recordsData?.mostWickets
+          ),
+
+          bestEconomy: filterList(
+            recordsData?.bestEconomy
+          )
+        };
+
+        console.log(
+          'GCC ONLY RECORDS:',
+          gccRecords
+        );
+
+        setRecords(gccRecords);
+      } catch (err) {
+        console.error(
+          'Failed to load GCC records:',
+          err
+        );
+
+        setError(
+          'Failed to load GCC records.'
+        );
+      } finally {
         setLoading(false);
-      });
+      }
+    }
+
+    loadGccRecords();
   }, []);
 
   if (loading) {
     return (
       <p className="text-slate-400">
-        Loading records…
+        Loading GCC records…
       </p>
     );
   }
@@ -160,7 +289,7 @@ export default function Records() {
   if (!records) {
     return (
       <div className="card text-center text-slate-400">
-        No records available.
+        No GCC records available.
       </div>
     );
   }
@@ -175,7 +304,7 @@ export default function Records() {
         </h1>
 
         <p className="text-sm text-slate-500">
-          All-time records for GCC players.
+          All-time records for GCC players only.
         </p>
       </div>
 
