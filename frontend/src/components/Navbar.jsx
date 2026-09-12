@@ -53,7 +53,7 @@ export default function Navbar() {
               "
             >
               <img
-                src="WhatsApp Image 2026-09-12 at 9.19.32 AM.jpeg"
+                src="frontend/public/WhatsApp Image 2026-09-12 at 9.19.32 AM.jpeg"
                 alt="Golden Cricket Club"
                 className="
                   w-full
