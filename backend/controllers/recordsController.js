@@ -2,11 +2,34 @@ const scoreCalculator = require('../utils/scoreCalculator');
 const db = require('../db/database');
 
 /* =========================================================
-   GET ALL TIME RECORDS
+   HELPERS
 ========================================================= */
 
-exports.getRecords = async (req, res) => {
+function sendError(
+  res,
+  error,
+  fallback = 'Something went wrong'
+) {
+  console.error(error);
+
+  return res.status(500).json({
+    error:
+      error?.message ||
+      fallback
+  });
+}
+
+/* =========================================================
+   GET ALL-TIME RECORDS
+========================================================= */
+
+exports.getRecords = async (
+  req,
+  res
+) => {
+
   try {
+
     /* =====================================================
        GET RECORDS FROM SCORE CALCULATOR
     ===================================================== */
@@ -14,57 +37,100 @@ exports.getRecords = async (req, res) => {
     const records =
       await scoreCalculator.getAllTimeRecords();
 
+    /*
+     * Always keep a valid object even if the calculator
+     * returns undefined/null.
+     */
+    const safeRecords =
+      records &&
+      typeof records === 'object'
+        ? records
+        : {};
+
     /* =====================================================
        LOAD ALL PLAYERS
     ===================================================== */
 
     const players =
-      await db
-        .prepare(`
-          SELECT
-            id,
-            name
-          FROM players
-        `)
-        .all();
+      await db.prepare(`
+        SELECT
+          id,
+          name
+        FROM players
+      `).all();
 
     /* =====================================================
        LOAD ALL MATCHES
     ===================================================== */
 
     const matches =
-      await db
-        .prepare(`
-          SELECT
-            id,
-            match_date,
-            created_at
-          FROM matches
-        `)
-        .all();
+      await db.prepare(`
+        SELECT
+          id,
+          match_date,
+          created_at
+        FROM matches
+      `).all();
+
+    /* =====================================================
+       CREATE QUICK LOOKUP MAPS
+
+       This is safer and faster than repeatedly using
+       players.find() / matches.find().
+    ===================================================== */
+
+    const playerMap =
+      new Map(
+        (players || []).map(
+          player => [
+            String(player.id),
+            player
+          ]
+        )
+      );
+
+    const matchMap =
+      new Map(
+        (matches || []).map(
+          match => [
+            String(match.id),
+            match
+          ]
+        )
+      );
 
     /* =====================================================
        ATTACH PLAYER + MATCH INFORMATION
     ===================================================== */
 
-    const attach = (entry) => {
-      if (!entry) {
+    const attach = (
+      entry
+    ) => {
+
+      if (
+        !entry ||
+        typeof entry !== 'object'
+      ) {
         return null;
       }
 
       const player =
-        players.find(
-          (p) =>
-            String(p.id) ===
-            String(entry.player_id)
-        );
+        entry.player_id
+          ? playerMap.get(
+              String(
+                entry.player_id
+              )
+            )
+          : null;
 
       const match =
-        matches.find(
-          (m) =>
-            String(m.id) ===
-            String(entry.match_id)
-        );
+        entry.match_id
+          ? matchMap.get(
+              String(
+                entry.match_id
+              )
+            )
+          : null;
 
       return {
         ...entry,
@@ -86,23 +152,30 @@ exports.getRecords = async (req, res) => {
        ATTACH LIST
     ===================================================== */
 
-    const attachList = (list) => {
-      if (!Array.isArray(list)) {
+    const attachList = (
+      list
+    ) => {
+
+      if (
+        !Array.isArray(list)
+      ) {
         return [];
       }
 
-      return list.map(attach);
+      return list
+        .map(attach)
+        .filter(Boolean);
     };
 
     /* =====================================================
        FINAL RESPONSE
-
-       ONLY TWO SINGLE-INNINGS RECORDS:
+       
+       ONLY SINGLE-INNINGS RECORDS:
+       
        1. Best Batting Figure
        2. Best Bowling Figure
-
-       IMPORTANT:
-       highestScore has been completely removed.
+       
+       highestScore is intentionally NOT returned.
     ===================================================== */
 
     const response = {
@@ -113,12 +186,14 @@ exports.getRecords = async (req, res) => {
 
       bestBattingFigure:
         attach(
-          records.bestBattingFigure
+          safeRecords
+            .bestBattingFigure
         ),
 
       bestBowling:
         attach(
-          records.bestBowling
+          safeRecords
+            .bestBowling
         ),
 
       /* ===================================================
@@ -127,27 +202,32 @@ exports.getRecords = async (req, res) => {
 
       mostRuns:
         attachList(
-          records.mostRuns
+          safeRecords
+            .mostRuns
         ),
 
       mostFours:
         attachList(
-          records.mostFours
+          safeRecords
+            .mostFours
         ),
 
       mostSixes:
         attachList(
-          records.mostSixes
+          safeRecords
+            .mostSixes
         ),
 
       mostBallsFaced:
         attachList(
-          records.mostBallsFaced
+          safeRecords
+            .mostBallsFaced
         ),
 
       bestStrikeRate:
         attachList(
-          records.bestStrikeRate
+          safeRecords
+            .bestStrikeRate
         ),
 
       /* ===================================================
@@ -156,22 +236,25 @@ exports.getRecords = async (req, res) => {
 
       mostWickets:
         attachList(
-          records.mostWickets
+          safeRecords
+            .mostWickets
         ),
 
       mostBallsBowled:
         attachList(
-          records.mostBallsBowled
+          safeRecords
+            .mostBallsBowled
         ),
 
       bestEconomy:
         attachList(
-          records.bestEconomy
+          safeRecords
+            .bestEconomy
         )
     };
 
     /* =====================================================
-       DEBUG LOGS
+       DEBUG LOG
     ===================================================== */
 
     console.log(
@@ -179,22 +262,27 @@ exports.getRecords = async (req, res) => {
     );
 
     console.log(
-      'ALL TIME RECORDS LOADED'
+      'ALL-TIME RECORDS LOADED'
     );
 
     console.log(
-      'BEST BATTING FIGURE:',
+      'Best batting:',
       response.bestBattingFigure
     );
 
     console.log(
-      'BEST BOWLING:',
+      'Best bowling:',
       response.bestBowling
     );
 
     console.log(
-      'MOST RUNS:',
+      'Most runs:',
       response.mostRuns
+    );
+
+    console.log(
+      'Most wickets:',
+      response.mostWickets
     );
 
     console.log(
@@ -205,7 +293,9 @@ exports.getRecords = async (req, res) => {
        SEND RESPONSE
     ===================================================== */
 
-    res.json(response);
+    return res.json(
+      response
+    );
 
   } catch (error) {
 
@@ -214,9 +304,10 @@ exports.getRecords = async (req, res) => {
       error
     );
 
-    res.status(500).json({
-      error: 'Failed to load records',
-      message: error.message
-    });
+    return sendError(
+      res,
+      error,
+      'Failed to load records'
+    );
   }
 };
