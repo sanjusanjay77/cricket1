@@ -11,8 +11,10 @@ const app = express();
 const server = http.createServer(app);
 
 /* =========================================================
-   CORS
+   CONFIGURATION
 ========================================================= */
+
+const PORT = process.env.PORT || 4000;
 
 const allowedOrigins = [
   'https://gcc-cricket.netlify.app',
@@ -24,28 +26,50 @@ if (process.env.CORS_ORIGIN) {
   allowedOrigins.push(process.env.CORS_ORIGIN);
 }
 
+/* Remove duplicate origins */
+const uniqueOrigins = [...new Set(allowedOrigins)];
+
+/* =========================================================
+   CORS
+========================================================= */
+
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests without an Origin header
-    // such as health checks and server-to-server requests.
+    /*
+     * Requests without Origin are allowed.
+     *
+     * Examples:
+     * - Render health checks
+     * - server-to-server requests
+     * - curl requests
+     */
     if (!origin) {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin)) {
+    if (uniqueOrigins.includes(origin)) {
       return callback(null, true);
     }
 
     console.warn('⚠️ CORS blocked origin:', origin);
 
-    // Do not throw an exception.
-    // Just reject the origin safely.
+    /*
+     * Do not throw an exception.
+     * Simply reject this origin.
+     */
     return callback(null, false);
   },
 
   credentials: true,
 
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: [
+    'GET',
+    'POST',
+    'PUT',
+    'PATCH',
+    'DELETE',
+    'OPTIONS'
+  ],
 
   allowedHeaders: [
     'Content-Type',
@@ -61,19 +85,29 @@ app.use(cors(corsOptions));
 
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: uniqueOrigins,
     credentials: true,
     methods: ['GET', 'POST']
   },
 
+  /*
+   * Polling is useful as a fallback if WebSocket
+   * temporarily cannot connect.
+   */
   transports: ['polling', 'websocket'],
 
-  // Helps the client recover from temporary
-  // connection interruptions.
+  /*
+   * Allows temporary connection recovery.
+   */
   connectionStateRecovery: {
     maxDisconnectionDuration: 2 * 60 * 1000,
     skipMiddlewares: true
-  }
+  },
+
+  /*
+   * Prevent extremely large Socket.IO packets.
+   */
+  maxHttpBufferSize: 1e6
 });
 
 app.set('io', io);
@@ -82,9 +116,11 @@ app.set('io', io);
    BODY PARSER
 ========================================================= */
 
-app.use(express.json({
-  limit: '2mb'
-}));
+app.use(
+  express.json({
+    limit: '2mb'
+  })
+);
 
 /* =========================================================
    REQUEST LOGGER
@@ -108,14 +144,23 @@ app.use((req, res, next) => {
    HEALTH CHECK
 ========================================================= */
 
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    time: new Date().toISOString(),
-    uptime: Math.round(process.uptime()),
-    server: 'running',
-    database: 'turso'
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    return res.status(200).json({
+      status: 'ok',
+      time: new Date().toISOString(),
+      uptime: Math.round(process.uptime()),
+      server: 'running',
+      database: 'turso'
+    });
+  } catch (err) {
+    console.error('❌ Health check error:', err);
+
+    return res.status(503).json({
+      status: 'error',
+      server: 'unhealthy'
+    });
+  }
 });
 
 /* =========================================================
@@ -157,7 +202,7 @@ io.on('connection', (socket) => {
       );
     } catch (err) {
       console.error(
-        '❌ join-match error:',
+        `❌ join-match error (${socket.id}):`,
         err
       );
     }
@@ -182,7 +227,7 @@ io.on('connection', (socket) => {
       );
     } catch (err) {
       console.error(
-        '❌ leave-match error:',
+        `❌ leave-match error (${socket.id}):`,
         err
       );
     }
@@ -230,6 +275,9 @@ if (fs.existsSync(frontendDist)) {
     express.static(frontendDist)
   );
 
+  /*
+   * React SPA fallback.
+   */
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) {
       return res.status(404).json({
@@ -237,7 +285,7 @@ if (fs.existsSync(frontendDist)) {
       });
     }
 
-    res.sendFile(
+    return res.sendFile(
       path.join(
         frontendDist,
         'index.html'
@@ -262,7 +310,7 @@ app.use((req, res) => {
     });
   }
 
-  res.status(404).json({
+  return res.status(404).json({
     error: 'Not found'
   });
 });
@@ -292,6 +340,7 @@ app.use((err, req, res, next) => {
   );
 
   console.error(
+    'Stack:',
     err?.stack
   );
 
@@ -299,12 +348,17 @@ app.use((err, req, res, next) => {
     '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   );
 
+  /*
+   * If headers were already sent, Express must
+   * handle the error itself.
+   */
   if (res.headersSent) {
     return next(err);
   }
 
-  res.status(500).json({
+  return res.status(500).json({
     error: 'Internal server error',
+
     message:
       process.env.NODE_ENV === 'production'
         ? 'Something went wrong on the server.'
@@ -313,14 +367,93 @@ app.use((err, req, res, next) => {
 });
 
 /* =========================================================
-   PROCESS ERROR PROTECTION
+   SERVER SHUTDOWN PROTECTION
+========================================================= */
+
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) {
+    console.log(
+      `⚠️ Shutdown already in progress (${signal})`
+    );
+    return;
+  }
+
+  isShuttingDown = true;
+
+  console.log(
+    `🛑 Received ${signal}. Shutting down safely...`
+  );
+
+  /*
+   * Stop accepting new HTTP requests.
+   */
+  server.close(() => {
+    console.log(
+      '✅ HTTP server closed.'
+    );
+
+    process.exit(0);
+  });
+
+  /*
+   * Close Socket.IO connections.
+   */
+  try {
+    io.close();
+
+    console.log(
+      '✅ Socket.IO closed.'
+    );
+  } catch (err) {
+    console.error(
+      '⚠️ Socket.IO shutdown error:',
+      err
+    );
+  }
+
+  /*
+   * Safety timeout.
+   *
+   * If something refuses to close, don't keep
+   * the Render instance hanging forever.
+   */
+  setTimeout(() => {
+    console.error(
+      '⏰ Graceful shutdown timed out.'
+    );
+
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on(
+  'SIGTERM',
+  () => gracefulShutdown('SIGTERM')
+);
+
+process.on(
+  'SIGINT',
+  () => gracefulShutdown('SIGINT')
+);
+
+/* =========================================================
+   UNHANDLED PROMISE REJECTION
 ========================================================= */
 
 /*
- * An unhandled Promise rejection means some async
- * operation failed without being caught.
+ * Example:
  *
- * We log it and allow Render to restart the service.
+ * async function something() {
+ *   throw new Error('Database failed');
+ * }
+ *
+ * If nobody catches that Promise rejection,
+ * this handler catches it.
+ *
+ * We intentionally exit so Render can restart
+ * the service from a clean Node.js process.
  */
 process.on('unhandledRejection', (reason) => {
   console.error(
@@ -340,16 +473,22 @@ process.on('unhandledRejection', (reason) => {
   );
 
   /*
-   * Let Render restart the Node process.
+   * Give logs a moment to flush.
    */
-  process.exit(1);
+  setTimeout(() => {
+    process.exit(1);
+  }, 100);
 });
 
+/* =========================================================
+   UNCAUGHT EXCEPTION
+========================================================= */
+
 /*
- * A truly unexpected synchronous exception is fatal.
+ * A truly unexpected synchronous exception
+ * can leave Node.js in an unsafe state.
  *
- * Render will automatically restart the service after
- * the process exits.
+ * Do NOT continue running a corrupted process.
  */
 process.on('uncaughtException', (err) => {
   console.error(
@@ -361,7 +500,13 @@ process.on('uncaughtException', (err) => {
   );
 
   console.error(
-    err
+    'Message:',
+    err?.message
+  );
+
+  console.error(
+    'Stack:',
+    err?.stack
   );
 
   console.error(
@@ -369,17 +514,17 @@ process.on('uncaughtException', (err) => {
   );
 
   /*
-   * Do NOT keep a corrupted Node process alive.
-   * Render will restart it automatically.
+   * Allow logs to flush, then exit.
+   * Render can start a fresh instance.
    */
-  process.exit(1);
+  setTimeout(() => {
+    process.exit(1);
+  }, 100);
 });
 
 /* =========================================================
    START SERVER
 ========================================================= */
-
-const PORT = process.env.PORT || 4000;
 
 const schemaPath = path.join(
   __dirname,
@@ -392,6 +537,22 @@ async function startServer() {
     console.log(
       '🔄 Initializing Turso database...'
     );
+
+    /* -----------------------------------------------------
+       CHECK TURSO ENVIRONMENT
+    ----------------------------------------------------- */
+
+    if (!process.env.TURSO_DATABASE_URL) {
+      throw new Error(
+        'TURSO_DATABASE_URL is missing.'
+      );
+    }
+
+    if (!process.env.TURSO_AUTH_TOKEN) {
+      throw new Error(
+        'TURSO_AUTH_TOKEN is missing.'
+      );
+    }
 
     const db = require('./db/database');
 
@@ -430,10 +591,14 @@ async function startServer() {
     );
 
     /* -----------------------------------------------------
-       START SERVER
+       START HTTP SERVER
     ----------------------------------------------------- */
 
     server.listen(PORT, () => {
+      console.log(
+        '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+      );
+
       console.log(
         `🏏 Cricket Scoreboard API running on port ${PORT}`
       );
@@ -445,8 +610,36 @@ async function startServer() {
       );
 
       console.log(
-        `🔗 Port: ${PORT}`
+        `🔗 Health: /api/health`
       );
+
+      console.log(
+        `🔌 Socket.IO: enabled`
+      );
+
+      console.log(
+        `💾 Database: Turso`
+      );
+
+      console.log(
+        '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+      );
+    });
+
+    /*
+     * Catch HTTP server-level errors.
+     */
+    server.on('error', (err) => {
+      console.error(
+        '❌ HTTP server error:',
+        err
+      );
+
+      /*
+       * A server binding/network error means
+       * the process cannot operate correctly.
+       */
+      process.exit(1);
     });
 
   } catch (err) {
@@ -459,7 +652,13 @@ async function startServer() {
     );
 
     console.error(
-      err
+      'Message:',
+      err?.message
+    );
+
+    console.error(
+      'Stack:',
+      err?.stack
     );
 
     console.error(
@@ -467,17 +666,17 @@ async function startServer() {
     );
 
     /*
-     * Startup failure means the application cannot
-     * safely operate.
+     * Startup failure means the application
+     * cannot safely operate.
      *
-     * Render will restart the service automatically.
+     * Render will restart the service.
      */
     process.exit(1);
   }
 }
 
 /* =========================================================
-   START
+   START APPLICATION
 ========================================================= */
 
 startServer();
