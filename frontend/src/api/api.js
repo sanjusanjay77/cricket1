@@ -1,4 +1,3 @@
-
 import axios from 'axios';
 
 /* =========================================================
@@ -370,6 +369,32 @@ export const Records = {
 };
 
 /* =========================================================
+   NOTIFICATIONS
+========================================================= */
+
+export const Notifications = {
+  register: (data) =>
+    requestWithRetry({
+      method: 'POST',
+      url: '/notifications/register',
+      data
+    }).then(getData),
+
+  getUser: (id) =>
+    requestWithRetry({
+      method: 'GET',
+      url: `/notifications/${id}`
+    }).then(getData),
+
+  updatePreferences: (id, data) =>
+    requestWithRetry({
+      method: 'PUT',
+      url: `/notifications/${id}/preferences`,
+      data
+    }).then(getData)
+};
+
+/* =========================================================
    HEALTH CHECK
 ========================================================= */
 
@@ -386,4 +411,3 @@ export const Health = {
 ========================================================= */
 
 export default api;
-
