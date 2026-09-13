@@ -378,6 +378,11 @@ app.use(
   require('./routes/records')
 );
 
+app.use(
+  '/api/notifications',
+  require('./routes/notifications')
+);
+
 /* =========================================================
    SOCKET.IO
 ========================================================= */
