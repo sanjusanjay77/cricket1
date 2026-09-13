@@ -55,6 +55,159 @@ async function teamExists(teamId) {
 }
 
 /* =========================================================
+   LIVE MATCH NOTIFICATION
+========================================================= */
+
+async function sendLiveMatchNotification(
+  req,
+  matchId,
+  notificationMessage
+) {
+  try {
+
+    /*
+     * Socket.IO instance is stored in server.js
+     * using:
+     *
+     * app.set('io', io)
+     */
+    const io =
+      req.app.get('io');
+
+    if (!io) {
+
+      console.warn(
+        '⚠️ Socket.IO instance not available. Notification skipped.'
+      );
+
+      return;
+    }
+
+    /*
+     * Get match + team names.
+     */
+    const match =
+      await db.prepare(`
+        SELECT
+          m.id,
+          m.team1_id,
+          m.team2_id,
+          t1.name AS team1_name,
+          t2.name AS team2_name
+        FROM matches m
+        JOIN teams t1
+          ON t1.id = m.team1_id
+        JOIN teams t2
+          ON t2.id = m.team2_id
+        WHERE m.id = ?
+      `).get(matchId);
+
+    if (!match) {
+
+      console.warn(
+        `⚠️ Match ${matchId} not found while sending notification.`
+      );
+
+      return;
+    }
+
+    /*
+     * Get all users who enabled notifications.
+     */
+    const users =
+      await db.prepare(`
+        SELECT
+          id,
+          name,
+          email,
+          phone
+        FROM notification_users
+        WHERE notifications_enabled = 1
+      `).all();
+
+    const registeredUsers =
+      users || [];
+
+    if (
+      registeredUsers.length === 0
+    ) {
+
+      console.log(
+        '🔔 No enabled notification users found.'
+      );
+
+      return;
+    }
+
+    const payload = {
+
+      matchId:
+        String(match.id),
+
+      title:
+        '🏏 GCC Cricket - Match Live',
+
+      message:
+        notificationMessage ||
+        `${match.team1_name} vs ${match.team2_name} is now live!`,
+
+      teams:
+        `${match.team1_name} vs ${match.team2_name}`,
+
+      url:
+        `/match/${match.id}/live`
+    };
+
+    let sentCount = 0;
+
+    /*
+     * Send notification to each registered
+     * user's Socket.IO room.
+     *
+     * Room format:
+     *
+     * user-USER_ID
+     */
+    for (
+      const user
+      of registeredUsers
+    ) {
+
+      if (!user?.id) {
+        continue;
+      }
+
+      const room =
+        `user-${String(user.id)}`;
+
+      io
+        .to(room)
+        .emit(
+          'match-started',
+          payload
+        );
+
+      sentCount++;
+    }
+
+    console.log(
+      `🔔 Live match notification emitted to ${sentCount} registered user room(s).`
+    );
+
+  } catch (notificationError) {
+
+    /*
+     * Notification failure must NEVER
+     * prevent the match from starting.
+     */
+    console.error(
+      '❌ Failed to send live match notification:',
+      notificationError
+    );
+  }
+}
+
+/* =========================================================
    LIST MATCHES
 ========================================================= */
 
@@ -445,6 +598,22 @@ exports.setToss = async (
         matchId
       );
 
+    /*
+     * =====================================================
+     * SEND LIVE MATCH NOTIFICATION
+     * =====================================================
+     *
+     * The match is now officially live.
+     *
+     * Notification errors are internally handled and
+     * will NOT break this API request.
+     */
+    await sendLiveMatchNotification(
+      req,
+      matchId,
+      `${updatedMatch?.team1_name || 'Team 1'} vs ${updatedMatch?.team2_name || 'Team 2'} is now live!`
+    );
+
     return res.json({
 
       match:
@@ -678,6 +847,17 @@ exports.startSecondInnings = async (
 
       throw matchUpdateError;
     }
+
+    /*
+     * =====================================================
+     * SEND SECOND INNINGS NOTIFICATION
+     * =====================================================
+     */
+    await sendLiveMatchNotification(
+      req,
+      matchId,
+      `The second innings of the match is now live!`
+    );
 
     return res.json({
 
