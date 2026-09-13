@@ -1,6 +1,10 @@
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 
+// =====================================================
+// HELPERS
+// =====================================================
+
 function cleanText(value, maxLength = 100) {
   if (value === undefined || value === null) {
     return '';
@@ -23,8 +27,15 @@ function isValidEmail(email) {
 
 function isValidPhone(phone) {
   const digits = phone.replace(/\D/g, '');
+
   return digits.length >= 10 && digits.length <= 15;
 }
+
+
+// =====================================================
+// REGISTER USER
+// POST /api/notifications/register
+// =====================================================
 
 exports.registerUser = async (req, res) => {
   try {
@@ -32,11 +43,19 @@ exports.registerUser = async (req, res) => {
     const email = cleanEmail(req.body.email);
     const phone = cleanPhone(req.body.phone);
 
+    // ---------------------------------------------
+    // Validate name
+    // ---------------------------------------------
+
     if (!name) {
       return res.status(400).json({
         error: 'Please enter your name.'
       });
     }
+
+    // ---------------------------------------------
+    // Email OR phone required
+    // ---------------------------------------------
 
     if (!email && !phone) {
       return res.status(400).json({
@@ -44,11 +63,19 @@ exports.registerUser = async (req, res) => {
       });
     }
 
+    // ---------------------------------------------
+    // Validate email
+    // ---------------------------------------------
+
     if (email && !isValidEmail(email)) {
       return res.status(400).json({
         error: 'Please enter a valid email address.'
       });
     }
+
+    // ---------------------------------------------
+    // Validate phone
+    // ---------------------------------------------
 
     if (phone && !isValidPhone(phone)) {
       return res.status(400).json({
@@ -56,10 +83,19 @@ exports.registerUser = async (req, res) => {
       });
     }
 
-    // Existing email
+    // ---------------------------------------------
+    // Check existing email
+    // ---------------------------------------------
+
     if (email) {
       const existingEmail = await db.prepare(`
-        SELECT *
+        SELECT
+          id,
+          name,
+          email,
+          phone,
+          notifications_enabled,
+          created_at
         FROM notification_users
         WHERE email = ?
         LIMIT 1
@@ -73,10 +109,19 @@ exports.registerUser = async (req, res) => {
       }
     }
 
-    // Existing phone
+    // ---------------------------------------------
+    // Check existing phone
+    // ---------------------------------------------
+
     if (phone) {
       const existingPhone = await db.prepare(`
-        SELECT *
+        SELECT
+          id,
+          name,
+          email,
+          phone,
+          notifications_enabled,
+          created_at
         FROM notification_users
         WHERE phone = ?
         LIMIT 1
@@ -89,6 +134,10 @@ exports.registerUser = async (req, res) => {
         });
       }
     }
+
+    // ---------------------------------------------
+    // Create new user
+    // ---------------------------------------------
 
     const id = uuidv4();
 
@@ -107,6 +156,10 @@ exports.registerUser = async (req, res) => {
       email || null,
       phone || null
     );
+
+    // ---------------------------------------------
+    // Get created user
+    // ---------------------------------------------
 
     const user = await db.prepare(`
       SELECT
@@ -137,6 +190,12 @@ exports.registerUser = async (req, res) => {
   }
 };
 
+
+// =====================================================
+// GET USER
+// GET /api/notifications/:id
+// =====================================================
+
 exports.getUser = async (req, res) => {
   try {
     const user = await db.prepare(`
@@ -149,13 +208,22 @@ exports.getUser = async (req, res) => {
         created_at
       FROM notification_users
       WHERE id = ?
+      LIMIT 1
     `).get(req.params.id);
+
+    // ---------------------------------------------
+    // User does not exist
+    // ---------------------------------------------
 
     if (!user) {
       return res.status(404).json({
         error: 'User not found.'
       });
     }
+
+    // ---------------------------------------------
+    // Return user
+    // ---------------------------------------------
 
     return res.json(user);
 
@@ -171,15 +239,26 @@ exports.getUser = async (req, res) => {
   }
 };
 
+
+// =====================================================
+// UPDATE NOTIFICATION PREFERENCES
+// PUT /api/notifications/:id/preferences
+// =====================================================
+
 exports.updatePreferences = async (req, res) => {
   try {
     const enabled =
       req.body.notifications_enabled ? 1 : 0;
 
+    // ---------------------------------------------
+    // Check user
+    // ---------------------------------------------
+
     const existing = await db.prepare(`
       SELECT id
       FROM notification_users
       WHERE id = ?
+      LIMIT 1
     `).get(req.params.id);
 
     if (!existing) {
@@ -187,6 +266,10 @@ exports.updatePreferences = async (req, res) => {
         error: 'User not found.'
       });
     }
+
+    // ---------------------------------------------
+    // Update preference
+    // ---------------------------------------------
 
     await db.prepare(`
       UPDATE notification_users
@@ -196,6 +279,10 @@ exports.updatePreferences = async (req, res) => {
       enabled,
       req.params.id
     );
+
+    // ---------------------------------------------
+    // Return updated user
+    // ---------------------------------------------
 
     const user = await db.prepare(`
       SELECT
@@ -207,6 +294,7 @@ exports.updatePreferences = async (req, res) => {
         created_at
       FROM notification_users
       WHERE id = ?
+      LIMIT 1
     `).get(req.params.id);
 
     return res.json(user);
