@@ -17,7 +17,7 @@ function cleanId(value) {
     return null;
   }
 
-  return String(value);
+  return String(value).trim();
 }
 
 function isTruthy(value) {
@@ -29,14 +29,37 @@ function isTruthy(value) {
   );
 }
 
-function sendError(res, err, fallbackStatus = 400) {
-  console.error(err);
+/*
+====================================================
+ERROR HANDLER
+====================================================
+*/
+
+function sendError(res, err, status = 400) {
+  console.error(
+    '❌ Scoring controller error:',
+    err?.message || err
+  );
+
+  if (!res) {
+    return;
+  }
+
+  if (
+    typeof res.status !== 'function' ||
+    typeof res.json !== 'function'
+  ) {
+    console.error(
+      '❌ Invalid Express response object'
+    );
+    return;
+  }
 
   if (res.headersSent) {
     return;
   }
 
-  return res.status(fallbackStatus).json({
+  return res.status(status).json({
     error:
       err?.message ||
       'Something went wrong'
@@ -51,14 +74,22 @@ PLAYER VALIDATION
 
 async function validatePlayer(playerId, label) {
   if (!playerId) {
-    throw new Error(`${label} is required`);
+    throw new Error(
+      `${label} is required`
+    );
   }
 
-  const player = await db.prepare(`
-    SELECT id, name, active
-    FROM players
-    WHERE id = ?
-  `).get(playerId);
+  const player =
+    await db
+      .prepare(`
+        SELECT
+          id,
+          name,
+          active
+        FROM players
+        WHERE id = ?
+      `)
+      .get(playerId);
 
   if (!player) {
     throw new Error(
@@ -67,10 +98,10 @@ async function validatePlayer(playerId, label) {
   }
 
   /*
-   * Only reject explicitly inactive players.
+   * Explicitly inactive player.
    *
-   * This keeps compatibility with older player rows
-   * where active may be NULL.
+   * NULL is allowed for compatibility
+   * with older player records.
    */
   if (
     player.active !== undefined &&
@@ -83,79 +114,6 @@ async function validatePlayer(playerId, label) {
   }
 
   return player;
-}
-
-/*
-====================================================
-FAST BACKGROUND SOCKET BROADCAST
-====================================================
-*/
-
-async function broadcast(req, matchId) {
-  try {
-    if (!req || !matchId) {
-      return;
-    }
-
-    const io = req.app?.get('io');
-
-    if (!io) {
-      return;
-    }
-
-    const inningsRows = await db
-      .prepare(`
-        SELECT *
-        FROM innings
-        WHERE match_id = ?
-        ORDER BY innings_number ASC
-      `)
-      .all(matchId);
-
-    const innings = await Promise.all(
-      inningsRows.map(async (row) => {
-        try {
-          return await calc.getScoreboard(row.id);
-        } catch (err) {
-          console.error(
-            `Broadcast scoreboard failed for innings ${row.id}:`,
-            err.message
-          );
-
-          return null;
-        }
-      })
-    );
-
-    const validInnings =
-      innings.filter(Boolean);
-
-    const match = await db
-      .prepare(`
-        SELECT *
-        FROM matches
-        WHERE id = ?
-      `)
-      .get(matchId);
-
-    if (!match) {
-      return;
-    }
-
-    io.to(`match-${matchId}`).emit(
-      'score-update',
-      {
-        match,
-        innings: validInnings
-      }
-    );
-
-  } catch (err) {
-    console.error(
-      'Background broadcast failed:',
-      err?.message || err
-    );
-  }
 }
 
 /*
@@ -176,11 +134,147 @@ async function getInnings(inningsId) {
 
 /*
 ====================================================
+BROADCAST SCORE UPDATE
+====================================================
+*/
+
+async function broadcast(req, matchId) {
+  try {
+    if (!req || !matchId) {
+      return;
+    }
+
+    const io =
+      req.app &&
+      typeof req.app.get === 'function'
+        ? req.app.get('io')
+        : null;
+
+    if (!io) {
+      return;
+    }
+
+    const inningsRows =
+      await db
+        .prepare(`
+          SELECT *
+          FROM innings
+          WHERE match_id = ?
+          ORDER BY innings_number ASC
+        `)
+        .all(matchId);
+
+    const scoreboards = [];
+
+    for (
+      const row of inningsRows
+    ) {
+      try {
+        const scoreboard =
+          await calc.getScoreboard(
+            row.id
+          );
+
+        if (scoreboard) {
+          scoreboards.push(
+            scoreboard
+          );
+        }
+      } catch (err) {
+        console.error(
+          `❌ Failed to build scoreboard for innings ${row.id}:`,
+          err?.message || err
+        );
+      }
+    }
+
+    const match =
+      await db
+        .prepare(`
+          SELECT *
+          FROM matches
+          WHERE id = ?
+        `)
+        .get(matchId);
+
+    if (!match) {
+      return;
+    }
+
+    io
+      .to(`match-${matchId}`)
+      .emit(
+        'score-update',
+        {
+          match,
+          innings: scoreboards
+        }
+      );
+
+  } catch (err) {
+    console.error(
+      '❌ Broadcast failed:',
+      err?.message || err
+    );
+  }
+}
+
+/*
+====================================================
+GET SCOREBOARD
+====================================================
+*/
+
+exports.getScoreboard = async (
+  req,
+  res
+) => {
+  try {
+    const inningsId =
+      cleanId(req.params.id);
+
+    if (!inningsId) {
+      return res.status(400).json({
+        error:
+          'Innings id is required'
+      });
+    }
+
+    const scoreboard =
+      await calc.getScoreboard(
+        inningsId
+      );
+
+    if (!scoreboard) {
+      return res.status(404).json({
+        error:
+          'Innings not found'
+      });
+    }
+
+    return res.json(
+      scoreboard
+    );
+
+  } catch (err) {
+    return sendError(
+      res,
+      err,
+      500
+    );
+  }
+};
+
+/*
+====================================================
 SET BATSMEN
 ====================================================
 */
 
-exports.setBatsmen = async (req, res) => {
+exports.setBatsmen = async (
+  req,
+  res
+) => {
   try {
     const inningsId =
       cleanId(req.params.id);
@@ -195,15 +289,6 @@ exports.setBatsmen = async (req, res) => {
     const body =
       req.body || {};
 
-    /*
-    Support both formats:
-
-    striker_id
-    strikerId
-
-    non_striker_id
-    nonStrikerId
-    */
     const strikerId =
       cleanId(
         body.striker_id ??
@@ -224,8 +309,7 @@ exports.setBatsmen = async (req, res) => {
     }
 
     /*
-    Striker and non-striker cannot
-    be the same player.
+    Same player cannot be both batsmen.
     */
     if (
       nonStrikerId &&
@@ -238,9 +322,6 @@ exports.setBatsmen = async (req, res) => {
       });
     }
 
-    /*
-    Get innings.
-    */
     const innings =
       await getInnings(
         inningsId
@@ -253,10 +334,6 @@ exports.setBatsmen = async (req, res) => {
       });
     }
 
-    /*
-    Do not change batsmen after
-    innings has finished.
-    */
     if (
       isTruthy(
         innings.is_completed
@@ -269,28 +346,16 @@ exports.setBatsmen = async (req, res) => {
     }
 
     /*
-    ====================================================
-    VALIDATE STRIKER
-    ====================================================
+    Validate striker.
     */
-
     await validatePlayer(
       strikerId,
       'Striker'
     );
 
     /*
-    ====================================================
-    VALIDATE NON-STRIKER
-    ====================================================
-
-    If null is intentionally supplied, allow it.
-
-    This is useful immediately after a wicket,
-    where the scorer may need to select the
-    replacement batsman.
+    Validate non-striker.
     */
-
     if (nonStrikerId) {
       await validatePlayer(
         nonStrikerId,
@@ -299,11 +364,8 @@ exports.setBatsmen = async (req, res) => {
     }
 
     /*
-    ====================================================
-    UPDATE BATSMEN
-    ====================================================
+    Save batsmen.
     */
-
     await db
       .prepare(`
         UPDATE innings
@@ -318,21 +380,18 @@ exports.setBatsmen = async (req, res) => {
         inningsId
       );
 
-    /*
-    Get authoritative updated state.
-    */
     const updated =
       await getInnings(
         inningsId
       );
 
     /*
-    Respond FIRST.
+    Send response.
     */
     res.json(updated);
 
     /*
-    Broadcast AFTER response.
+    Broadcast after response.
     */
     void broadcast(
       req,
@@ -402,7 +461,8 @@ exports.swapBatsmen = async (
     }
 
     /*
-    Validate both players before swapping.
+    Make sure both existing players
+    are valid before swapping.
     */
     await validatePlayer(
       innings.striker_id,
@@ -414,9 +474,6 @@ exports.swapBatsmen = async (
       'Non-striker'
     );
 
-    /*
-    Swap.
-    */
     await db
       .prepare(`
         UPDATE innings
@@ -505,9 +562,6 @@ exports.swapStrike = async (
       });
     }
 
-    /*
-    Validate both players before swapping.
-    */
     await validatePlayer(
       innings.striker_id,
       'Striker'
@@ -583,9 +637,6 @@ exports.setBowler = async (
         body.bowler
       );
 
-    const force =
-      isTruthy(body.force);
-
     if (!bowlerId) {
       return res.status(400).json({
         error:
@@ -625,44 +676,8 @@ exports.setBowler = async (
     );
 
     /*
-    Same bowler cannot normally bowl
-    consecutive overs.
+    Save bowler.
     */
-    if (!force) {
-      const lastBall =
-        await db
-          .prepare(`
-            SELECT bowler_id
-            FROM balls
-            WHERE innings_id = ?
-            ORDER BY ball_sequence DESC
-            LIMIT 1
-          `)
-          .get(inningsId);
-
-      const totalBalls =
-        Number(
-          innings.total_balls || 0
-        );
-
-      const isOverBoundary =
-        totalBalls > 0 &&
-        totalBalls % 6 === 0;
-
-      if (
-        lastBall &&
-        String(
-          lastBall.bowler_id
-        ) === String(bowlerId) &&
-        isOverBoundary
-      ) {
-        return res.status(400).json({
-          error:
-            'Same bowler cannot bowl consecutive overs.'
-        });
-      }
-    }
-
     await db
       .prepare(`
         UPDATE innings
@@ -719,7 +734,7 @@ exports.recordBall = async (
       req.body || {};
 
     /*
-    scoreCalculator is the authoritative
+    scoreCalculator is the main
     scoring engine.
     */
     const result =
@@ -729,46 +744,31 @@ exports.recordBall = async (
       );
 
     /*
-    Respond immediately.
+    Return scoring result.
     */
     res.json(result);
 
     /*
-    Broadcast in background.
+    Find match and broadcast.
     */
-    const matchId =
+    let matchId =
       result?.innings?.match_id;
+
+    if (!matchId) {
+      const innings =
+        await getInnings(
+          inningsId
+        );
+
+      matchId =
+        innings?.match_id;
+    }
 
     if (matchId) {
       void broadcast(
         req,
         matchId
       );
-    } else {
-      void (
-        async () => {
-          try {
-            const innings =
-              await getInnings(
-                inningsId
-              );
-
-            if (
-              innings?.match_id
-            ) {
-              await broadcast(
-                req,
-                innings.match_id
-              );
-            }
-          } catch (err) {
-            console.error(
-              'Record-ball fallback broadcast failed:',
-              err.message
-            );
-          }
-        }
-      )();
     }
 
   } catch (err) {
@@ -807,46 +807,25 @@ exports.undoLastBall = async (
 
     res.json(result);
 
-    const returnedMatchId =
+    let matchId =
       result?.innings?.match_id;
 
-    if (returnedMatchId) {
-      void broadcast(
-        req,
-        returnedMatchId
-      );
+    if (!matchId) {
+      const innings =
+        await getInnings(
+          inningsId
+        );
 
-      return;
+      matchId =
+        innings?.match_id;
     }
 
-    void (
-      async () => {
-        try {
-          const innings =
-            await db
-              .prepare(`
-                SELECT match_id
-                FROM innings
-                WHERE id = ?
-              `)
-              .get(inningsId);
-
-          if (
-            innings?.match_id
-          ) {
-            await broadcast(
-              req,
-              innings.match_id
-            );
-          }
-        } catch (err) {
-          console.error(
-            'Undo fallback broadcast failed:',
-            err.message
-          );
-        }
-      }
-    )();
+    if (matchId) {
+      void broadcast(
+        req,
+        matchId
+      );
+    }
 
   } catch (err) {
     return sendError(
@@ -858,51 +837,7 @@ exports.undoLastBall = async (
 
 /*
 ====================================================
-GET SCOREBOARD
-====================================================
-*/
-
-exports.getScoreboard = async (
-  req,
-  res
-) => {
-  try {
-    const inningsId =
-      cleanId(req.params.id);
-
-    if (!inningsId) {
-      return res.status(400).json({
-        error:
-          'Innings id is required'
-      });
-    }
-
-    const scoreboard =
-      await calc.getScoreboard(
-        inningsId
-      );
-
-    if (!scoreboard) {
-      return res.status(404).json({
-        error:
-          'Innings not found'
-      });
-    }
-
-    res.json(scoreboard);
-
-  } catch (err) {
-    return sendError(
-      res,
-      err,
-      500
-    );
-  }
-};
-
-/*
-====================================================
-EXPORT INTERNAL HELPERS
+EXPORT HELPERS
 ====================================================
 */
 
