@@ -2,87 +2,957 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { getScoreboard } = require('../utils/scoreCalculator');
 
-exports.listMatches = async (req, res) => {
-  const matches = await db.prepare(`
-    SELECT m.*, t1.name AS team1_name, t1.short_name AS team1_short,
-           t2.name AS team2_name, t2.short_name AS team2_short
-    FROM matches m
-    JOIN teams t1 ON t1.id = m.team1_id
-    JOIN teams t2 ON t2.id = m.team2_id
-    ORDER BY m.created_at DESC
-  `).all();
-  res.json(matches);
-};
+/* =========================================================
+   HELPERS
+========================================================= */
 
-exports.createMatch = async (req, res) => {
-  const { team1_id, team2_id, match_type, overs_limit, venue, match_date } = req.body;
-  if (!team1_id || !team2_id) return res.status(400).json({ error: 'team1_id and team2_id are required' });
-  if (team1_id === team2_id) return res.status(400).json({ error: 'A team cannot play itself' });
-  const id = uuidv4();
-  await db.prepare(`INSERT INTO matches (id, team1_id, team2_id, match_type, overs_limit, venue, match_date, status)
-              VALUES (?, ?, ?, ?, ?, ?, ?, 'upcoming')`)
-    .run(id, team1_id, team2_id, match_type || 'T20', overs_limit ?? 20, venue || null, match_date || null);
-  res.status(201).json(await db.prepare('SELECT * FROM matches WHERE id = ?').get(id));
-};
-
-exports.setToss = async (req, res) => {
-  const { toss_winner_id, toss_decision } = req.body;
-  const match = await db.prepare('SELECT * FROM matches WHERE id = ?').get(req.params.id);
-  if (!match) return res.status(404).json({ error: 'Match not found' });
-  if (![match.team1_id, match.team2_id].includes(toss_winner_id)) {
-    return res.status(400).json({ error: 'toss_winner_id must be one of the two playing teams' });
+function cleanId(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return null;
   }
-  if (!['bat', 'bowl'].includes(toss_decision)) return res.status(400).json({ error: 'toss_decision must be bat or bowl' });
 
-  await db.prepare('UPDATE matches SET toss_winner_id=?, toss_decision=?, status=? WHERE id=?').run(toss_winner_id, toss_decision, 'live', req.params.id);
+  return String(value);
+}
 
-  const battingFirstId = toss_decision === 'bat' ? toss_winner_id : (toss_winner_id === match.team1_id ? match.team2_id : match.team1_id);
-  const bowlingFirstId = battingFirstId === match.team1_id ? match.team2_id : match.team1_id;
+function sendError(
+  res,
+  error,
+  fallback = 'Something went wrong'
+) {
+  console.error(error);
 
-  const inningsId = uuidv4();
-  await db.prepare(`INSERT INTO innings (id, match_id, innings_number, batting_team_id, bowling_team_id)
-              VALUES (?, ?, 1, ?, ?)`).run(inningsId, match.id, battingFirstId, bowlingFirstId);
+  return res.status(500).json({
+    error:
+      error?.message ||
+      fallback
+  });
+}
 
-  res.json({ match: await db.prepare('SELECT * FROM matches WHERE id = ?').get(match.id), innings_id: inningsId });
+async function getMatchById(id) {
+  return db.prepare(`
+    SELECT *
+    FROM matches
+    WHERE id = ?
+  `).get(id);
+}
+
+async function teamExists(teamId) {
+  if (!teamId) {
+    return false;
+  }
+
+  const team = await db.prepare(`
+    SELECT id
+    FROM teams
+    WHERE id = ?
+  `).get(teamId);
+
+  return !!team;
+}
+
+/* =========================================================
+   LIST MATCHES
+========================================================= */
+
+exports.listMatches = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const matches =
+      await db.prepare(`
+        SELECT
+          m.*,
+
+          t1.name AS team1_name,
+          t1.short_name AS team1_short,
+
+          t2.name AS team2_name,
+          t2.short_name AS team2_short
+
+        FROM matches m
+
+        JOIN teams t1
+          ON t1.id = m.team1_id
+
+        JOIN teams t2
+          ON t2.id = m.team2_id
+
+        ORDER BY
+          m.created_at DESC
+      `).all();
+
+    return res.json(
+      matches || []
+    );
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to load matches'
+    );
+  }
 };
 
-/** Start the 2nd innings once the 1st has finished (innings-break status). */
-exports.startSecondInnings = async (req, res) => {
-  const match = await db.prepare('SELECT * FROM matches WHERE id = ?').get(req.params.id);
-  if (!match) return res.status(404).json({ error: 'Match not found' });
-  const inn1 = await db.prepare('SELECT * FROM innings WHERE match_id = ? AND innings_number = 1').get(match.id);
-  if (!inn1 || !inn1.is_completed) return res.status(400).json({ error: 'First innings has not finished yet' });
+/* =========================================================
+   CREATE MATCH
+========================================================= */
 
-  const inningsId = uuidv4();
-  await db.prepare(`INSERT INTO innings (id, match_id, innings_number, batting_team_id, bowling_team_id, target)
-              VALUES (?, ?, 2, ?, ?, ?)`)
-    .run(inningsId, match.id, inn1.bowling_team_id, inn1.batting_team_id, inn1.total_runs + 1);
-  await db.prepare('UPDATE matches SET status = ?, current_innings = 2 WHERE id = ?').run('live', match.id);
+exports.createMatch = async (
+  req,
+  res
+) => {
 
-  res.json({ innings_id: inningsId, target: inn1.total_runs + 1 });
+  try {
+
+    const {
+      team1_id,
+      team2_id,
+      match_type,
+      overs_limit,
+      venue,
+      match_date
+    } = req.body || {};
+
+    const team1 =
+      cleanId(team1_id);
+
+    const team2 =
+      cleanId(team2_id);
+
+    if (!team1 || !team2) {
+
+      return res.status(400).json({
+        error:
+          'team1_id and team2_id are required'
+      });
+    }
+
+    if (
+      team1 === team2
+    ) {
+
+      return res.status(400).json({
+        error:
+          'A team cannot play itself'
+      });
+    }
+
+    /*
+     * Validate both teams BEFORE INSERT.
+     *
+     * This prevents FOREIGN KEY constraint errors.
+     */
+    if (
+      !(await teamExists(team1))
+    ) {
+
+      return res.status(400).json({
+        error:
+          'Team 1 does not exist'
+      });
+    }
+
+    if (
+      !(await teamExists(team2))
+    ) {
+
+      return res.status(400).json({
+        error:
+          'Team 2 does not exist'
+      });
+    }
+
+    const overs =
+      overs_limit === undefined ||
+      overs_limit === null ||
+      overs_limit === ''
+        ? 20
+        : Number(overs_limit);
+
+    if (
+      !Number.isFinite(overs) ||
+      overs <= 0 ||
+      overs > 1000
+    ) {
+
+      return res.status(400).json({
+        error:
+          'overs_limit must be between 1 and 1000'
+      });
+    }
+
+    const id =
+      uuidv4();
+
+    await db.prepare(`
+      INSERT INTO matches (
+        id,
+        team1_id,
+        team2_id,
+        match_type,
+        overs_limit,
+        venue,
+        match_date,
+        status
+      )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, 'upcoming'
+      )
+    `).run(
+      id,
+      team1,
+      team2,
+      match_type ||
+        'T20',
+      overs,
+      venue ||
+        null,
+      match_date ||
+        null
+    );
+
+    const created =
+      await getMatchById(id);
+
+    return res
+      .status(201)
+      .json(created);
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to create match'
+    );
+  }
 };
 
-exports.getMatchDetail = async (req, res) => {
-  const match = await db.prepare(`
-    SELECT m.*, t1.name AS team1_name, t1.short_name AS team1_short, t1.logo_color AS team1_color,
-           t2.name AS team2_name, t2.short_name AS team2_short, t2.logo_color AS team2_color
-    FROM matches m
-    JOIN teams t1 ON t1.id = m.team1_id
-    JOIN teams t2 ON t2.id = m.team2_id
-    WHERE m.id = ?
-  `).get(req.params.id);
-  if (!match) return res.status(404).json({ error: 'Match not found' });
+/* =========================================================
+   SET TOSS
+========================================================= */
 
-  const inningsRows = await db.prepare('SELECT * FROM innings WHERE match_id = ? ORDER BY innings_number ASC').all(match.id);
-  const innings = await Promise.all(inningsRows.map(i => getScoreboard(i.id)));
-  const players = await db.prepare(`
-    SELECT * FROM players WHERE team_id IN (?, ?)
-  `).all(match.team1_id, match.team2_id);
+exports.setToss = async (
+  req,
+  res
+) => {
 
-  res.json({ match, innings, players });
+  try {
+
+    const matchId =
+      cleanId(
+        req.params.id
+      );
+
+    const {
+      toss_winner_id,
+      toss_decision
+    } = req.body || {};
+
+    const tossWinner =
+      cleanId(
+        toss_winner_id
+      );
+
+    const match =
+      await getMatchById(
+        matchId
+      );
+
+    if (!match) {
+
+      return res.status(404).json({
+        error:
+          'Match not found'
+      });
+    }
+
+    /*
+     * Do not allow changing toss after match
+     * has already progressed.
+     */
+    if (
+      match.status !== 'upcoming'
+    ) {
+
+      return res.status(400).json({
+        error:
+          'Toss can only be set before the match starts'
+      });
+    }
+
+    if (!tossWinner) {
+
+      return res.status(400).json({
+        error:
+          'toss_winner_id is required'
+      });
+    }
+
+    if (
+      ![
+        String(match.team1_id),
+        String(match.team2_id)
+      ].includes(
+        String(tossWinner)
+      )
+    ) {
+
+      return res.status(400).json({
+        error:
+          'toss_winner_id must be one of the two playing teams'
+      });
+    }
+
+    if (
+      ![
+        'bat',
+        'bowl'
+      ].includes(
+        toss_decision
+      )
+    ) {
+
+      return res.status(400).json({
+        error:
+          'toss_decision must be bat or bowl'
+      });
+    }
+
+    /*
+     * Make sure there is no existing innings.
+     */
+    const existingInnings =
+      await db.prepare(`
+        SELECT id
+        FROM innings
+        WHERE match_id = ?
+        LIMIT 1
+      `).get(matchId);
+
+    if (existingInnings) {
+
+      return res.status(400).json({
+        error:
+          'Match innings have already been created'
+      });
+    }
+
+    const battingFirstId =
+      toss_decision === 'bat'
+        ? tossWinner
+        : (
+            String(tossWinner) ===
+            String(match.team1_id)
+              ? match.team2_id
+              : match.team1_id
+          );
+
+    const bowlingFirstId =
+      String(battingFirstId) ===
+      String(match.team1_id)
+        ? match.team2_id
+        : match.team1_id;
+
+    const inningsId =
+      uuidv4();
+
+    /*
+     * Update match first.
+     */
+    await db.prepare(`
+      UPDATE matches
+      SET
+        toss_winner_id = ?,
+        toss_decision = ?,
+        status = ?,
+        current_innings = ?
+      WHERE id = ?
+    `).run(
+      tossWinner,
+      toss_decision,
+      'live',
+      1,
+      matchId
+    );
+
+    try {
+
+      /*
+       * Create first innings.
+       */
+      await db.prepare(`
+        INSERT INTO innings (
+          id,
+          match_id,
+          innings_number,
+          batting_team_id,
+          bowling_team_id
+        )
+        VALUES (
+          ?, ?, 1, ?, ?
+        )
+      `).run(
+        inningsId,
+        matchId,
+        battingFirstId,
+        bowlingFirstId
+      );
+
+    } catch (inningsError) {
+
+      /*
+       * Roll match back if innings creation fails.
+       */
+      try {
+
+        await db.prepare(`
+          UPDATE matches
+          SET
+            toss_winner_id = ?,
+            toss_decision = ?,
+            status = ?,
+            current_innings = ?
+          WHERE id = ?
+        `).run(
+          match.toss_winner_id,
+          match.toss_decision,
+          match.status,
+          match.current_innings,
+          matchId
+        );
+
+      } catch (rollbackError) {
+
+        console.error(
+          'CRITICAL: Failed to rollback toss:',
+          rollbackError
+        );
+      }
+
+      throw inningsError;
+    }
+
+    const updatedMatch =
+      await getMatchById(
+        matchId
+      );
+
+    return res.json({
+
+      match:
+        updatedMatch,
+
+      innings_id:
+        inningsId,
+
+      batting_first_id:
+        battingFirstId,
+
+      bowling_first_id:
+        bowlingFirstId
+    });
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to set toss'
+    );
+  }
 };
 
-exports.deleteMatch = async (req, res) => {
-  await db.prepare('DELETE FROM matches WHERE id = ?').run(req.params.id);
-  res.status(204).send();
+/* =========================================================
+   START SECOND INNINGS
+========================================================= */
+
+exports.startSecondInnings = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const matchId =
+      cleanId(
+        req.params.id
+      );
+
+    const match =
+      await getMatchById(
+        matchId
+      );
+
+    if (!match) {
+
+      return res.status(404).json({
+        error:
+          'Match not found'
+      });
+    }
+
+    /*
+     * Only innings-break should start
+     * the second innings.
+     */
+    if (
+      match.status !==
+      'innings-break'
+    ) {
+
+      return res.status(400).json({
+        error:
+          'Match is not ready for the second innings'
+      });
+    }
+
+    const inn1 =
+      await db.prepare(`
+        SELECT *
+        FROM innings
+        WHERE match_id = ?
+          AND innings_number = 1
+        LIMIT 1
+      `).get(matchId);
+
+    if (!inn1) {
+
+      return res.status(400).json({
+        error:
+          'First innings not found'
+      });
+    }
+
+    if (
+      Number(
+        inn1.is_completed
+      ) !== 1
+    ) {
+
+      return res.status(400).json({
+        error:
+          'First innings has not finished yet'
+      });
+    }
+
+    /*
+     * Prevent duplicate second innings.
+     */
+    const existingSecond =
+      await db.prepare(`
+        SELECT id
+        FROM innings
+        WHERE match_id = ?
+          AND innings_number = 2
+        LIMIT 1
+      `).get(matchId);
+
+    if (existingSecond) {
+
+      return res.status(400).json({
+        error:
+          'Second innings already exists'
+      });
+    }
+
+    const target =
+      Number(
+        inn1.total_runs || 0
+      ) + 1;
+
+    const inningsId =
+      uuidv4();
+
+    /*
+     * Team that batted first now bowls.
+     * Team that bowled first now bats.
+     */
+    const battingTeam =
+      inn1.bowling_team_id;
+
+    const bowlingTeam =
+      inn1.batting_team_id;
+
+    if (
+      !battingTeam ||
+      !bowlingTeam
+    ) {
+
+      return res.status(400).json({
+        error:
+          'First innings team information is incomplete'
+      });
+    }
+
+    /*
+     * Validate teams before INSERT.
+     */
+    if (
+      !(await teamExists(
+        battingTeam
+      ))
+    ) {
+
+      return res.status(400).json({
+        error:
+          'Second innings batting team does not exist'
+      });
+    }
+
+    if (
+      !(await teamExists(
+        bowlingTeam
+      ))
+    ) {
+
+      return res.status(400).json({
+        error:
+          'Second innings bowling team does not exist'
+      });
+    }
+
+    await db.prepare(`
+      INSERT INTO innings (
+        id,
+        match_id,
+        innings_number,
+        batting_team_id,
+        bowling_team_id,
+        target
+      )
+      VALUES (
+        ?, ?, 2, ?, ?, ?
+      )
+    `).run(
+      inningsId,
+      matchId,
+      battingTeam,
+      bowlingTeam,
+      target
+    );
+
+    try {
+
+      await db.prepare(`
+        UPDATE matches
+        SET
+          status = ?,
+          current_innings = ?
+        WHERE id = ?
+      `).run(
+        'live',
+        2,
+        matchId
+      );
+
+    } catch (matchUpdateError) {
+
+      /*
+       * Remove the second innings if the match
+       * update fails.
+       */
+      try {
+
+        await db.prepare(`
+          DELETE FROM innings
+          WHERE id = ?
+        `).run(
+          inningsId
+        );
+
+      } catch (rollbackError) {
+
+        console.error(
+          'CRITICAL: Failed to rollback second innings:',
+          rollbackError
+        );
+      }
+
+      throw matchUpdateError;
+    }
+
+    return res.json({
+
+      innings_id:
+        inningsId,
+
+      target,
+
+      batting_team_id:
+        battingTeam,
+
+      bowling_team_id:
+        bowlingTeam
+    });
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to start second innings'
+    );
+  }
+};
+
+/* =========================================================
+   GET MATCH DETAIL
+========================================================= */
+
+exports.getMatchDetail = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const matchId =
+      cleanId(
+        req.params.id
+      );
+
+    const match =
+      await db.prepare(`
+        SELECT
+          m.*,
+
+          t1.name AS team1_name,
+          t1.short_name AS team1_short,
+          t1.logo_color AS team1_color,
+
+          t2.name AS team2_name,
+          t2.short_name AS team2_short,
+          t2.logo_color AS team2_color
+
+        FROM matches m
+
+        JOIN teams t1
+          ON t1.id = m.team1_id
+
+        JOIN teams t2
+          ON t2.id = m.team2_id
+
+        WHERE m.id = ?
+      `).get(matchId);
+
+    if (!match) {
+
+      return res.status(404).json({
+        error:
+          'Match not found'
+      });
+    }
+
+    const inningsRows =
+      await db.prepare(`
+        SELECT *
+        FROM innings
+        WHERE match_id = ?
+        ORDER BY innings_number ASC
+      `).all(match.id);
+
+    /*
+     * Build scoreboards individually.
+     *
+     * One bad scoreboard should not crash
+     * the whole backend.
+     */
+    const innings =
+      [];
+
+    for (
+      const inningsRow
+      of inningsRows
+    ) {
+
+      try {
+
+        const scoreboard =
+          await getScoreboard(
+            inningsRow.id
+          );
+
+        innings.push(
+          scoreboard
+        );
+
+      } catch (scoreError) {
+
+        console.error(
+          `Failed to build scoreboard for innings ${inningsRow.id}:`,
+          scoreError
+        );
+
+        /*
+         * Return basic innings information
+         * instead of crashing the entire match page.
+         */
+        innings.push({
+
+          innings:
+            inningsRow,
+
+          error:
+            'Scoreboard temporarily unavailable'
+        });
+      }
+    }
+
+    const players =
+      await db.prepare(`
+        SELECT *
+        FROM players
+        WHERE team_id IN (?, ?)
+        ORDER BY name ASC
+      `).all(
+        match.team1_id,
+        match.team2_id
+      );
+
+    return res.json({
+
+      match,
+
+      innings:
+        innings || [],
+
+      players:
+        players || []
+    });
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to load match details'
+    );
+  }
+};
+
+/* =========================================================
+   DELETE MATCH
+========================================================= */
+
+exports.deleteMatch = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const matchId =
+      cleanId(
+        req.params.id
+      );
+
+    const match =
+      await getMatchById(
+        matchId
+      );
+
+    if (!match) {
+
+      return res.status(404).json({
+        error:
+          'Match not found'
+      });
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * A match may have innings, balls and other
+     * historical records.
+     *
+     * Hard deleting it can cause:
+     *
+     * SQLITE_CONSTRAINT:
+     * FOREIGN KEY constraint failed
+     *
+     * Therefore only allow hard delete for a match
+     * that has NO innings.
+     */
+    const inningsCount =
+      await db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM innings
+        WHERE match_id = ?
+      `).get(matchId);
+
+    const count =
+      Number(
+        inningsCount?.count || 0
+      );
+
+    if (count > 0) {
+
+      return res.status(409).json({
+
+        error:
+          'This match contains innings and historical scoring data, so it cannot be deleted.',
+
+        protected:
+          true,
+
+        innings_count:
+          count
+      });
+    }
+
+    /*
+     * Safe to delete because there are no innings.
+     */
+    await db.prepare(`
+      DELETE FROM matches
+      WHERE id = ?
+    `).run(matchId);
+
+    return res.status(204).send();
+
+  } catch (error) {
+
+    /*
+     * Even if a foreign-key error somehow happens,
+     * return JSON instead of crashing Node.
+     */
+    console.error(
+      'Delete match failed:',
+      error
+    );
+
+    if (
+      String(
+        error?.message || ''
+      ).toLowerCase().includes(
+        'foreign key'
+      )
+    ) {
+
+      return res.status(409).json({
+
+        error:
+          'This match is linked to historical data and cannot be deleted.',
+
+        protected:
+          true
+      });
+    }
+
+    return sendError(
+      res,
+      error,
+      'Failed to delete match'
+    );
+  }
 };
