@@ -27,22 +27,30 @@ if (process.env.CORS_ORIGIN) {
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests without an Origin header
-    // such as health checks/server-to-server requests.
+    // such as health checks and server-to-server requests.
     if (!origin) {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
     console.warn('⚠️ CORS blocked origin:', origin);
 
-    // Don't throw an error here.
-    // Simply deny the origin.
+    // Do not throw an exception.
+    // Just reject the origin safely.
     return callback(null, false);
   },
-  credentials: true
+
+  credentials: true,
+
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization'
+  ]
 };
 
 app.use(cors(corsOptions));
@@ -57,7 +65,15 @@ const io = new Server(server, {
     credentials: true,
     methods: ['GET', 'POST']
   },
-  transports: ['polling', 'websocket']
+
+  transports: ['polling', 'websocket'],
+
+  // Helps the client recover from temporary
+  // connection interruptions.
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true
+  }
 });
 
 app.set('io', io);
@@ -66,10 +82,12 @@ app.set('io', io);
    BODY PARSER
 ========================================================= */
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({
+  limit: '2mb'
+}));
 
 /* =========================================================
-   BASIC REQUEST LOG
+   REQUEST LOGGER
 ========================================================= */
 
 app.use((req, res, next) => {
@@ -95,7 +113,8 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     time: new Date().toISOString(),
     uptime: Math.round(process.uptime()),
-    database: 'connected'
+    server: 'running',
+    database: 'turso'
   });
 });
 
@@ -110,16 +129,22 @@ app.use('/api/innings', require('./routes/innings'));
 app.use('/api/records', require('./routes/records'));
 
 /* =========================================================
-   SOCKET.IO EVENTS
+   SOCKET.IO CONNECTION
 ========================================================= */
 
 io.on('connection', (socket) => {
   console.log(`🔌 Socket connected: ${socket.id}`);
 
+  /* -------------------------------------------------------
+     JOIN MATCH
+  ------------------------------------------------------- */
+
   socket.on('join-match', (matchId) => {
     try {
       if (!matchId) {
-        console.warn('⚠️ join-match called without matchId');
+        console.warn(
+          `⚠️ join-match called without matchId (${socket.id})`
+        );
         return;
       }
 
@@ -128,34 +153,54 @@ io.on('connection', (socket) => {
       socket.join(room);
 
       console.log(
-        `🏏 Socket ${socket.id} joined ${room}`
+        `🏏 ${socket.id} joined ${room}`
       );
     } catch (err) {
-      console.error('❌ join-match error:', err);
+      console.error(
+        '❌ join-match error:',
+        err
+      );
     }
   });
 
+  /* -------------------------------------------------------
+     LEAVE MATCH
+  ------------------------------------------------------- */
+
   socket.on('leave-match', (matchId) => {
     try {
-      if (!matchId) return;
+      if (!matchId) {
+        return;
+      }
 
       const room = `match-${String(matchId)}`;
 
       socket.leave(room);
 
       console.log(
-        `🚪 Socket ${socket.id} left ${room}`
+        `🚪 ${socket.id} left ${room}`
       );
     } catch (err) {
-      console.error('❌ leave-match error:', err);
+      console.error(
+        '❌ leave-match error:',
+        err
+      );
     }
   });
+
+  /* -------------------------------------------------------
+     DISCONNECT
+  ------------------------------------------------------- */
 
   socket.on('disconnect', (reason) => {
     console.log(
       `🔌 Socket disconnected: ${socket.id} - ${reason}`
     );
   });
+
+  /* -------------------------------------------------------
+     SOCKET ERROR
+  ------------------------------------------------------- */
 
   socket.on('error', (err) => {
     console.error(
@@ -181,7 +226,9 @@ if (fs.existsSync(frontendDist)) {
     `📦 Frontend found: ${frontendDist}`
   );
 
-  app.use(express.static(frontendDist));
+  app.use(
+    express.static(frontendDist)
+  );
 
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) {
@@ -191,7 +238,10 @@ if (fs.existsSync(frontendDist)) {
     }
 
     res.sendFile(
-      path.join(frontendDist, 'index.html')
+      path.join(
+        frontendDist,
+        'index.html'
+      )
     );
   });
 } else {
@@ -222,12 +272,32 @@ app.use((req, res) => {
 ========================================================= */
 
 app.use((err, req, res, next) => {
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.error('❌ EXPRESS ERROR');
-  console.error('URL:', req.method, req.originalUrl);
-  console.error('Message:', err.message);
-  console.error(err.stack);
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
+
+  console.error(
+    '❌ EXPRESS ERROR'
+  );
+
+  console.error(
+    'URL:',
+    req.method,
+    req.originalUrl
+  );
+
+  console.error(
+    'Message:',
+    err?.message
+  );
+
+  console.error(
+    err?.stack
+  );
+
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
 
   if (res.headersSent) {
     return next(err);
@@ -238,7 +308,7 @@ app.use((err, req, res, next) => {
     message:
       process.env.NODE_ENV === 'production'
         ? 'Something went wrong on the server.'
-        : err.message
+        : err?.message || 'Unknown server error'
   });
 });
 
@@ -247,43 +317,70 @@ app.use((err, req, res, next) => {
 ========================================================= */
 
 /*
- * Database/API functions can sometimes produce an
- * unhandled Promise rejection.
+ * An unhandled Promise rejection means some async
+ * operation failed without being caught.
  *
- * Log it so we can identify the actual problem instead
- * of losing the error information.
+ * We log it and allow Render to restart the service.
  */
 process.on('unhandledRejection', (reason) => {
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.error('❌ UNHANDLED PROMISE REJECTION');
-  console.error(reason);
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
+
+  console.error(
+    '❌ UNHANDLED PROMISE REJECTION'
+  );
+
+  console.error(
+    reason
+  );
+
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
+
+  /*
+   * Let Render restart the Node process.
+   */
+  process.exit(1);
 });
 
 /*
- * Log unexpected synchronous exceptions.
+ * A truly unexpected synchronous exception is fatal.
+ *
+ * Render will automatically restart the service after
+ * the process exits.
  */
 process.on('uncaughtException', (err) => {
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.error('❌ UNCAUGHT EXCEPTION');
-  console.error(err);
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
+
+  console.error(
+    '❌ UNCAUGHT EXCEPTION'
+  );
+
+  console.error(
+    err
+  );
+
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
 
   /*
-   * We deliberately don't call process.exit() here.
-   * This keeps the server alive long enough to expose
-   * the real error in Render logs.
-   *
-   * The actual source of the exception should still
-   * be fixed rather than ignored.
+   * Do NOT keep a corrupted Node process alive.
+   * Render will restart it automatically.
    */
+  process.exit(1);
 });
 
 /* =========================================================
-   START SERVER + TURSO SCHEMA
+   START SERVER
 ========================================================= */
 
 const PORT = process.env.PORT || 4000;
+
 const schemaPath = path.join(
   __dirname,
   'db',
@@ -292,9 +389,15 @@ const schemaPath = path.join(
 
 async function startServer() {
   try {
-    console.log('🔄 Initializing Turso database...');
+    console.log(
+      '🔄 Initializing Turso database...'
+    );
 
     const db = require('./db/database');
+
+    /* -----------------------------------------------------
+       CHECK SCHEMA
+    ----------------------------------------------------- */
 
     if (!fs.existsSync(schemaPath)) {
       throw new Error(
@@ -302,39 +405,79 @@ async function startServer() {
       );
     }
 
+    /* -----------------------------------------------------
+       LOAD SCHEMA
+    ----------------------------------------------------- */
+
     const schema = fs
-      .readFileSync(schemaPath, 'utf8')
+      .readFileSync(
+        schemaPath,
+        'utf8'
+      )
       .replace(
         /^\s*PRAGMA foreign_keys = ON;\s*/i,
         ''
       );
 
+    /* -----------------------------------------------------
+       INITIALIZE TURSO
+    ----------------------------------------------------- */
+
     await db.initSchema(schema);
 
-    console.log('✅ Turso database initialized');
+    console.log(
+      '✅ Turso database initialized'
+    );
+
+    /* -----------------------------------------------------
+       START SERVER
+    ----------------------------------------------------- */
 
     server.listen(PORT, () => {
       console.log(
         `🏏 Cricket Scoreboard API running on port ${PORT}`
       );
+
       console.log(
-        `🌐 Environment: ${process.env.NODE_ENV || 'production'}`
+        `🌐 Environment: ${
+          process.env.NODE_ENV || 'production'
+        }`
+      );
+
+      console.log(
+        `🔗 Port: ${PORT}`
       );
     });
 
   } catch (err) {
-    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.error('❌ FAILED TO START SERVER');
-    console.error(err);
-    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
+
+    console.error(
+      '❌ FAILED TO START SERVER'
+    );
+
+    console.error(
+      err
+    );
+
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
     /*
-     * A database/schema failure during startup means the
-     * application cannot safely operate, so exiting here
-     * allows Render to restart the service.
+     * Startup failure means the application cannot
+     * safely operate.
+     *
+     * Render will restart the service automatically.
      */
     process.exit(1);
   }
 }
+
+/* =========================================================
+   START
+========================================================= */
 
 startServer();
