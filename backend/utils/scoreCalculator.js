@@ -37,8 +37,25 @@ ERROR HANDLER
 
 function sendError(res, err, status = 400) {
   console.error(
-    '❌ Scoring controller error:',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  );
+
+  console.error(
+    '❌ SCORING CONTROLLER ERROR'
+  );
+
+  console.error(
+    'Message:',
     err?.message || err
+  );
+
+  console.error(
+    'Stack:',
+    err?.stack || 'No stack trace available'
+  );
+
+  console.error(
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   );
 
   if (!res) {
@@ -72,7 +89,10 @@ PLAYER VALIDATION
 ====================================================
 */
 
-async function validatePlayer(playerId, label) {
+async function validatePlayer(
+  playerId,
+  label
+) {
   if (!playerId) {
     throw new Error(
       `${label} is required`
@@ -98,9 +118,10 @@ async function validatePlayer(playerId, label) {
   }
 
   /*
-   * Explicitly inactive player.
+   * Explicitly inactive players
+   * are not allowed.
    *
-   * NULL is allowed for compatibility
+   * NULL active values remain compatible
    * with older player records.
    */
   if (
@@ -123,6 +144,10 @@ GET INNINGS
 */
 
 async function getInnings(inningsId) {
+  if (!inningsId) {
+    return null;
+  }
+
   return await db
     .prepare(`
       SELECT *
@@ -138,7 +163,10 @@ BROADCAST SCORE UPDATE
 ====================================================
 */
 
-async function broadcast(req, matchId) {
+async function broadcast(
+  req,
+  matchId
+) {
   try {
     if (!req || !matchId) {
       return;
@@ -151,6 +179,9 @@ async function broadcast(req, matchId) {
         : null;
 
     if (!io) {
+      console.warn(
+        '⚠️ Socket.IO instance not available'
+      );
       return;
     }
 
@@ -169,6 +200,14 @@ async function broadcast(req, matchId) {
     for (
       const row of inningsRows
     ) {
+      if (!row || !row.id) {
+        console.warn(
+          '⚠️ Invalid innings row during broadcast:',
+          row
+        );
+        continue;
+      }
+
       try {
         const scoreboard =
           await calc.getScoreboard(
@@ -182,7 +221,7 @@ async function broadcast(req, matchId) {
         }
       } catch (err) {
         console.error(
-          `❌ Failed to build scoreboard for innings ${row.id}:`,
+          `❌ Scoreboard broadcast failed for innings ${row.id}:`,
           err?.message || err
         );
       }
@@ -198,6 +237,9 @@ async function broadcast(req, matchId) {
         .get(matchId);
 
     if (!match) {
+      console.warn(
+        `⚠️ Match ${matchId} not found during broadcast`
+      );
       return;
     }
 
@@ -215,6 +257,10 @@ async function broadcast(req, matchId) {
     console.error(
       '❌ Broadcast failed:',
       err?.message || err
+    );
+
+    console.error(
+      err?.stack || ''
     );
   }
 }
@@ -385,17 +431,8 @@ exports.setBatsmen = async (
         inningsId
       );
 
-    /*
-    Send response.
-    */
-    res.json(updated);
-
-    /*
-    Broadcast after response.
-    */
-    void broadcast(
-      req,
-      innings.match_id
+    return res.json(
+      updated
     );
 
   } catch (err) {
@@ -460,10 +497,6 @@ exports.swapBatsmen = async (
       });
     }
 
-    /*
-    Make sure both existing players
-    are valid before swapping.
-    */
     await validatePlayer(
       innings.striker_id,
       'Striker'
@@ -493,11 +526,8 @@ exports.swapBatsmen = async (
         inningsId
       );
 
-    res.json(updated);
-
-    void broadcast(
-      req,
-      innings.match_id
+    return res.json(
+      updated
     );
 
   } catch (err) {
@@ -591,11 +621,8 @@ exports.swapStrike = async (
         inningsId
       );
 
-    res.json(updated);
-
-    void broadcast(
-      req,
-      innings.match_id
+    return res.json(
+      updated
     );
 
   } catch (err) {
@@ -667,16 +694,13 @@ exports.setBowler = async (
       });
     }
 
-    /*
-    Validate bowler.
-    */
     await validatePlayer(
       bowlerId,
       'Bowler'
     );
 
     /*
-    Save bowler.
+    Save current bowler.
     */
     await db
       .prepare(`
@@ -694,11 +718,8 @@ exports.setBowler = async (
         inningsId
       );
 
-    res.json(updated);
-
-    void broadcast(
-      req,
-      innings.match_id
+    return res.json(
+      updated
     );
 
   } catch (err) {
@@ -734,7 +755,18 @@ exports.recordBall = async (
       req.body || {};
 
     /*
-    scoreCalculator is the main
+    Log the request when debugging.
+    */
+    console.log(
+      '🏏 Recording ball:',
+      {
+        inningsId,
+        body
+      }
+    );
+
+    /*
+    scoreCalculator is the authoritative
     scoring engine.
     */
     const result =
@@ -744,12 +776,19 @@ exports.recordBall = async (
       );
 
     /*
-    Return scoring result.
+    Log successful result.
+    */
+    console.log(
+      '✅ Ball recorded successfully'
+    );
+
+    /*
+    Send response first.
     */
     res.json(result);
 
     /*
-    Find match and broadcast.
+    Broadcast after response.
     */
     let matchId =
       result?.innings?.match_id;
@@ -843,4 +882,3 @@ EXPORT HELPERS
 
 exports.broadcast = broadcast;
 exports.getInnings = getInnings;
-
