@@ -1,3 +1,4 @@
+
 import axios from 'axios';
 
 /* =========================================================
@@ -8,26 +9,7 @@ const API_URL = (
   import.meta.env.VITE_API_URL || '/api'
 ).replace(/\/$/, '');
 
-/*
- * How many times a failed request should be retried.
- *
- * Example:
- * Attempt 1 → fails
- * Wait 1 second
- * Attempt 2 → fails
- * Wait 2 seconds
- * Attempt 3 → fails
- * Wait 4 seconds
- * Attempt 4 → final attempt
- */
 const MAX_RETRIES = 3;
-
-/*
- * Maximum time one request is allowed to wait.
- *
- * Render free services can sometimes take a little time
- * to wake up, so 30 seconds is used here.
- */
 const REQUEST_TIMEOUT = 30000;
 
 /* =========================================================
@@ -44,7 +26,7 @@ const api = axios.create({
 });
 
 /* =========================================================
-   RETRY HELPER
+   SLEEP
 ========================================================= */
 
 function sleep(ms) {
@@ -53,40 +35,16 @@ function sleep(ms) {
   });
 }
 
-/*
- * Decide whether a failed request should be retried.
- *
- * We retry:
- * - Network errors
- * - 408 Request Timeout
- * - 429 Too Many Requests
- * - 500 Internal Server Error
- * - 502 Bad Gateway
- * - 503 Service Unavailable
- * - 504 Gateway Timeout
- *
- * We DO NOT retry normal client errors such as:
- * - 400
- * - 401
- * - 403
- * - 404
- * - 409
- *
- * Those usually indicate a real application/input problem.
- */
+/* =========================================================
+   RETRY CHECK
+========================================================= */
+
 function shouldRetry(error) {
   if (!error) {
     return false;
   }
 
-  /*
-   * No response usually means:
-   * - network problem
-   * - Render sleeping/unavailable
-   * - connection failed
-   * - CORS/network interruption
-   * - timeout
-   */
+  // Network error / timeout / server unavailable
   if (!error.response) {
     return true;
   }
@@ -104,7 +62,7 @@ function shouldRetry(error) {
 }
 
 /* =========================================================
-   REQUEST FUNCTION WITH AUTOMATIC RETRY
+   REQUEST WITH RETRY
 ========================================================= */
 
 async function requestWithRetry(config) {
@@ -116,47 +74,28 @@ async function requestWithRetry(config) {
     attempt++
   ) {
     try {
-      /*
-       * If this is a retry, show useful information
-       * in the browser console.
-       */
       if (attempt > 0) {
         console.log(
-          `🔄 API retry ${attempt}/${MAX_RETRIES}: ${config.method?.toUpperCase() || 'GET'} ${config.url}`
+          `🔄 API retry ${attempt}/${MAX_RETRIES}: ` +
+          `${config.method?.toUpperCase() || 'GET'} ${config.url}`
         );
       }
 
       const response = await api.request(config);
 
-      /*
-       * Successful response.
-       */
       return response;
 
     } catch (error) {
       lastError = error;
 
-      /*
-       * Don't retry errors that should not be retried.
-       */
       if (!shouldRetry(error)) {
         throw error;
       }
 
-      /*
-       * If this was the final attempt, stop.
-       */
       if (attempt >= MAX_RETRIES) {
         break;
       }
 
-      /*
-       * Exponential backoff:
-       *
-       * Retry 1 → 1 second
-       * Retry 2 → 2 seconds
-       * Retry 3 → 4 seconds
-       */
       const delay = Math.pow(2, attempt) * 1000;
 
       console.warn(
@@ -172,21 +111,14 @@ async function requestWithRetry(config) {
     }
   }
 
-  /*
-   * All retries failed.
-   */
   throw lastError;
 }
 
 /* =========================================================
-   FRIENDLY ERROR HELPER
+   FRIENDLY ERROR MESSAGE
 ========================================================= */
 
 export function getApiErrorMessage(error) {
-  /*
-   * No response means the browser could not receive
-   * a proper response from the backend.
-   */
   if (!error?.response) {
     return 'Unable to connect to the server. Please try again.';
   }
@@ -292,7 +224,9 @@ export const Players = {
     requestWithRetry({
       method: 'GET',
       url: '/players',
-      params: team_id ? { team_id } : undefined
+      params: team_id
+        ? { team_id }
+        : undefined
     }).then(getData),
 
   listAll: () =>
@@ -342,7 +276,7 @@ export const Matches = {
   get: (id) =>
     requestWithRetry({
       method: 'GET',
-      url: `/matches/${id`
+      url: `/matches/${id}`
     }).then(getData),
 
   create: (data) =>
@@ -390,10 +324,16 @@ export const Innings = {
       data
     }).then(getData),
 
-  swapStrike: (id) =>
+  swapBatsmen: (id) =>
     requestWithRetry({
       method: 'POST',
       url: `/innings/${id}/swap-batsmen`
+    }).then(getData),
+
+  swapStrike: (id) =>
+    requestWithRetry({
+      method: 'POST',
+      url: `/innings/${id}/swap-strike`
     }).then(getData),
 
   setBowler: (id, data) =>
@@ -446,3 +386,4 @@ export const Health = {
 ========================================================= */
 
 export default api;
+
