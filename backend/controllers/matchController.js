@@ -147,9 +147,7 @@ exports.createMatch = async (
     }
 
     /*
-     * Validate both teams BEFORE INSERT.
-     *
-     * This prevents FOREIGN KEY constraint errors.
+     * Validate both teams before INSERT.
      */
     if (
       !(await teamExists(team1))
@@ -277,8 +275,8 @@ exports.setToss = async (
     }
 
     /*
-     * Do not allow changing toss after match
-     * has already progressed.
+     * Do not allow changing toss after
+     * match has already progressed.
      */
     if (
       match.status !== 'upcoming'
@@ -658,8 +656,8 @@ exports.startSecondInnings = async (
     } catch (matchUpdateError) {
 
       /*
-       * Remove the second innings if the match
-       * update fails.
+       * Remove the second innings if the
+       * match update fails.
        */
       try {
 
@@ -765,7 +763,7 @@ exports.getMatchDetail = async (
      * Build scoreboards individually.
      *
      * One bad scoreboard should not crash
-     * the whole backend.
+     * the whole match page.
      */
     const innings =
       [];
@@ -856,6 +854,20 @@ exports.deleteMatch = async (
         req.params.id
       );
 
+    /*
+     * Validate match ID.
+     */
+    if (!matchId) {
+
+      return res.status(400).json({
+        error:
+          'Match ID is required'
+      });
+    }
+
+    /*
+     * Check whether match exists.
+     */
     const match =
       await getMatchById(
         matchId
@@ -870,79 +882,122 @@ exports.deleteMatch = async (
     }
 
     /*
-     * IMPORTANT:
+     * Get all innings for this match.
      *
-     * A match may have innings, balls and other
-     * historical records.
-     *
-     * Hard deleting it can cause:
-     *
-     * SQLITE_CONSTRAINT:
-     * FOREIGN KEY constraint failed
-     *
-     * Therefore only allow hard delete for a match
-     * that has NO innings.
+     * We need their IDs because balls reference
+     * innings through innings_id.
      */
-    const inningsCount =
+    const inningsRows =
       await db.prepare(`
-        SELECT COUNT(*) AS count
+        SELECT id
         FROM innings
         WHERE match_id = ?
-      `).get(matchId);
+        ORDER BY innings_number DESC
+      `).all(matchId);
 
-    const count =
-      Number(
-        inningsCount?.count || 0
+    const inningsList =
+      inningsRows || [];
+
+    /*
+     * =====================================================
+     * STEP 1
+     * Delete all balls belonging to each innings.
+     * =====================================================
+     *
+     * This MUST happen before deleting innings because
+     * balls reference innings.
+     */
+    for (
+      const inningsRow
+      of inningsList
+    ) {
+
+      if (!inningsRow?.id) {
+        continue;
+      }
+
+      await db.prepare(`
+        DELETE FROM balls
+        WHERE innings_id = ?
+      `).run(
+        inningsRow.id
       );
-
-    if (count > 0) {
-
-      return res.status(409).json({
-
-        error:
-          'This match contains innings and historical scoring data, so it cannot be deleted.',
-
-        protected:
-          true,
-
-        innings_count:
-          count
-      });
     }
 
     /*
-     * Safe to delete because there are no innings.
+     * =====================================================
+     * STEP 2
+     * Delete all innings belonging to the match.
+     * =====================================================
+     */
+    await db.prepare(`
+      DELETE FROM innings
+      WHERE match_id = ?
+    `).run(
+      matchId
+    );
+
+    /*
+     * =====================================================
+     * STEP 3
+     * Delete the match itself.
+     * =====================================================
      */
     await db.prepare(`
       DELETE FROM matches
       WHERE id = ?
-    `).run(matchId);
+    `).run(
+      matchId
+    );
 
-    return res.status(204).send();
+    console.log(
+      `🗑️ Match deleted successfully: ${matchId}`
+    );
+
+    return res.status(200).json({
+
+      success:
+        true,
+
+      message:
+        'Match and all scoring data were deleted successfully.',
+
+      match_id:
+        matchId,
+
+      innings_deleted:
+        inningsList.length
+    });
 
   } catch (error) {
 
-    /*
-     * Even if a foreign-key error somehow happens,
-     * return JSON instead of crashing Node.
-     */
     console.error(
-      'Delete match failed:',
+      '❌ Delete match failed:',
       error
     );
 
-    if (
+    const message =
       String(
         error?.message || ''
-      ).toLowerCase().includes(
+      ).toLowerCase();
+
+    /*
+     * Handle foreign-key / constraint errors
+     * without crashing the server.
+     */
+    if (
+      message.includes(
         'foreign key'
+      ) ||
+      message.includes(
+        'constraint'
       )
     ) {
 
       return res.status(409).json({
 
         error:
-          'This match is linked to historical data and cannot be deleted.',
+          'This match is still linked to other data and could not be deleted.',
 
         protected:
           true
