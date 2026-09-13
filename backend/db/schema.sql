@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS innings (
 --
 -- SOURCE OF TRUTH FOR SCORING.
 --
--- 1,000,000+ rows are expected.
+-- Designed for 1,000,000+ rows.
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS balls (
@@ -121,234 +121,173 @@ CREATE TABLE IF NOT EXISTS balls (
 -- PERFORMANCE INDEXES
 -- ============================================================
 
--- ------------------------------------------------------------
+-- ============================================================
 -- PLAYERS
--- ------------------------------------------------------------
+-- ============================================================
 
-/*
- * Existing:
- * players → team
- */
 CREATE INDEX IF NOT EXISTS idx_players_team
 ON players(team_id);
 
-/*
- * Very common query:
- *
- * WHERE team_id = ? AND active = 1
- */
 CREATE INDEX IF NOT EXISTS idx_players_team_active
 ON players(team_id, active);
 
-/*
- * Useful when searching players by name.
- */
 CREATE INDEX IF NOT EXISTS idx_players_name
 ON players(name);
 
--- ------------------------------------------------------------
+-- ============================================================
 -- MATCHES
--- ------------------------------------------------------------
+-- ============================================================
 
-/*
- * Match list ordered by newest date.
- */
 CREATE INDEX IF NOT EXISTS idx_matches_date
 ON matches(match_date DESC);
 
-/*
- * Quickly find live matches.
- */
 CREATE INDEX IF NOT EXISTS idx_matches_status
 ON matches(status);
 
-/*
- * Very useful for:
- *
- * WHERE status = 'live'
- * ORDER BY match_date DESC
- */
 CREATE INDEX IF NOT EXISTS idx_matches_status_date
 ON matches(status, match_date DESC);
 
-/*
- * Find matches involving a team.
- */
 CREATE INDEX IF NOT EXISTS idx_matches_team1
 ON matches(team1_id);
 
 CREATE INDEX IF NOT EXISTS idx_matches_team2
 ON matches(team2_id);
 
-/*
- * Useful for winner statistics.
- */
 CREATE INDEX IF NOT EXISTS idx_matches_winner
 ON matches(winner_id);
 
--- ------------------------------------------------------------
+-- ============================================================
 -- INNINGS
--- ------------------------------------------------------------
+-- ============================================================
 
-/*
- * Existing:
- * innings → match
- */
 CREATE INDEX IF NOT EXISTS idx_innings_match
 ON innings(match_id);
 
-/*
- * Quickly retrieve innings in correct order.
- *
- * Example:
- * Match → innings 1 → innings 2
- */
 CREATE INDEX IF NOT EXISTS idx_innings_match_number
 ON innings(match_id, innings_number);
 
-/*
- * Useful for team-based statistics.
- */
 CREATE INDEX IF NOT EXISTS idx_innings_batting_team
 ON innings(batting_team_id);
 
 CREATE INDEX IF NOT EXISTS idx_innings_bowling_team
 ON innings(bowling_team_id);
 
-/*
- * Quickly find unfinished innings.
- */
 CREATE INDEX IF NOT EXISTS idx_innings_completed
 ON innings(is_completed);
 
--- ------------------------------------------------------------
+-- ============================================================
 -- BALLS
--- ------------------------------------------------------------
+-- ============================================================
 
-/*
- * Existing basic index.
- */
 CREATE INDEX IF NOT EXISTS idx_balls_innings
 ON balls(innings_id);
 
-/*
- * CRITICAL INDEX.
- *
- * Used when reconstructing a scorecard or
- * reading balls in chronological order.
- *
- * This is one of the most important indexes
- * for 1,000,000+ balls.
- */
+-- IMPORTANT:
+-- This is a NORMAL index, NOT UNIQUE.
+--
+-- Existing Turso data may already contain duplicate
+-- ball_sequence values. A UNIQUE index would prevent
+-- the production server from starting.
+--
+-- We can clean duplicate historical records later and
+-- add a UNIQUE constraint safely after verification.
+
 CREATE INDEX IF NOT EXISTS idx_balls_innings_sequence
 ON balls(innings_id, ball_sequence);
 
-/*
- * Useful for current-over queries.
- */
 CREATE INDEX IF NOT EXISTS idx_balls_innings_over
 ON balls(innings_id, over_number);
 
-/*
- * Used when displaying the current over
- * in ball order.
- */
 CREATE INDEX IF NOT EXISTS idx_balls_innings_over_ball
 ON balls(innings_id, over_number, ball_sequence);
 
-/*
- * Batting statistics.
- *
- * Example:
- * WHERE batsman_id = ?
- */
+-- ============================================================
+-- BATTING STATISTICS
+-- ============================================================
+
 CREATE INDEX IF NOT EXISTS idx_balls_batsman
 ON balls(batsman_id);
 
-/*
- * Bowling statistics.
- *
- * Example:
- * WHERE bowler_id = ?
- */
-CREATE INDEX IF NOT EXISTS idx_balls_bowler
-ON balls(bowler_id);
-
-/*
- * Dismissal statistics.
- */
-CREATE INDEX IF NOT EXISTS idx_balls_dismissed
-ON balls(dismissed_id);
-
-/*
- * Fielder statistics.
- */
-CREATE INDEX IF NOT EXISTS idx_balls_fielder
-ON balls(fielder_id);
-
-/*
- * Useful for wicket-related queries.
- */
-CREATE INDEX IF NOT EXISTS idx_balls_wicket
-ON balls(is_wicket);
-
-/*
- * Useful for extras/statistics.
- */
-CREATE INDEX IF NOT EXISTS idx_balls_extra_type
-ON balls(extra_type);
-
--- ============================================================
--- COMPOSITE STATISTICS INDEXES
--- ============================================================
-
-/*
- * Quickly retrieve all balls for a batsman
- * in chronological order.
- */
 CREATE INDEX IF NOT EXISTS idx_balls_batsman_sequence
 ON balls(batsman_id, ball_sequence);
 
-/*
- * Quickly retrieve all balls for a bowler
- * in chronological order.
- */
+-- ============================================================
+-- BOWLING STATISTICS
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_bowler
+ON balls(bowler_id);
+
 CREATE INDEX IF NOT EXISTS idx_balls_bowler_sequence
 ON balls(bowler_id, ball_sequence);
 
-/*
- * Quickly find wickets taken by a bowler.
- */
 CREATE INDEX IF NOT EXISTS idx_balls_bowler_wicket
 ON balls(bowler_id, is_wicket);
 
 -- ============================================================
--- DATA-INTEGRITY INDEXES
+-- DISMISSALS / FIELDING
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_dismissed
+ON balls(dismissed_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_fielder
+ON balls(fielder_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_wicket
+ON balls(is_wicket);
+
+-- ============================================================
+-- EXTRAS
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_extra_type
+ON balls(extra_type);
+
+-- ============================================================
+-- DATA INTEGRITY
 -- ============================================================
 
 /*
- * A match should normally contain one innings 1,
- * one innings 2, etc.
+ * A match should normally have:
  *
- * This prevents accidental duplicate innings numbers
- * for the same match.
+ * innings 1
+ * innings 2
+ * innings 3 ...
+ *
+ * This prevents duplicate innings numbers for a match.
+ *
+ * We keep this constraint because it is independent
+ * of the duplicate ball-sequence problem.
  */
+
 CREATE UNIQUE INDEX IF NOT EXISTS
 idx_innings_match_number_unique
 ON innings(match_id, innings_number);
 
-/*
- * Every ball sequence number should be unique
- * within one innings.
- *
- * This is extremely important for preventing
- * duplicate ball records.
- */
-CREATE UNIQUE INDEX IF NOT EXISTS
-idx_balls_innings_sequence_unique
-ON balls(innings_id, ball_sequence);
+-- ============================================================
+-- IMPORTANT
+-- ============================================================
+--
+-- DO NOT create:
+--
+-- CREATE UNIQUE INDEX ...
+-- ON balls(innings_id, ball_sequence);
+--
+-- Your existing production database contains duplicate
+-- ball sequence values, so that index caused Render startup
+-- to fail.
+--
+-- We will investigate and clean those records separately.
+--
+-- The normal index above still provides fast queries for:
+--
+--   WHERE innings_id = ?
+--   ORDER BY ball_sequence
+--
+-- and is suitable for 1,000,000+ ball records.
+--
+-- ============================================================
 
--- ============================================================
 -- END OF SCHEMA
--- ============================================================
 
