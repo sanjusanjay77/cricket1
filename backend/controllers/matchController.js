@@ -1,3 +1,4 @@
+```js
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { getScoreboard } = require('../utils/scoreCalculator');
@@ -66,16 +67,13 @@ async function sendLiveMatchNotification(
   try {
 
     /*
-     * Socket.IO instance is stored in server.js
-     * using:
+     * Socket.IO instance is stored in server.js:
      *
      * app.set('io', io)
      */
-    const io =
-      req.app.get('io');
+    const io = req.app.get('io');
 
     if (!io) {
-
       console.warn(
         '⚠️ Socket.IO instance not available. Notification skipped.'
       );
@@ -86,24 +84,22 @@ async function sendLiveMatchNotification(
     /*
      * Get match + team names.
      */
-    const match =
-      await db.prepare(`
-        SELECT
-          m.id,
-          m.team1_id,
-          m.team2_id,
-          t1.name AS team1_name,
-          t2.name AS team2_name
-        FROM matches m
-        JOIN teams t1
-          ON t1.id = m.team1_id
-        JOIN teams t2
-          ON t2.id = m.team2_id
-        WHERE m.id = ?
-      `).get(matchId);
+    const match = await db.prepare(`
+      SELECT
+        m.id,
+        m.team1_id,
+        m.team2_id,
+        t1.name AS team1_name,
+        t2.name AS team2_name
+      FROM matches m
+      JOIN teams t1
+        ON t1.id = m.team1_id
+      JOIN teams t2
+        ON t2.id = m.team2_id
+      WHERE m.id = ?
+    `).get(matchId);
 
     if (!match) {
-
       console.warn(
         `⚠️ Match ${matchId} not found while sending notification.`
       );
@@ -114,24 +110,19 @@ async function sendLiveMatchNotification(
     /*
      * Get all users who enabled notifications.
      */
-    const users =
-      await db.prepare(`
-        SELECT
-          id,
-          name,
-          email,
-          phone
-        FROM notification_users
-        WHERE notifications_enabled = 1
-      `).all();
+    const users = await db.prepare(`
+      SELECT
+        id,
+        name,
+        email,
+        phone
+      FROM notification_users
+      WHERE notifications_enabled = 1
+    `).all();
 
-    const registeredUsers =
-      users || [];
+    const registeredUsers = users || [];
 
-    if (
-      registeredUsers.length === 0
-    ) {
-
+    if (registeredUsers.length === 0) {
       console.log(
         '🔔 No enabled notification users found.'
       );
@@ -139,10 +130,11 @@ async function sendLiveMatchNotification(
       return;
     }
 
+    /*
+     * Notification payload.
+     */
     const payload = {
-
-      matchId:
-        String(match.id),
+      matchId: String(match.id),
 
       title:
         '🏏 GCC Cricket - Match Live',
@@ -161,33 +153,56 @@ async function sendLiveMatchNotification(
     let sentCount = 0;
 
     /*
-     * Send notification to each registered
-     * user's Socket.IO room.
+     * IMPORTANT:
      *
-     * Room format:
+     * server.js joins users to:
      *
-     * user-USER_ID
+     * notification-user-USER_ID
+     *
+     * Therefore the notification MUST be
+     * emitted to exactly the same room.
      */
-    for (
-      const user
-      of registeredUsers
-    ) {
+    for (const user of registeredUsers) {
 
       if (!user?.id) {
         continue;
       }
 
       const room =
-        `user-${String(user.id)}`;
+        `notification-user-${String(user.id)}`;
 
-      io
-        .to(room)
-        .emit(
-          'match-started',
-          payload
-        );
+      /*
+       * Check how many sockets are currently
+       * connected to this notification room.
+       */
+      const roomSockets =
+        io.sockets.adapter.rooms.get(room);
+
+      const connectedCount =
+        roomSockets
+          ? roomSockets.size
+          : 0;
+
+      console.log(
+        `🔔 Notification room ${room}: ${connectedCount} connected socket(s)`
+      );
+
+      /*
+       * Send match-started event.
+       *
+       * NotificationRegistration.jsx listens
+       * for this exact event.
+       */
+      io.to(room).emit(
+        'match-started',
+        payload
+      );
 
       sentCount++;
+
+      console.log(
+        `🔔 Sent live-match notification to ${room}`
+      );
     }
 
     console.log(
@@ -605,8 +620,8 @@ exports.setToss = async (
      *
      * The match is now officially live.
      *
-     * Notification errors are internally handled and
-     * will NOT break this API request.
+     * Notification errors are internally handled
+     * and will NOT break this API request.
      */
     await sendLiveMatchNotification(
       req,
@@ -1083,9 +1098,6 @@ exports.deleteMatch = async (
      * STEP 1
      * Delete all balls belonging to each innings.
      * =====================================================
-     *
-     * This MUST happen before deleting innings because
-     * balls reference innings.
      */
     for (
       const inningsRow
@@ -1191,3 +1203,28 @@ exports.deleteMatch = async (
     );
   }
 };
+```
+
+Now do **only these steps**:
+
+1. Replace the contents of `backend/controllers/matchController.js`.
+2. Save the file.
+3. Deploy the backend to Render.
+4. Open GCC Cricket and register for notifications again if necessary.
+5. Start a new match and set the toss.
+
+In Render logs, you should see:
+
+```text
+🔔 Notification room notification-user-XXXXXXXX: 1 connected socket(s)
+🔔 Sent live-match notification to notification-user-XXXXXXXX
+🔔 Live match notification emitted to 1 registered user room(s).
+```
+
+If it says:
+
+```text
+0 connected socket(s)
+```
+
+then the next problem is the frontend Socket.IO connection/registration, and we'll fix that next.
