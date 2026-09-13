@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -26,8 +27,203 @@ if (process.env.CORS_ORIGIN) {
   allowedOrigins.push(process.env.CORS_ORIGIN);
 }
 
-/* Remove duplicate origins */
 const uniqueOrigins = [...new Set(allowedOrigins)];
+
+/* =========================================================
+   SECURITY CONFIGURATION
+========================================================= */
+
+/*
+ * Maximum JSON request size.
+ *
+ * Your cricket scorer does not need multi-megabyte
+ * request bodies.
+ */
+const JSON_LIMIT = '256kb';
+
+/*
+ * Basic in-memory rate limiter.
+ *
+ * This protects the Node.js process from excessive
+ * requests from the same IP.
+ *
+ * IMPORTANT:
+ * This is NOT a replacement for Render/Cloudflare
+ * DDoS protection.
+ */
+const rateLimitStore = new Map();
+
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX = 120;          // 120 requests/min/IP
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+
+  if (forwarded) {
+    return String(forwarded)
+      .split(',')[0]
+      .trim();
+  }
+
+  return (
+    req.ip ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  );
+}
+
+function rateLimit(req, res, next) {
+  try {
+    const ip = getClientIp(req);
+    const now = Date.now();
+
+    let record = rateLimitStore.get(ip);
+
+    if (!record || now - record.start > RATE_LIMIT_WINDOW) {
+      record = {
+        start: now,
+        count: 0
+      };
+    }
+
+    record.count += 1;
+
+    rateLimitStore.set(ip, record);
+
+    /*
+     * Cleanup old records periodically.
+     */
+    if (rateLimitStore.size > 5000) {
+      for (const [key, value] of rateLimitStore.entries()) {
+        if (now - value.start > RATE_LIMIT_WINDOW) {
+          rateLimitStore.delete(key);
+        }
+      }
+    }
+
+    if (record.count > RATE_LIMIT_MAX) {
+      console.warn(
+        `🚨 Rate limit exceeded: ${ip}`
+      );
+
+      return res.status(429).json({
+        error: 'Too many requests. Please try again later.'
+      });
+    }
+
+    return next();
+  } catch (err) {
+    console.error(
+      '❌ Rate limiter error:',
+      err
+    );
+
+    /*
+     * Never crash the server because of the
+     * security middleware.
+     */
+    return next();
+  }
+}
+
+/* =========================================================
+   BASIC SECURITY HEADERS
+========================================================= */
+
+app.disable('x-powered-by');
+
+/*
+ * Trust Render's reverse proxy.
+ *
+ * This allows req.ip to correctly use the forwarded
+ * client IP address.
+ */
+app.set('trust proxy', 1);
+
+app.use((req, res, next) => {
+  /*
+   * Prevent MIME sniffing.
+   */
+  res.setHeader(
+    'X-Content-Type-Options',
+    'nosniff'
+  );
+
+  /*
+   * Prevent the page from being embedded in an iframe
+   * by another site.
+   */
+  res.setHeader(
+    'X-Frame-Options',
+    'DENY'
+  );
+
+  /*
+   * Prevent browsers from sending the full URL as
+   * referrer information to other origins.
+   */
+  res.setHeader(
+    'Referrer-Policy',
+    'strict-origin-when-cross-origin'
+  );
+
+  /*
+   * Disable browser features that your cricket API
+   * does not need.
+   */
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=()'
+  );
+
+  /*
+   * Prevent browsers from attempting to guess
+   * different content types.
+   */
+  res.setHeader(
+    'X-XSS-Protection',
+    '0'
+  );
+
+  /*
+   * Basic Content Security Policy.
+   *
+   * This mainly applies when Express serves the
+   * frontend itself.
+   *
+   * Netlify may provide its own frontend headers.
+   */
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data: https:",
+      "connect-src 'self' https://gcc-cricket.netlify.app https://cricket1-mvsi.onrender.com wss://cricket1-mvsi.onrender.com",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'"
+    ].join('; ')
+  );
+
+  /*
+   * HTTPS-only protection.
+   *
+   * Only enable this in production.
+   */
+  if (
+    process.env.NODE_ENV === 'production'
+  ) {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains'
+    );
+  }
+
+  next();
+});
 
 /* =========================================================
    CORS
@@ -36,12 +232,13 @@ const uniqueOrigins = [...new Set(allowedOrigins)];
 const corsOptions = {
   origin: function (origin, callback) {
     /*
-     * Requests without Origin are allowed.
-     *
-     * Examples:
+     * Requests without Origin can come from:
      * - Render health checks
      * - server-to-server requests
-     * - curl requests
+     * - command line tools
+     *
+     * Authentication will later protect sensitive
+     * write operations.
      */
     if (!origin) {
       return callback(null, true);
@@ -51,12 +248,10 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    console.warn('⚠️ CORS blocked origin:', origin);
+    console.warn(
+      `🚫 CORS blocked origin: ${origin}`
+    );
 
-    /*
-     * Do not throw an exception.
-     * Simply reject this origin.
-     */
     return callback(null, false);
   },
 
@@ -74,43 +269,18 @@ const corsOptions = {
   allowedHeaders: [
     'Content-Type',
     'Authorization'
-  ]
+  ],
+
+  optionsSuccessStatus: 204
 };
 
 app.use(cors(corsOptions));
 
 /* =========================================================
-   SOCKET.IO
+   GLOBAL RATE LIMIT
 ========================================================= */
 
-const io = new Server(server, {
-  cors: {
-    origin: uniqueOrigins,
-    credentials: true,
-    methods: ['GET', 'POST']
-  },
-
-  /*
-   * Polling is useful as a fallback if WebSocket
-   * temporarily cannot connect.
-   */
-  transports: ['polling', 'websocket'],
-
-  /*
-   * Allows temporary connection recovery.
-   */
-  connectionStateRecovery: {
-    maxDisconnectionDuration: 2 * 60 * 1000,
-    skipMiddlewares: true
-  },
-
-  /*
-   * Prevent extremely large Socket.IO packets.
-   */
-  maxHttpBufferSize: 1e6
-});
-
-app.set('io', io);
+app.use(rateLimit);
 
 /* =========================================================
    BODY PARSER
@@ -118,7 +288,18 @@ app.set('io', io);
 
 app.use(
   express.json({
-    limit: '2mb'
+    limit: JSON_LIMIT,
+    strict: true
+  })
+);
+
+/*
+ * Reject URL-encoded bodies larger than necessary.
+ */
+app.use(
+  express.urlencoded({
+    extended: false,
+    limit: '64kb'
   })
 );
 
@@ -129,11 +310,13 @@ app.use(
 app.use((req, res, next) => {
   const started = Date.now();
 
+  const ip = getClientIp(req);
+
   res.on('finish', () => {
     const duration = Date.now() - started;
 
     console.log(
-      `${req.method} ${req.originalUrl} -> ${res.statusCode} (${duration}ms)`
+      `${req.method} ${req.originalUrl} -> ${res.statusCode} (${duration}ms) [${ip}]`
     );
   });
 
@@ -154,7 +337,10 @@ app.get('/api/health', async (req, res) => {
       database: 'turso'
     });
   } catch (err) {
-    console.error('❌ Health check error:', err);
+    console.error(
+      '❌ Health check error:',
+      err
+    );
 
     return res.status(503).json({
       status: 'error',
@@ -167,18 +353,103 @@ app.get('/api/health', async (req, res) => {
    API ROUTES
 ========================================================= */
 
-app.use('/api/teams', require('./routes/teams'));
-app.use('/api/players', require('./routes/players'));
-app.use('/api/matches', require('./routes/matches'));
-app.use('/api/innings', require('./routes/innings'));
-app.use('/api/records', require('./routes/records'));
+app.use(
+  '/api/teams',
+  require('./routes/teams')
+);
+
+app.use(
+  '/api/players',
+  require('./routes/players')
+);
+
+app.use(
+  '/api/matches',
+  require('./routes/matches')
+);
+
+app.use(
+  '/api/innings',
+  require('./routes/innings')
+);
+
+app.use(
+  '/api/records',
+  require('./routes/records')
+);
+
+/* =========================================================
+   SOCKET.IO
+========================================================= */
+
+const io = new Server(server, {
+  cors: {
+    origin: function (origin, callback) {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (uniqueOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn(
+        `🚫 Socket.IO CORS blocked: ${origin}`
+      );
+
+      return callback(
+        new Error('Origin not allowed')
+      );
+    },
+
+    credentials: true,
+
+    methods: [
+      'GET',
+      'POST'
+    ]
+  },
+
+  /*
+   * Polling + WebSocket fallback.
+   */
+  transports: [
+    'polling',
+    'websocket'
+  ],
+
+  /*
+   * Recover short network interruptions.
+   */
+  connectionStateRecovery: {
+    maxDisconnectionDuration:
+      2 * 60 * 1000,
+
+    skipMiddlewares: true
+  },
+
+  /*
+   * Prevent huge Socket.IO messages.
+   */
+  maxHttpBufferSize: 256 * 1024,
+
+  /*
+   * Prevent excessive ping traffic.
+   */
+  pingInterval: 25000,
+  pingTimeout: 20000
+});
+
+app.set('io', io);
 
 /* =========================================================
    SOCKET.IO CONNECTION
 ========================================================= */
 
 io.on('connection', (socket) => {
-  console.log(`🔌 Socket connected: ${socket.id}`);
+  console.log(
+    `🔌 Socket connected: ${socket.id}`
+  );
 
   /* -------------------------------------------------------
      JOIN MATCH
@@ -186,14 +457,36 @@ io.on('connection', (socket) => {
 
   socket.on('join-match', (matchId) => {
     try {
-      if (!matchId) {
+      if (
+        typeof matchId !== 'string' &&
+        typeof matchId !== 'number'
+      ) {
         console.warn(
-          `⚠️ join-match called without matchId (${socket.id})`
+          `⚠️ Invalid matchId from ${socket.id}`
         );
+
         return;
       }
 
-      const room = `match-${String(matchId)}`;
+      const cleanedId =
+        String(matchId).trim();
+
+      /*
+       * UUIDs should not be enormous.
+       */
+      if (
+        !cleanedId ||
+        cleanedId.length > 100
+      ) {
+        console.warn(
+          `⚠️ Invalid matchId length from ${socket.id}`
+        );
+
+        return;
+      }
+
+      const room =
+        `match-${cleanedId}`;
 
       socket.join(room);
 
@@ -214,11 +507,25 @@ io.on('connection', (socket) => {
 
   socket.on('leave-match', (matchId) => {
     try {
-      if (!matchId) {
+      if (
+        typeof matchId !== 'string' &&
+        typeof matchId !== 'number'
+      ) {
         return;
       }
 
-      const room = `match-${String(matchId)}`;
+      const cleanedId =
+        String(matchId).trim();
+
+      if (
+        !cleanedId ||
+        cleanedId.length > 100
+      ) {
+        return;
+      }
+
+      const room =
+        `match-${cleanedId}`;
 
       socket.leave(room);
 
@@ -250,7 +557,7 @@ io.on('connection', (socket) => {
   socket.on('error', (err) => {
     console.error(
       `❌ Socket error ${socket.id}:`,
-      err
+      err?.message || err
     );
   });
 });
@@ -272,14 +579,28 @@ if (fs.existsSync(frontendDist)) {
   );
 
   app.use(
-    express.static(frontendDist)
+    express.static(frontendDist, {
+      maxAge: '1d',
+
+      /*
+       * Do not expose hidden files.
+       */
+      dotfiles: 'deny',
+
+      /*
+       * Disable directory listings.
+       */
+      index: false
+    })
   );
 
   /*
    * React SPA fallback.
    */
   app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) {
+    if (
+      req.path.startsWith('/api')
+    ) {
       return res.status(404).json({
         error: 'API route not found'
       });
@@ -303,10 +624,11 @@ if (fs.existsSync(frontendDist)) {
 ========================================================= */
 
 app.use((req, res) => {
-  if (req.path.startsWith('/api')) {
+  if (
+    req.path.startsWith('/api')
+  ) {
     return res.status(404).json({
-      error: 'API endpoint not found',
-      path: req.originalUrl
+      error: 'API endpoint not found'
     });
   }
 
@@ -319,55 +641,93 @@ app.use((req, res) => {
    GLOBAL EXPRESS ERROR HANDLER
 ========================================================= */
 
-app.use((err, req, res, next) => {
-  console.error(
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  );
+app.use(
+  (err, req, res, next) => {
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
-  console.error(
-    '❌ EXPRESS ERROR'
-  );
+    console.error(
+      '❌ EXPRESS ERROR'
+    );
 
-  console.error(
-    'URL:',
-    req.method,
-    req.originalUrl
-  );
+    console.error(
+      'URL:',
+      req.method,
+      req.originalUrl
+    );
 
-  console.error(
-    'Message:',
-    err?.message
-  );
+    console.error(
+      'Message:',
+      err?.message
+    );
 
-  console.error(
-    'Stack:',
-    err?.stack
-  );
+    /*
+     * Do not expose stack traces to users.
+     */
+    if (
+      process.env.NODE_ENV !==
+      'production'
+    ) {
+      console.error(
+        'Stack:',
+        err?.stack
+      );
+    }
 
-  console.error(
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  );
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
-  /*
-   * If headers were already sent, Express must
-   * handle the error itself.
-   */
-  if (res.headersSent) {
-    return next(err);
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    /*
+     * Malformed JSON.
+     */
+    if (
+      err?.type ===
+      'entity.parse.failed'
+    ) {
+      return res.status(400).json({
+        error: 'Invalid JSON request.'
+      });
+    }
+
+    /*
+     * Request body too large.
+     */
+    if (
+      err?.type ===
+      'entity.too.large'
+    ) {
+      return res.status(413).json({
+        error: 'Request body is too large.'
+      });
+    }
+
+    /*
+     * CORS rejection.
+     */
+    if (
+      err?.message ===
+      'Not allowed by CORS'
+    ) {
+      return res.status(403).json({
+        error: 'Origin not allowed.'
+      });
+    }
+
+    return res.status(500).json({
+      error:
+        'Internal server error'
+    });
   }
-
-  return res.status(500).json({
-    error: 'Internal server error',
-
-    message:
-      process.env.NODE_ENV === 'production'
-        ? 'Something went wrong on the server.'
-        : err?.message || 'Unknown server error'
-  });
-});
+);
 
 /* =========================================================
-   SERVER SHUTDOWN PROTECTION
+   SERVER SHUTDOWN
 ========================================================= */
 
 let isShuttingDown = false;
@@ -377,6 +737,7 @@ async function gracefulShutdown(signal) {
     console.log(
       `⚠️ Shutdown already in progress (${signal})`
     );
+
     return;
   }
 
@@ -387,7 +748,7 @@ async function gracefulShutdown(signal) {
   );
 
   /*
-   * Stop accepting new HTTP requests.
+   * Stop accepting new HTTP connections.
    */
   server.close(() => {
     console.log(
@@ -398,7 +759,7 @@ async function gracefulShutdown(signal) {
   });
 
   /*
-   * Close Socket.IO connections.
+   * Close Socket.IO.
    */
   try {
     io.close();
@@ -415,9 +776,6 @@ async function gracefulShutdown(signal) {
 
   /*
    * Safety timeout.
-   *
-   * If something refuses to close, don't keep
-   * the Render instance hanging forever.
    */
   setTimeout(() => {
     console.error(
@@ -430,97 +788,79 @@ async function gracefulShutdown(signal) {
 
 process.on(
   'SIGTERM',
-  () => gracefulShutdown('SIGTERM')
+  () =>
+    gracefulShutdown('SIGTERM')
 );
 
 process.on(
   'SIGINT',
-  () => gracefulShutdown('SIGINT')
+  () =>
+    gracefulShutdown('SIGINT')
 );
 
 /* =========================================================
    UNHANDLED PROMISE REJECTION
 ========================================================= */
 
-/*
- * Example:
- *
- * async function something() {
- *   throw new Error('Database failed');
- * }
- *
- * If nobody catches that Promise rejection,
- * this handler catches it.
- *
- * We intentionally exit so Render can restart
- * the service from a clean Node.js process.
- */
-process.on('unhandledRejection', (reason) => {
-  console.error(
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  );
+process.on(
+  'unhandledRejection',
+  (reason) => {
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
-  console.error(
-    '❌ UNHANDLED PROMISE REJECTION'
-  );
+    console.error(
+      '❌ UNHANDLED PROMISE REJECTION'
+    );
 
-  console.error(
-    reason
-  );
+    console.error(
+      reason
+    );
 
-  console.error(
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  );
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
-  /*
-   * Give logs a moment to flush.
-   */
-  setTimeout(() => {
-    process.exit(1);
-  }, 100);
-});
+    setTimeout(() => {
+      process.exit(1);
+    }, 100);
+  }
+);
 
 /* =========================================================
    UNCAUGHT EXCEPTION
 ========================================================= */
 
-/*
- * A truly unexpected synchronous exception
- * can leave Node.js in an unsafe state.
- *
- * Do NOT continue running a corrupted process.
- */
-process.on('uncaughtException', (err) => {
-  console.error(
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  );
+process.on(
+  'uncaughtException',
+  (err) => {
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
-  console.error(
-    '❌ UNCAUGHT EXCEPTION'
-  );
+    console.error(
+      '❌ UNCAUGHT EXCEPTION'
+    );
 
-  console.error(
-    'Message:',
-    err?.message
-  );
+    console.error(
+      'Message:',
+      err?.message
+    );
 
-  console.error(
-    'Stack:',
-    err?.stack
-  );
+    console.error(
+      'Stack:',
+      err?.stack
+    );
 
-  console.error(
-    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  );
+    console.error(
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    );
 
-  /*
-   * Allow logs to flush, then exit.
-   * Render can start a fresh instance.
-   */
-  setTimeout(() => {
-    process.exit(1);
-  }, 100);
-});
+    setTimeout(() => {
+      process.exit(1);
+    }, 100);
+  }
+);
 
 /* =========================================================
    START SERVER
@@ -542,25 +882,32 @@ async function startServer() {
        CHECK TURSO ENVIRONMENT
     ----------------------------------------------------- */
 
-    if (!process.env.TURSO_DATABASE_URL) {
+    if (
+      !process.env.TURSO_DATABASE_URL
+    ) {
       throw new Error(
         'TURSO_DATABASE_URL is missing.'
       );
     }
 
-    if (!process.env.TURSO_AUTH_TOKEN) {
+    if (
+      !process.env.TURSO_AUTH_TOKEN
+    ) {
       throw new Error(
         'TURSO_AUTH_TOKEN is missing.'
       );
     }
 
-    const db = require('./db/database');
+    const db =
+      require('./db/database');
 
     /* -----------------------------------------------------
        CHECK SCHEMA
     ----------------------------------------------------- */
 
-    if (!fs.existsSync(schemaPath)) {
+    if (
+      !fs.existsSync(schemaPath)
+    ) {
       throw new Error(
         `Schema file not found: ${schemaPath}`
       );
@@ -570,12 +917,11 @@ async function startServer() {
        LOAD SCHEMA
     ----------------------------------------------------- */
 
-    const schema = fs
-      .readFileSync(
+    const schema =
+      fs.readFileSync(
         schemaPath,
         'utf8'
-      )
-      .replace(
+      ).replace(
         /^\s*PRAGMA foreign_keys = ON;\s*/i,
         ''
       );
@@ -605,20 +951,33 @@ async function startServer() {
 
       console.log(
         `🌐 Environment: ${
-          process.env.NODE_ENV || 'production'
+          process.env.NODE_ENV ||
+          'production'
         }`
       );
 
       console.log(
-        `🔗 Health: /api/health`
+        '🔗 Health: /api/health'
       );
 
       console.log(
-        `🔌 Socket.IO: enabled`
+        '🔌 Socket.IO: enabled'
       );
 
       console.log(
-        `💾 Database: Turso`
+        '💾 Database: Turso'
+      );
+
+      console.log(
+        '🛡️ Security middleware: enabled'
+      );
+
+      console.log(
+        `🚦 Rate limit: ${RATE_LIMIT_MAX} requests/min/IP`
+      );
+
+      console.log(
+        `📦 JSON limit: ${JSON_LIMIT}`
       );
 
       console.log(
@@ -627,21 +986,19 @@ async function startServer() {
     });
 
     /*
-     * Catch HTTP server-level errors.
+     * HTTP server-level errors.
      */
-    server.on('error', (err) => {
-      console.error(
-        '❌ HTTP server error:',
-        err
-      );
+    server.on(
+      'error',
+      (err) => {
+        console.error(
+          '❌ HTTP server error:',
+          err
+        );
 
-      /*
-       * A server binding/network error means
-       * the process cannot operate correctly.
-       */
-      process.exit(1);
-    });
-
+        process.exit(1);
+      }
+    );
   } catch (err) {
     console.error(
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
@@ -665,12 +1022,6 @@ async function startServer() {
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     );
 
-    /*
-     * Startup failure means the application
-     * cannot safely operate.
-     *
-     * Render will restart the service.
-     */
     process.exit(1);
   }
 }
@@ -680,3 +1031,4 @@ async function startServer() {
 ========================================================= */
 
 startServer();
+
