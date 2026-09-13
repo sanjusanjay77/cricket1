@@ -1,293 +1,224 @@
+const { v4: uuidv4 } = require('uuid');
+const db = require('../db/database');
 
--- ============================================================
--- GCC CRICKET SCOREBOARD
--- SQLite / Turso Production Schema
---
--- Designed for:
---   10,000+ matches
---   100,000+ player/stat records
---   1,000,000+ balls
---   50+ simultaneous users
--- ============================================================
+function cleanText(value, maxLength = 100) {
+  if (value === undefined || value === null) {
+    return '';
+  }
 
-PRAGMA foreign_keys = ON;
+  return String(value).trim().slice(0, maxLength);
+}
 
--- ============================================================
--- TEAMS
--- ============================================================
+function cleanEmail(value) {
+  return cleanText(value, 254).toLowerCase();
+}
 
-CREATE TABLE IF NOT EXISTS teams (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    short_name  TEXT NOT NULL,
-    logo_color  TEXT DEFAULT '#1e3a8a',
-    is_own      INTEGER DEFAULT 0,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+function cleanPhone(value) {
+  return cleanText(value, 20).replace(/[^\d+]/g, '');
+}
 
--- ============================================================
--- PLAYERS
--- ============================================================
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
 
-CREATE TABLE IF NOT EXISTS players (
-    id            TEXT PRIMARY KEY,
-    team_id       TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    name          TEXT NOT NULL,
-    role          TEXT DEFAULT 'batsman',
-    batting_style TEXT DEFAULT 'right-hand',
-    bowling_style TEXT DEFAULT 'none',
-    jersey_no     INTEGER,
-    active        INTEGER DEFAULT 1,
-    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+function isValidPhone(phone) {
+  const digits = phone.replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 15;
+}
 
--- ============================================================
--- MATCHES
--- ============================================================
+exports.registerUser = async (req, res) => {
+  try {
+    const name = cleanText(req.body.name, 100);
+    const email = cleanEmail(req.body.email);
+    const phone = cleanPhone(req.body.phone);
 
-CREATE TABLE IF NOT EXISTS matches (
-    id              TEXT PRIMARY KEY,
-    team1_id        TEXT NOT NULL REFERENCES teams(id),
-    team2_id        TEXT NOT NULL REFERENCES teams(id),
-    match_type      TEXT DEFAULT 'T20',
-    overs_limit     INTEGER DEFAULT 20,
-    venue           TEXT,
-    match_date      TEXT,
-    toss_winner_id  TEXT REFERENCES teams(id),
-    toss_decision   TEXT,
-    status          TEXT DEFAULT 'upcoming',
-    current_innings INTEGER DEFAULT 1,
-    result_text     TEXT,
-    winner_id       TEXT REFERENCES teams(id),
-    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    if (!name) {
+      return res.status(400).json({
+        error: 'Please enter your name.'
+      });
+    }
 
--- ============================================================
--- INNINGS
--- ============================================================
+    if (!email && !phone) {
+      return res.status(400).json({
+        error: 'Please enter an email address or phone number.'
+      });
+    }
 
-CREATE TABLE IF NOT EXISTS innings (
-    id                TEXT PRIMARY KEY,
-    match_id          TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    innings_number    INTEGER NOT NULL,
-    batting_team_id   TEXT NOT NULL REFERENCES teams(id),
-    bowling_team_id   TEXT NOT NULL REFERENCES teams(id),
-    total_runs        INTEGER DEFAULT 0,
-    total_wickets     INTEGER DEFAULT 0,
-    total_balls       INTEGER DEFAULT 0,
-    extras_wide       INTEGER DEFAULT 0,
-    extras_noball     INTEGER DEFAULT 0,
-    extras_bye        INTEGER DEFAULT 0,
-    extras_legbye     INTEGER DEFAULT 0,
-    extras_penalty    INTEGER DEFAULT 0,
-    target            INTEGER,
-    striker_id        TEXT REFERENCES players(id),
-    non_striker_id    TEXT REFERENCES players(id),
-    current_bowler_id TEXT REFERENCES players(id),
-    is_completed      INTEGER DEFAULT 0,
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    if (email && !isValidEmail(email)) {
+      return res.status(400).json({
+        error: 'Please enter a valid email address.'
+      });
+    }
 
--- ============================================================
--- BALLS
---
--- SOURCE OF TRUTH FOR SCORING.
---
--- Designed for 1,000,000+ rows.
--- ============================================================
+    if (phone && !isValidPhone(phone)) {
+      return res.status(400).json({
+        error: 'Please enter a valid phone number.'
+      });
+    }
 
-CREATE TABLE IF NOT EXISTS balls (
-    id                TEXT PRIMARY KEY,
-    innings_id        TEXT NOT NULL REFERENCES innings(id) ON DELETE CASCADE,
-    over_number       INTEGER NOT NULL,
-    ball_in_over      INTEGER NOT NULL,
-    ball_sequence     INTEGER NOT NULL,
-    batsman_id        TEXT NOT NULL REFERENCES players(id),
-    non_striker_id    TEXT NOT NULL REFERENCES players(id),
-    bowler_id         TEXT NOT NULL REFERENCES players(id),
-    runs_batsman      INTEGER DEFAULT 0,
-    extra_type        TEXT,
-    extra_runs        INTEGER DEFAULT 0,
-    is_wicket         INTEGER DEFAULT 0,
-    wicket_type       TEXT,
-    dismissed_id      TEXT REFERENCES players(id),
-    fielder_id        TEXT REFERENCES players(id),
-    is_legal          INTEGER DEFAULT 1,
-    commentary        TEXT,
-    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    // Existing email
+    if (email) {
+      const existingEmail = await db.prepare(`
+        SELECT *
+        FROM notification_users
+        WHERE email = ?
+        LIMIT 1
+      `).get(email);
 
--- ============================================================
--- PERFORMANCE INDEXES
--- ============================================================
+      if (existingEmail) {
+        return res.json({
+          existing: true,
+          user: existingEmail
+        });
+      }
+    }
 
--- ============================================================
--- PLAYERS
--- ============================================================
+    // Existing phone
+    if (phone) {
+      const existingPhone = await db.prepare(`
+        SELECT *
+        FROM notification_users
+        WHERE phone = ?
+        LIMIT 1
+      `).get(phone);
 
-CREATE INDEX IF NOT EXISTS idx_players_team
-ON players(team_id);
+      if (existingPhone) {
+        return res.json({
+          existing: true,
+          user: existingPhone
+        });
+      }
+    }
 
-CREATE INDEX IF NOT EXISTS idx_players_team_active
-ON players(team_id, active);
+    const id = uuidv4();
 
-CREATE INDEX IF NOT EXISTS idx_players_name
-ON players(name);
+    await db.prepare(`
+      INSERT INTO notification_users (
+        id,
+        name,
+        email,
+        phone,
+        notifications_enabled
+      )
+      VALUES (?, ?, ?, ?, 1)
+    `).run(
+      id,
+      name,
+      email || null,
+      phone || null
+    );
 
--- ============================================================
--- MATCHES
--- ============================================================
+    const user = await db.prepare(`
+      SELECT
+        id,
+        name,
+        email,
+        phone,
+        notifications_enabled,
+        created_at
+      FROM notification_users
+      WHERE id = ?
+    `).get(id);
 
-CREATE INDEX IF NOT EXISTS idx_matches_date
-ON matches(match_date DESC);
+    return res.status(201).json({
+      existing: false,
+      user
+    });
 
-CREATE INDEX IF NOT EXISTS idx_matches_status
-ON matches(status);
+  } catch (error) {
+    console.error(
+      'Notification registration error:',
+      error
+    );
 
-CREATE INDEX IF NOT EXISTS idx_matches_status_date
-ON matches(status, match_date DESC);
+    return res.status(500).json({
+      error: 'Unable to register. Please try again.'
+    });
+  }
+};
 
-CREATE INDEX IF NOT EXISTS idx_matches_team1
-ON matches(team1_id);
+exports.getUser = async (req, res) => {
+  try {
+    const user = await db.prepare(`
+      SELECT
+        id,
+        name,
+        email,
+        phone,
+        notifications_enabled,
+        created_at
+      FROM notification_users
+      WHERE id = ?
+    `).get(req.params.id);
 
-CREATE INDEX IF NOT EXISTS idx_matches_team2
-ON matches(team2_id);
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found.'
+      });
+    }
 
-CREATE INDEX IF NOT EXISTS idx_matches_winner
-ON matches(winner_id);
+    return res.json(user);
 
--- ============================================================
--- INNINGS
--- ============================================================
+  } catch (error) {
+    console.error(
+      'Get notification user error:',
+      error
+    );
 
-CREATE INDEX IF NOT EXISTS idx_innings_match
-ON innings(match_id);
+    return res.status(500).json({
+      error: 'Unable to load user.'
+    });
+  }
+};
 
-CREATE INDEX IF NOT EXISTS idx_innings_match_number
-ON innings(match_id, innings_number);
+exports.updatePreferences = async (req, res) => {
+  try {
+    const enabled =
+      req.body.notifications_enabled ? 1 : 0;
 
-CREATE INDEX IF NOT EXISTS idx_innings_batting_team
-ON innings(batting_team_id);
+    const existing = await db.prepare(`
+      SELECT id
+      FROM notification_users
+      WHERE id = ?
+    `).get(req.params.id);
 
-CREATE INDEX IF NOT EXISTS idx_innings_bowling_team
-ON innings(bowling_team_id);
+    if (!existing) {
+      return res.status(404).json({
+        error: 'User not found.'
+      });
+    }
 
-CREATE INDEX IF NOT EXISTS idx_innings_completed
-ON innings(is_completed);
+    await db.prepare(`
+      UPDATE notification_users
+      SET notifications_enabled = ?
+      WHERE id = ?
+    `).run(
+      enabled,
+      req.params.id
+    );
 
--- ============================================================
--- BALLS
--- ============================================================
+    const user = await db.prepare(`
+      SELECT
+        id,
+        name,
+        email,
+        phone,
+        notifications_enabled,
+        created_at
+      FROM notification_users
+      WHERE id = ?
+    `).get(req.params.id);
 
-CREATE INDEX IF NOT EXISTS idx_balls_innings
-ON balls(innings_id);
+    return res.json(user);
 
--- IMPORTANT:
--- This is a NORMAL index, NOT UNIQUE.
---
--- Existing Turso data may already contain duplicate
--- ball_sequence values. A UNIQUE index would prevent
--- the production server from starting.
---
--- We can clean duplicate historical records later and
--- add a UNIQUE constraint safely after verification.
+  } catch (error) {
+    console.error(
+      'Update notification preference error:',
+      error
+    );
 
-CREATE INDEX IF NOT EXISTS idx_balls_innings_sequence
-ON balls(innings_id, ball_sequence);
-
-CREATE INDEX IF NOT EXISTS idx_balls_innings_over
-ON balls(innings_id, over_number);
-
-CREATE INDEX IF NOT EXISTS idx_balls_innings_over_ball
-ON balls(innings_id, over_number, ball_sequence);
-
--- ============================================================
--- BATTING STATISTICS
--- ============================================================
-
-CREATE INDEX IF NOT EXISTS idx_balls_batsman
-ON balls(batsman_id);
-
-CREATE INDEX IF NOT EXISTS idx_balls_batsman_sequence
-ON balls(batsman_id, ball_sequence);
-
--- ============================================================
--- BOWLING STATISTICS
--- ============================================================
-
-CREATE INDEX IF NOT EXISTS idx_balls_bowler
-ON balls(bowler_id);
-
-CREATE INDEX IF NOT EXISTS idx_balls_bowler_sequence
-ON balls(bowler_id, ball_sequence);
-
-CREATE INDEX IF NOT EXISTS idx_balls_bowler_wicket
-ON balls(bowler_id, is_wicket);
-
--- ============================================================
--- DISMISSALS / FIELDING
--- ============================================================
-
-CREATE INDEX IF NOT EXISTS idx_balls_dismissed
-ON balls(dismissed_id);
-
-CREATE INDEX IF NOT EXISTS idx_balls_fielder
-ON balls(fielder_id);
-
-CREATE INDEX IF NOT EXISTS idx_balls_wicket
-ON balls(is_wicket);
-
--- ============================================================
--- EXTRAS
--- ============================================================
-
-CREATE INDEX IF NOT EXISTS idx_balls_extra_type
-ON balls(extra_type);
-
--- ============================================================
--- DATA INTEGRITY
--- ============================================================
-
-/*
- * A match should normally have:
- *
- * innings 1
- * innings 2
- * innings 3 ...
- *
- * This prevents duplicate innings numbers for a match.
- *
- * We keep this constraint because it is independent
- * of the duplicate ball-sequence problem.
- */
-
-CREATE UNIQUE INDEX IF NOT EXISTS
-idx_innings_match_number_unique
-ON innings(match_id, innings_number);
-
--- ============================================================
--- IMPORTANT
--- ============================================================
---
--- DO NOT create:
---
--- CREATE UNIQUE INDEX ...
--- ON balls(innings_id, ball_sequence);
---
--- Your existing production database contains duplicate
--- ball sequence values, so that index caused Render startup
--- to fail.
---
--- We will investigate and clean those records separately.
---
--- The normal index above still provides fast queries for:
---
---   WHERE innings_id = ?
---   ORDER BY ball_sequence
---
--- and is suitable for 1,000,000+ ball records.
---
--- ============================================================
-
--- END OF SCHEMA
-
+    return res.status(500).json({
+      error: 'Unable to update notification settings.'
+    });
+  }
+};
