@@ -1,312 +1,294 @@
-const { v4: uuidv4 } = require('uuid');
-const db = require('../db/database');
+-- ============================================================
+-- GCC CRICKET SCOREBOARD
+-- SQLite / Turso Production Schema
+-- ============================================================
 
-// =====================================================
-// HELPERS
-// =====================================================
-
-function cleanText(value, maxLength = 100) {
-  if (value === undefined || value === null) {
-    return '';
-  }
-
-  return String(value).trim().slice(0, maxLength);
-}
-
-function cleanEmail(value) {
-  return cleanText(value, 254).toLowerCase();
-}
-
-function cleanPhone(value) {
-  return cleanText(value, 20).replace(/[^\d+]/g, '');
-}
-
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function isValidPhone(phone) {
-  const digits = phone.replace(/\D/g, '');
-
-  return digits.length >= 10 && digits.length <= 15;
-}
+PRAGMA foreign_keys = ON;
 
 
-// =====================================================
-// REGISTER USER
-// POST /api/notifications/register
-// =====================================================
+-- ============================================================
+-- TEAMS
+-- ============================================================
 
-exports.registerUser = async (req, res) => {
-  try {
-    const name = cleanText(req.body.name, 100);
-    const email = cleanEmail(req.body.email);
-    const phone = cleanPhone(req.body.phone);
-
-    // ---------------------------------------------
-    // Validate name
-    // ---------------------------------------------
-
-    if (!name) {
-      return res.status(400).json({
-        error: 'Please enter your name.'
-      });
-    }
-
-    // ---------------------------------------------
-    // Email OR phone required
-    // ---------------------------------------------
-
-    if (!email && !phone) {
-      return res.status(400).json({
-        error: 'Please enter an email address or phone number.'
-      });
-    }
-
-    // ---------------------------------------------
-    // Validate email
-    // ---------------------------------------------
-
-    if (email && !isValidEmail(email)) {
-      return res.status(400).json({
-        error: 'Please enter a valid email address.'
-      });
-    }
-
-    // ---------------------------------------------
-    // Validate phone
-    // ---------------------------------------------
-
-    if (phone && !isValidPhone(phone)) {
-      return res.status(400).json({
-        error: 'Please enter a valid phone number.'
-      });
-    }
-
-    // ---------------------------------------------
-    // Check existing email
-    // ---------------------------------------------
-
-    if (email) {
-      const existingEmail = await db.prepare(`
-        SELECT
-          id,
-          name,
-          email,
-          phone,
-          notifications_enabled,
-          created_at
-        FROM notification_users
-        WHERE email = ?
-        LIMIT 1
-      `).get(email);
-
-      if (existingEmail) {
-        return res.json({
-          existing: true,
-          user: existingEmail
-        });
-      }
-    }
-
-    // ---------------------------------------------
-    // Check existing phone
-    // ---------------------------------------------
-
-    if (phone) {
-      const existingPhone = await db.prepare(`
-        SELECT
-          id,
-          name,
-          email,
-          phone,
-          notifications_enabled,
-          created_at
-        FROM notification_users
-        WHERE phone = ?
-        LIMIT 1
-      `).get(phone);
-
-      if (existingPhone) {
-        return res.json({
-          existing: true,
-          user: existingPhone
-        });
-      }
-    }
-
-    // ---------------------------------------------
-    // Create new user
-    // ---------------------------------------------
-
-    const id = uuidv4();
-
-    await db.prepare(`
-      INSERT INTO notification_users (
-        id,
-        name,
-        email,
-        phone,
-        notifications_enabled
-      )
-      VALUES (?, ?, ?, ?, 1)
-    `).run(
-      id,
-      name,
-      email || null,
-      phone || null
-    );
-
-    // ---------------------------------------------
-    // Get created user
-    // ---------------------------------------------
-
-    const user = await db.prepare(`
-      SELECT
-        id,
-        name,
-        email,
-        phone,
-        notifications_enabled,
-        created_at
-      FROM notification_users
-      WHERE id = ?
-    `).get(id);
-
-    return res.status(201).json({
-      existing: false,
-      user
-    });
-
-  } catch (error) {
-    console.error(
-      'Notification registration error:',
-      error
-    );
-
-    return res.status(500).json({
-      error: 'Unable to register. Please try again.'
-    });
-  }
-};
+CREATE TABLE IF NOT EXISTS teams (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    short_name  TEXT NOT NULL,
+    logo_color  TEXT DEFAULT '#1e3a8a',
+    is_own      INTEGER DEFAULT 0,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
 
-// =====================================================
-// GET USER
-// GET /api/notifications/:id
-// =====================================================
+-- ============================================================
+-- PLAYERS
+-- ============================================================
 
-exports.getUser = async (req, res) => {
-  try {
-    const user = await db.prepare(`
-      SELECT
-        id,
-        name,
-        email,
-        phone,
-        notifications_enabled,
-        created_at
-      FROM notification_users
-      WHERE id = ?
-      LIMIT 1
-    `).get(req.params.id);
-
-    // ---------------------------------------------
-    // User does not exist
-    // ---------------------------------------------
-
-    if (!user) {
-      return res.status(404).json({
-        error: 'User not found.'
-      });
-    }
-
-    // ---------------------------------------------
-    // Return user
-    // ---------------------------------------------
-
-    return res.json(user);
-
-  } catch (error) {
-    console.error(
-      'Get notification user error:',
-      error
-    );
-
-    return res.status(500).json({
-      error: 'Unable to load user.'
-    });
-  }
-};
+CREATE TABLE IF NOT EXISTS players (
+    id            TEXT PRIMARY KEY,
+    team_id       TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    role          TEXT DEFAULT 'batsman',
+    batting_style TEXT DEFAULT 'right-hand',
+    bowling_style TEXT DEFAULT 'none',
+    jersey_no     INTEGER,
+    active        INTEGER DEFAULT 1,
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
 
-// =====================================================
-// UPDATE NOTIFICATION PREFERENCES
-// PUT /api/notifications/:id/preferences
-// =====================================================
+-- ============================================================
+-- MATCHES
+-- ============================================================
 
-exports.updatePreferences = async (req, res) => {
-  try {
-    const enabled =
-      req.body.notifications_enabled ? 1 : 0;
+CREATE TABLE IF NOT EXISTS matches (
+    id              TEXT PRIMARY KEY,
+    team1_id        TEXT NOT NULL REFERENCES teams(id),
+    team2_id        TEXT NOT NULL REFERENCES teams(id),
+    match_type      TEXT DEFAULT 'T20',
+    overs_limit     INTEGER DEFAULT 20,
+    venue           TEXT,
+    match_date      TEXT,
+    toss_winner_id  TEXT REFERENCES teams(id),
+    toss_decision   TEXT,
+    status          TEXT DEFAULT 'upcoming',
+    current_innings INTEGER DEFAULT 1,
+    result_text     TEXT,
+    winner_id       TEXT REFERENCES teams(id),
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-    // ---------------------------------------------
-    // Check user
-    // ---------------------------------------------
 
-    const existing = await db.prepare(`
-      SELECT id
-      FROM notification_users
-      WHERE id = ?
-      LIMIT 1
-    `).get(req.params.id);
+-- ============================================================
+-- INNINGS
+-- ============================================================
 
-    if (!existing) {
-      return res.status(404).json({
-        error: 'User not found.'
-      });
-    }
+CREATE TABLE IF NOT EXISTS innings (
+    id                TEXT PRIMARY KEY,
+    match_id          TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    innings_number    INTEGER NOT NULL,
+    batting_team_id   TEXT NOT NULL REFERENCES teams(id),
+    bowling_team_id   TEXT NOT NULL REFERENCES teams(id),
+    total_runs        INTEGER DEFAULT 0,
+    total_wickets     INTEGER DEFAULT 0,
+    total_balls       INTEGER DEFAULT 0,
+    extras_wide       INTEGER DEFAULT 0,
+    extras_noball     INTEGER DEFAULT 0,
+    extras_bye        INTEGER DEFAULT 0,
+    extras_legbye     INTEGER DEFAULT 0,
+    extras_penalty    INTEGER DEFAULT 0,
+    target            INTEGER,
+    striker_id        TEXT REFERENCES players(id),
+    non_striker_id    TEXT REFERENCES players(id),
+    current_bowler_id TEXT REFERENCES players(id),
+    is_completed      INTEGER DEFAULT 0,
+    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-    // ---------------------------------------------
-    // Update preference
-    // ---------------------------------------------
 
-    await db.prepare(`
-      UPDATE notification_users
-      SET notifications_enabled = ?
-      WHERE id = ?
-    `).run(
-      enabled,
-      req.params.id
-    );
+-- ============================================================
+-- BALLS
+-- ============================================================
 
-    // ---------------------------------------------
-    // Return updated user
-    // ---------------------------------------------
+CREATE TABLE IF NOT EXISTS balls (
+    id                TEXT PRIMARY KEY,
+    innings_id        TEXT NOT NULL REFERENCES innings(id) ON DELETE CASCADE,
+    over_number       INTEGER NOT NULL,
+    ball_in_over      INTEGER NOT NULL,
+    ball_sequence     INTEGER NOT NULL,
+    batsman_id        TEXT NOT NULL REFERENCES players(id),
+    non_striker_id    TEXT NOT NULL REFERENCES players(id),
+    bowler_id         TEXT NOT NULL REFERENCES players(id),
+    runs_batsman      INTEGER DEFAULT 0,
+    extra_type        TEXT,
+    extra_runs        INTEGER DEFAULT 0,
+    is_wicket         INTEGER DEFAULT 0,
+    wicket_type       TEXT,
+    dismissed_id      TEXT REFERENCES players(id),
+    fielder_id        TEXT REFERENCES players(id),
+    is_legal          INTEGER DEFAULT 1,
+    commentary        TEXT,
+    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-    const user = await db.prepare(`
-      SELECT
-        id,
-        name,
-        email,
-        phone,
-        notifications_enabled,
-        created_at
-      FROM notification_users
-      WHERE id = ?
-      LIMIT 1
-    `).get(req.params.id);
 
-    return res.json(user);
+-- ============================================================
+-- NOTIFICATION USERS
+-- ============================================================
 
-  } catch (error) {
-    console.error(
-      'Update notification preference error:',
-      error
-    );
+CREATE TABLE IF NOT EXISTS notification_users (
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL,
+    email                  TEXT,
+    phone                  TEXT,
+    notifications_enabled  INTEGER DEFAULT 1,
+    created_at             DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-    return res.status(500).json({
-      error: 'Unable to update notification settings.'
-    });
-  }
-};
+
+-- ============================================================
+-- NOTIFICATION USER INDEXES
+-- ============================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+idx_notification_users_email
+ON notification_users(email)
+WHERE email IS NOT NULL;
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+idx_notification_users_phone
+ON notification_users(phone)
+WHERE phone IS NOT NULL;
+
+
+CREATE INDEX IF NOT EXISTS
+idx_notification_users_notifications
+ON notification_users(notifications_enabled);
+
+
+-- ============================================================
+-- PLAYER INDEXES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_players_team
+ON players(team_id);
+
+CREATE INDEX IF NOT EXISTS idx_players_team_active
+ON players(team_id, active);
+
+CREATE INDEX IF NOT EXISTS idx_players_name
+ON players(name);
+
+
+-- ============================================================
+-- MATCH INDEXES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_matches_date
+ON matches(match_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_matches_status
+ON matches(status);
+
+CREATE INDEX IF NOT EXISTS idx_matches_status_date
+ON matches(status, match_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_matches_team1
+ON matches(team1_id);
+
+CREATE INDEX IF NOT EXISTS idx_matches_team2
+ON matches(team2_id);
+
+CREATE INDEX IF NOT EXISTS idx_matches_winner
+ON matches(winner_id);
+
+
+-- ============================================================
+-- INNINGS INDEXES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_innings_match
+ON innings(match_id);
+
+CREATE INDEX IF NOT EXISTS idx_innings_match_number
+ON innings(match_id, innings_number);
+
+CREATE INDEX IF NOT EXISTS idx_innings_batting_team
+ON innings(batting_team_id);
+
+CREATE INDEX IF NOT EXISTS idx_innings_bowling_team
+ON innings(bowling_team_id);
+
+CREATE INDEX IF NOT EXISTS idx_innings_completed
+ON innings(is_completed);
+
+
+-- ============================================================
+-- BALL INDEXES
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_innings
+ON balls(innings_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_innings_sequence
+ON balls(innings_id, ball_sequence);
+
+CREATE INDEX IF NOT EXISTS idx_balls_innings_over
+ON balls(innings_id, over_number);
+
+CREATE INDEX IF NOT EXISTS idx_balls_innings_over_ball
+ON balls(innings_id, over_number, ball_sequence);
+
+
+-- ============================================================
+-- BATTING STATISTICS
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_batsman
+ON balls(batsman_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_batsman_sequence
+ON balls(batsman_id, ball_sequence);
+
+
+-- ============================================================
+-- BOWLING STATISTICS
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_bowler
+ON balls(bowler_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_bowler_sequence
+ON balls(bowler_id, ball_sequence);
+
+CREATE INDEX IF NOT EXISTS idx_balls_bowler_wicket
+ON balls(bowler_id, is_wicket);
+
+
+-- ============================================================
+-- DISMISSALS / FIELDING
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_dismissed
+ON balls(dismissed_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_fielder
+ON balls(fielder_id);
+
+CREATE INDEX IF NOT EXISTS idx_balls_wicket
+ON balls(is_wicket);
+
+
+-- ============================================================
+-- EXTRAS
+-- ============================================================
+
+CREATE INDEX IF NOT EXISTS idx_balls_extra_type
+ON balls(extra_type);
+
+
+-- ============================================================
+-- DATA INTEGRITY
+-- ============================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+idx_innings_match_number_unique
+ON innings(match_id, innings_number);
+
+
+-- ============================================================
+-- IMPORTANT
+-- ============================================================
+--
+-- DO NOT create:
+--
+-- CREATE UNIQUE INDEX
+-- ON balls(innings_id, ball_sequence);
+--
+-- Existing production data may contain duplicate
+-- ball_sequence values.
+--
+-- Therefore we intentionally use a normal index.
+--
+-- ============================================================
