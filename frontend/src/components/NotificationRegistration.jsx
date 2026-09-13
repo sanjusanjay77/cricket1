@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Notifications } from '../api/api.js';
+import socket, {
+  registerNotificationUser
+} from '../socket.js';
 
 const STORAGE_KEY = 'gccNotificationUserId';
 
@@ -14,9 +17,91 @@ export default function NotificationRegistration() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  /* =======================================================
+     CHECK EXISTING USER
+  ======================================================= */
+
   useEffect(() => {
     checkExistingUser();
   }, []);
+
+  /* =======================================================
+     LISTEN FOR LIVE MATCH NOTIFICATIONS
+  ======================================================= */
+
+  useEffect(() => {
+    const handleMatchStarted = (notification) => {
+      console.log(
+        '🔔 Live match notification received:',
+        notification
+      );
+
+      /*
+       * Browser notification
+       */
+      if (
+        'Notification' in window &&
+        Notification.permission === 'granted'
+      ) {
+        const browserNotification =
+          new Notification(
+            notification.title ||
+              '🏏 GCC Cricket - Live Match',
+            {
+              body:
+                notification.message ||
+                'A match is now live!',
+              icon:
+                '/favicon.ico',
+              tag:
+                `gcc-match-${notification.matchId}`,
+              requireInteraction:
+                true
+            }
+          );
+
+        /*
+         * Open live scoreboard when
+         * notification is clicked.
+         */
+        browserNotification.onclick = () => {
+          window.focus();
+
+          if (notification.matchId) {
+            window.location.href =
+              `/match/${notification.matchId}/live`;
+          }
+
+          browserNotification.close();
+        };
+      } else {
+        /*
+         * Fallback if browser notification
+         * permission is unavailable.
+         */
+        console.log(
+          '🔔 Match is live:',
+          notification
+        );
+      }
+    };
+
+    socket.on(
+      'match-started',
+      handleMatchStarted
+    );
+
+    return () => {
+      socket.off(
+        'match-started',
+        handleMatchStarted
+      );
+    };
+  }, []);
+
+  /* =======================================================
+     CHECK USER
+  ======================================================= */
 
   const checkExistingUser = async () => {
     const savedUserId =
@@ -29,18 +114,44 @@ export default function NotificationRegistration() {
     }
 
     try {
-      await Notifications.getUser(savedUserId);
+      await Notifications.getUser(
+        savedUserId
+      );
 
-      // User already registered.
+      /*
+       * Existing user.
+       * Connect this browser to the user's
+       * Socket.IO notification room.
+       */
+      registerNotificationUser(
+        savedUserId
+      );
+
+      /*
+       * No registration form.
+       */
       setShow(false);
+
     } catch (err) {
-      // Stored ID no longer exists.
-      localStorage.removeItem(STORAGE_KEY);
+      console.error(
+        'Existing notification user check failed:',
+        err
+      );
+
+      localStorage.removeItem(
+        STORAGE_KEY
+      );
+
       setShow(true);
+
     } finally {
       setChecking(false);
     }
   };
+
+  /* =======================================================
+     REGISTER
+  ======================================================= */
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -48,38 +159,95 @@ export default function NotificationRegistration() {
     setError('');
 
     if (!name.trim()) {
-      setError('Please enter your name.');
+      setError(
+        'Please enter your name.'
+      );
       return;
     }
 
-    if (!email.trim() && !phone.trim()) {
-      setError('Enter your email or phone number.');
+    if (
+      !email.trim() &&
+      !phone.trim()
+    ) {
+      setError(
+        'Enter your email or phone number.'
+      );
       return;
     }
 
     setSaving(true);
 
     try {
-      const result = await Notifications.register({
-        name: name.trim(),
-        email: email.trim(),
-        phone: phone.trim()
-      });
 
-      if (!result?.user?.id) {
+      /*
+       * Ask browser permission.
+       *
+       * This happens after the user clicks
+       * Notify Me, which is required by
+       * modern browsers.
+       */
+      if (
+        'Notification' in window &&
+        Notification.permission === 'default'
+      ) {
+        const permission =
+          await Notification.requestPermission();
+
+        console.log(
+          '🔔 Notification permission:',
+          permission
+        );
+      }
+
+      /*
+       * Register user in database.
+       */
+      const result =
+        await Notifications.register({
+          name: name.trim(),
+          email: email.trim(),
+          phone: phone.trim()
+        });
+
+      if (
+        !result?.user?.id
+      ) {
         throw new Error(
           'Registration failed. Please try again.'
         );
       }
 
+      const userId =
+        result.user.id;
+
+      /*
+       * Remember user on this browser.
+       */
       localStorage.setItem(
         STORAGE_KEY,
-        result.user.id
+        userId
       );
 
+      /*
+       * Connect user to their Socket.IO
+       * notification room.
+       */
+      registerNotificationUser(
+        userId
+      );
+
+      /*
+       * Hide registration form.
+       */
       setShow(false);
 
+      console.log(
+        '✅ Notification registration completed:',
+        userId
+      );
+
     } catch (err) {
+
       console.error(
         'Notification registration failed:',
         err
@@ -90,12 +258,20 @@ export default function NotificationRegistration() {
         err?.message ||
         'Unable to register. Please try again.'
       );
+
     } finally {
       setSaving(false);
     }
   };
 
-  if (checking || !show) {
+  /* =======================================================
+     RENDER
+  ======================================================= */
+
+  if (
+    checking ||
+    !show
+  ) {
     return null;
   }
 
@@ -126,11 +302,24 @@ export default function NotificationRegistration() {
           sm:rounded-3xl
           shadow-2xl
           overflow-hidden
-          animate-[slideUp_.25s_ease-out]
         "
       >
-        {/* Header */}
-        <div className="relative px-5 pt-6 pb-5 bg-gradient-to-br from-emerald-600/20 via-slate-950 to-slate-950">
+
+        {/* HEADER */}
+
+        <div
+          className="
+            relative
+            px-5
+            pt-6
+            pb-5
+            bg-gradient-to-br
+            from-emerald-600/20
+            via-slate-950
+            to-slate-950
+          "
+        >
+
           <div
             className="
               absolute
@@ -145,7 +334,14 @@ export default function NotificationRegistration() {
             "
           />
 
-          <div className="flex items-start gap-4 pt-2 sm:pt-0">
+          <div
+            className="
+              flex
+              items-start
+              gap-4
+            "
+          >
+
             <div
               className="
                 w-14
@@ -164,26 +360,58 @@ export default function NotificationRegistration() {
               🔔
             </div>
 
-            <div className="min-w-0">
-              <h2 className="text-xl sm:text-2xl font-bold text-white">
+            <div>
+              <h2
+                className="
+                  text-xl
+                  sm:text-2xl
+                  font-bold
+                  text-white
+                "
+              >
                 Get Live Match Alerts
               </h2>
 
-              <p className="text-sm text-slate-400 mt-1 leading-5">
-                Register once and we'll let you know when a
-                match goes live.
+              <p
+                className="
+                  text-sm
+                  text-slate-400
+                  mt-1
+                  leading-5
+                "
+              >
+                Register once and we'll let you know
+                when a match goes live.
               </p>
             </div>
+
           </div>
         </div>
 
-        {/* Form */}
+        {/* FORM */}
+
         <form
           onSubmit={handleSubmit}
-          className="px-5 pb-6 space-y-4"
+          className="
+            px-5
+            pb-6
+            space-y-4
+          "
         >
+
+          {/* NAME */}
+
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
+
+            <label
+              className="
+                block
+                text-sm
+                font-medium
+                text-slate-300
+                mb-2
+              "
+            >
               Your name
             </label>
 
@@ -212,12 +440,29 @@ export default function NotificationRegistration() {
                 focus:ring-emerald-500/20
               "
             />
+
           </div>
 
+          {/* EMAIL */}
+
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">
+
+            <label
+              className="
+                block
+                text-sm
+                font-medium
+                text-slate-300
+                mb-2
+              "
+            >
               Email address
-              <span className="text-slate-500 font-normal">
+              <span
+                className="
+                  text-slate-500
+                  font-normal
+                "
+              >
                 {' '}optional
               </span>
             </label>
@@ -247,12 +492,29 @@ export default function NotificationRegistration() {
                 focus:ring-emerald-500/20
               "
             />
+
           </div>
 
-          <div className="relative">
-            <label className="block text-sm font-medium text-slate-300 mb-2">
+          {/* PHONE */}
+
+          <div>
+
+            <label
+              className="
+                block
+                text-sm
+                font-medium
+                text-slate-300
+                mb-2
+              "
+            >
               Phone number
-              <span className="text-slate-500 font-normal">
+              <span
+                className="
+                  text-slate-500
+                  font-normal
+                "
+              >
                 {' '}optional
               </span>
             </label>
@@ -282,7 +544,10 @@ export default function NotificationRegistration() {
                 focus:ring-emerald-500/20
               "
             />
+
           </div>
+
+          {/* ERROR */}
 
           {error && (
             <div
@@ -301,6 +566,8 @@ export default function NotificationRegistration() {
             </div>
           )}
 
+          {/* INFO */}
+
           <div
             className="
               rounded-xl
@@ -313,9 +580,11 @@ export default function NotificationRegistration() {
               leading-5
             "
           >
-            🔒 Your details are used only for GCC Cricket
-            notifications.
+            🔒 Your details are used only for
+            GCC Cricket notifications.
           </div>
+
+          {/* BUTTON */}
 
           <button
             type="submit"
@@ -333,8 +602,6 @@ export default function NotificationRegistration() {
               font-bold
               text-base
               transition
-              shadow-lg
-              shadow-emerald-500/10
             "
           >
             {saving
@@ -342,10 +609,19 @@ export default function NotificationRegistration() {
               : '🔔 Notify Me'}
           </button>
 
-          <p className="text-center text-xs text-slate-600">
-            You only need to register once on this device.
+          <p
+            className="
+              text-center
+              text-xs
+              text-slate-600
+            "
+          >
+            You only need to register once
+            on this device.
           </p>
+
         </form>
+
       </div>
     </div>
   );
