@@ -11,31 +11,11 @@ const client = createClient({
 });
 
 /**
- * Convert the arguments used by better-sqlite3 style code
- * into the format expected by @libsql/client.
- *
- * Supported:
- *
- * .run(value1, value2, value3)
- *
- * .run([value1, value2, value3])
- *
- * .run({
- *   id: value,
- *   name: value
- * })
- *
- * Named SQL:
- *   WHERE id = @id
- *
- * Positional SQL:
- *   WHERE id = ?
+ * Convert better-sqlite3 style arguments
+ * into @libsql/client format.
  */
 function normalizeQuery(sql, args) {
-  /*
-   * Case 1:
-   * .run([value1, value2, value3])
-   */
+  // .run([value1, value2, value3])
   if (args.length === 1 && Array.isArray(args[0])) {
     return {
       sql,
@@ -43,16 +23,7 @@ function normalizeQuery(sql, args) {
     };
   }
 
-  /*
-   * Case 2:
-   * .run({
-   *   id: "...",
-   *   name: "..."
-   * })
-   *
-   * Only convert this when the SQL actually
-   * contains named parameters.
-   */
+  // .run({ id: value, name: value })
   if (
     args.length === 1 &&
     args[0] !== null &&
@@ -73,10 +44,6 @@ function normalizeQuery(sql, args) {
       }
     );
 
-    /*
-     * If named parameters were actually found,
-     * use the converted positional query.
-     */
     if (names.length > 0) {
       return {
         sql: normalizedSql,
@@ -84,38 +51,30 @@ function normalizeQuery(sql, args) {
       };
     }
 
-    /*
-     * If there were no @parameters, don't send
-     * the entire object as one SQL argument.
-     *
-     * This protects against the exact
-     * "expected 17, got 1" problem.
-     */
     throw new Error(
       'Database query received an object but SQL contains no named parameters.'
     );
   }
 
-  /*
-   * Case 3:
-   * .run(value1, value2, value3)
-   */
+  // .run(value1, value2, value3)
   return {
     sql,
     args,
   };
 }
 
+/**
+ * Convert special libSQL values into normal JS values.
+ */
 function convertValue(value) {
   if (value === null || value === undefined) {
     return value;
   }
 
-  /*
-   * libSQL can return special numeric/string wrapper values
-   * depending on configuration.
-   */
-  if (typeof value === 'object' && typeof value.valueOf === 'function') {
+  if (
+    typeof value === 'object' &&
+    typeof value.valueOf === 'function'
+  ) {
     const converted = value.valueOf();
 
     if (converted !== value) {
@@ -126,6 +85,9 @@ function convertValue(value) {
   return value;
 }
 
+/**
+ * Convert a database row into a normal object.
+ */
 function convertRow(row) {
   return Object.fromEntries(
     Object.entries(row).map(([key, value]) => [
@@ -133,6 +95,30 @@ function convertRow(row) {
       convertValue(value),
     ])
   );
+}
+
+/**
+ * Remove SQL comments.
+ */
+function removeSqlComments(sql) {
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/--.*$/gm, '');
+}
+
+/**
+ * Split a schema into individual SQL statements.
+ *
+ * Your schema contains normal CREATE TABLE / CREATE INDEX /
+ * PRAGMA statements, so this is safe for the current schema.
+ */
+function splitSqlStatements(schemaSql) {
+  const cleaned = removeSqlComments(schemaSql);
+
+  return cleaned
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
 }
 
 const db = {
@@ -167,12 +153,6 @@ const db = {
       async run(...args) {
         const query = normalizeQuery(sql, args);
 
-        /*
-         * IMPORTANT:
-         *
-         * Always send the normalized argument array
-         * to Turso.
-         */
         return await client.execute({
           sql: query.sql,
           args: query.args,
@@ -185,8 +165,37 @@ const db = {
     return client.execute(statement);
   },
 
-  initSchema(schemaSql) {
-    return client.executeMultiple(schemaSql);
+  /**
+   * Initialize database schema.
+   *
+   * IMPORTANT:
+   * We intentionally execute each SQL statement separately
+   * instead of sending the entire schema to executeMultiple().
+   */
+  async initSchema(schemaSql) {
+    const statements = splitSqlStatements(schemaSql);
+
+    console.log(
+      `📦 Schema contains ${statements.length} SQL statements`
+    );
+
+    for (let i = 0; i < statements.length; i++) {
+      const statement = statements[i];
+
+      try {
+        await client.execute(statement);
+      } catch (error) {
+        console.error(
+          `❌ Schema statement ${i + 1} failed`
+        );
+
+        console.error(statement);
+
+        throw error;
+      }
+    }
+
+    console.log('✅ Database schema initialized successfully');
   },
 };
 
