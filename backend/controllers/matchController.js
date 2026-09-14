@@ -1,7 +1,7 @@
-
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { getScoreboard } = require('../utils/scoreCalculator');
+const { getFirebaseAdmin } = require('../services/firebaseAdmin');
 
 function cleanId(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -35,14 +35,23 @@ async function teamExists(teamId) {
   return !!team;
 }
 
-async function sendLiveMatchNotification(req, matchId, notificationMessage) {
+/*
+ * ============================================================
+ * LIVE MATCH NOTIFICATIONS
+ *
+ * Sends:
+ * 1. Socket.IO notification when website is open
+ * 2. Firebase FCM push notification when browser is closed
+ * ============================================================
+ */
+
+async function sendLiveMatchNotification(
+  req,
+  matchId,
+  notificationMessage
+) {
   try {
     const io = req.app.get('io');
-
-    if (!io) {
-      console.warn('⚠️ Socket.IO instance not available. Notification skipped.');
-      return;
-    }
 
     const match = await db.prepare(`
       SELECT
@@ -58,64 +67,232 @@ async function sendLiveMatchNotification(req, matchId, notificationMessage) {
     `).get(matchId);
 
     if (!match) {
-      console.warn(`⚠️ Match ${matchId} not found while sending notification.`);
+      console.warn(
+        `⚠️ Match ${matchId} not found while sending notification.`
+      );
       return;
     }
 
-    const users = await db.prepare(`
-      SELECT id, name, email, phone
-      FROM notification_users
-      WHERE notifications_enabled = 1
-    `).all();
+    const messageText =
+      notificationMessage ||
+      `${match.team1_name} vs ${match.team2_name} is now live!`;
 
-    const registeredUsers = users || [];
-
-    if (registeredUsers.length === 0) {
-      console.log('🔔 No enabled notification users found.');
-      return;
-    }
+    /*
+     * IMPORTANT:
+     * This is the public Netlify URL that opens when
+     * the user clicks the push notification.
+     */
+    const liveUrl =
+      `https://gcc-cricket.netlify.app/match/${match.id}/live`;
 
     const payload = {
       matchId: String(match.id),
       title: '🏏 GCC Cricket - Match Live',
-      message:
-        notificationMessage ||
-        `${match.team1_name} vs ${match.team2_name} is now live!`,
+      message: messageText,
       teams: `${match.team1_name} vs ${match.team2_name}`,
-      url: `/match/${match.id}/live`
+      url: liveUrl
     };
 
-    let sentCount = 0;
+    /*
+     * ========================================================
+     * 1. SOCKET.IO NOTIFICATION
+     * ========================================================
+     */
 
-    for (const user of registeredUsers) {
-      if (!user?.id) continue;
+    let socketSentCount = 0;
 
-      const room = `notification-user-${String(user.id)}`;
+    if (io) {
+      const users = await db.prepare(`
+        SELECT id
+        FROM notification_users
+        WHERE notifications_enabled = 1
+      `).all();
 
-      const roomSockets = io.sockets.adapter.rooms.get(room);
-      const connectedCount = roomSockets ? roomSockets.size : 0;
+      const registeredUsers = users || [];
+
+      for (const user of registeredUsers) {
+        if (!user?.id) continue;
+
+        const room =
+          `notification-user-${String(user.id)}`;
+
+        const roomSockets =
+          io.sockets.adapter.rooms.get(room);
+
+        const connectedCount =
+          roomSockets ? roomSockets.size : 0;
+
+        console.log(
+          `🔔 Socket room ${room}: ${connectedCount} connected socket(s)`
+        );
+
+        io.to(room).emit(
+          'match-started',
+          payload
+        );
+
+        socketSentCount++;
+
+        console.log(
+          `🔔 Socket notification sent to ${room}`
+        );
+      }
 
       console.log(
-        `🔔 Notification room ${room}: ${connectedCount} connected socket(s)`
+        `🔔 Socket.IO notifications emitted: ${socketSentCount}`
+      );
+    } else {
+      console.warn(
+        '⚠️ Socket.IO instance not available.'
+      );
+    }
+
+    /*
+     * ========================================================
+     * 2. FIREBASE CLOUD MESSAGING
+     * ========================================================
+     */
+
+    const firebaseAdmin = getFirebaseAdmin();
+
+    if (!firebaseAdmin) {
+      console.warn(
+        '⚠️ Firebase Admin unavailable. FCM notification skipped.'
       );
 
-      io.to(room).emit('match-started', payload);
+      return;
+    }
 
-      sentCount++;
+    /*
+     * Get only users who:
+     * - enabled notifications
+     * - have an FCM token
+     */
 
-      console.log(`🔔 Sent live-match notification to ${room}`);
+    const fcmUsers = await db.prepare(`
+      SELECT
+        id,
+        fcm_token
+      FROM notification_users
+      WHERE notifications_enabled = 1
+        AND fcm_token IS NOT NULL
+        AND fcm_token != ''
+    `).all();
+
+    const usersWithTokens = fcmUsers || [];
+
+    if (usersWithTokens.length === 0) {
+      console.log(
+        '🔔 No notification users with FCM tokens found.'
+      );
+
+      return;
+    }
+
+    let fcmSentCount = 0;
+    let fcmFailedCount = 0;
+
+    for (const user of usersWithTokens) {
+      if (!user?.id || !user?.fcm_token) {
+        continue;
+      }
+
+      const fcmMessage = {
+        token: String(user.fcm_token),
+
+        notification: {
+          title: payload.title,
+          body: payload.message
+        },
+
+        data: {
+          matchId: String(match.id),
+          title: payload.title,
+          body: payload.message,
+          teams: payload.teams,
+          url: payload.url
+        },
+
+        webpush: {
+          fcmOptions: {
+            link: payload.url
+          }
+        }
+      };
+
+      try {
+        const response =
+          await firebaseAdmin
+            .messaging()
+            .send(fcmMessage);
+
+        fcmSentCount++;
+
+        console.log(
+          `📱 FCM notification sent to user ${user.id}: ${response}`
+        );
+      } catch (fcmError) {
+        fcmFailedCount++;
+
+        console.error(
+          `❌ FCM notification failed for user ${user.id}:`,
+          fcmError?.message || fcmError
+        );
+
+        /*
+         * Remove expired/invalid FCM tokens.
+         */
+
+        const errorCode =
+          fcmError?.code || '';
+
+        if (
+          errorCode ===
+            'messaging/registration-token-not-registered' ||
+          errorCode ===
+            'messaging/invalid-registration-token'
+        ) {
+          try {
+            await db.prepare(`
+              UPDATE notification_users
+              SET fcm_token = NULL
+              WHERE id = ?
+            `).run(user.id);
+
+            console.log(
+              `🧹 Removed invalid FCM token for user ${user.id}`
+            );
+          } catch (cleanupError) {
+            console.error(
+              `❌ Failed to remove invalid FCM token for user ${user.id}:`,
+              cleanupError
+            );
+          }
+        }
+      }
     }
 
     console.log(
-      `🔔 Live match notification emitted to ${sentCount} registered user room(s).`
+      `📱 FCM notification summary: ${fcmSentCount} sent, ${fcmFailedCount} failed`
     );
   } catch (notificationError) {
+    /*
+     * Notification errors must NEVER break
+     * the actual cricket match operation.
+     */
+
     console.error(
       '❌ Failed to send live match notification:',
       notificationError
     );
   }
 }
+
+/*
+ * ============================================================
+ * LIST MATCHES
+ * ============================================================
+ */
 
 exports.listMatches = async (req, res) => {
   try {
@@ -134,9 +311,19 @@ exports.listMatches = async (req, res) => {
 
     return res.json(matches || []);
   } catch (error) {
-    return sendError(res, error, 'Failed to load matches');
+    return sendError(
+      res,
+      error,
+      'Failed to load matches'
+    );
   }
 };
+
+/*
+ * ============================================================
+ * CREATE MATCH
+ * ============================================================
+ */
 
 exports.createMatch = async (req, res) => {
   try {
@@ -183,7 +370,11 @@ exports.createMatch = async (req, res) => {
         ? 20
         : Number(overs_limit);
 
-    if (!Number.isFinite(overs) || overs <= 0 || overs > 1000) {
+    if (
+      !Number.isFinite(overs) ||
+      overs <= 0 ||
+      overs > 1000
+    ) {
       return res.status(400).json({
         error: 'overs_limit must be between 1 and 1000'
       });
@@ -217,9 +408,19 @@ exports.createMatch = async (req, res) => {
 
     return res.status(201).json(created);
   } catch (error) {
-    return sendError(res, error, 'Failed to create match');
+    return sendError(
+      res,
+      error,
+      'Failed to create match'
+    );
   }
 };
+
+/*
+ * ============================================================
+ * SET TOSS / START FIRST INNINGS
+ * ============================================================
+ */
 
 exports.setToss = async (req, res) => {
   try {
@@ -259,7 +460,8 @@ exports.setToss = async (req, res) => {
       ].includes(String(tossWinner))
     ) {
       return res.status(400).json({
-        error: 'toss_winner_id must be one of the two playing teams'
+        error:
+          'toss_winner_id must be one of the two playing teams'
       });
     }
 
@@ -355,14 +557,17 @@ exports.setToss = async (req, res) => {
       throw inningsError;
     }
 
-    const updatedMatch = await getMatchById(matchId);
+    const updatedMatch =
+      await getMatchById(matchId);
 
     await sendLiveMatchNotification(
       req,
       matchId,
-      `${match.team1_id && match.team2_id
-        ? 'GCC Cricket match'
-        : 'Match'} is now live!`
+      `${
+        match.team1_id && match.team2_id
+          ? 'GCC Cricket match'
+          : 'Match'
+      } is now live!`
     );
 
     return res.json({
@@ -372,9 +577,19 @@ exports.setToss = async (req, res) => {
       bowling_first_id: bowlingFirstId
     });
   } catch (error) {
-    return sendError(res, error, 'Failed to set toss');
+    return sendError(
+      res,
+      error,
+      'Failed to set toss'
+    );
   }
 };
+
+/*
+ * ============================================================
+ * START SECOND INNINGS
+ * ============================================================
+ */
 
 exports.startSecondInnings = async (req, res) => {
   try {
@@ -390,7 +605,8 @@ exports.startSecondInnings = async (req, res) => {
 
     if (match.status !== 'innings-break') {
       return res.status(400).json({
-        error: 'Match is not ready for the second innings'
+        error:
+          'Match is not ready for the second innings'
       });
     }
 
@@ -410,7 +626,8 @@ exports.startSecondInnings = async (req, res) => {
 
     if (Number(inn1.is_completed) !== 1) {
       return res.status(400).json({
-        error: 'First innings has not finished yet'
+        error:
+          'First innings has not finished yet'
       });
     }
 
@@ -424,31 +641,40 @@ exports.startSecondInnings = async (req, res) => {
 
     if (existingSecond) {
       return res.status(400).json({
-        error: 'Second innings already exists'
+        error:
+          'Second innings already exists'
       });
     }
 
-    const target = Number(inn1.total_runs || 0) + 1;
+    const target =
+      Number(inn1.total_runs || 0) + 1;
+
     const inningsId = uuidv4();
 
-    const battingTeam = inn1.bowling_team_id;
-    const bowlingTeam = inn1.batting_team_id;
+    const battingTeam =
+      inn1.bowling_team_id;
+
+    const bowlingTeam =
+      inn1.batting_team_id;
 
     if (!battingTeam || !bowlingTeam) {
       return res.status(400).json({
-        error: 'First innings team information is incomplete'
+        error:
+          'First innings team information is incomplete'
       });
     }
 
     if (!(await teamExists(battingTeam))) {
       return res.status(400).json({
-        error: 'Second innings batting team does not exist'
+        error:
+          'Second innings batting team does not exist'
       });
     }
 
     if (!(await teamExists(bowlingTeam))) {
       return res.status(400).json({
-        error: 'Second innings bowling team does not exist'
+        error:
+          'Second innings bowling team does not exist'
       });
     }
 
@@ -519,6 +745,12 @@ exports.startSecondInnings = async (req, res) => {
   }
 };
 
+/*
+ * ============================================================
+ * GET MATCH DETAIL
+ * ============================================================
+ */
+
 exports.getMatchDetail = async (req, res) => {
   try {
     const matchId = cleanId(req.params.id);
@@ -555,7 +787,9 @@ exports.getMatchDetail = async (req, res) => {
 
     for (const inningsRow of inningsRows) {
       try {
-        const scoreboard = await getScoreboard(inningsRow.id);
+        const scoreboard =
+          await getScoreboard(inningsRow.id);
+
         innings.push(scoreboard);
       } catch (scoreError) {
         console.error(
@@ -565,7 +799,8 @@ exports.getMatchDetail = async (req, res) => {
 
         innings.push({
           innings: inningsRow,
-          error: 'Scoreboard temporarily unavailable'
+          error:
+            'Scoreboard temporarily unavailable'
         });
       }
     }
@@ -594,6 +829,12 @@ exports.getMatchDetail = async (req, res) => {
   }
 };
 
+/*
+ * ============================================================
+ * DELETE MATCH
+ * ============================================================
+ */
+
 exports.deleteMatch = async (req, res) => {
   try {
     const matchId = cleanId(req.params.id);
@@ -604,7 +845,8 @@ exports.deleteMatch = async (req, res) => {
       });
     }
 
-    const match = await getMatchById(matchId);
+    const match =
+      await getMatchById(matchId);
 
     if (!match) {
       return res.status(404).json({
@@ -619,7 +861,8 @@ exports.deleteMatch = async (req, res) => {
       ORDER BY innings_number DESC
     `).all(matchId);
 
-    const inningsList = inningsRows || [];
+    const inningsList =
+      inningsRows || [];
 
     for (const inningsRow of inningsList) {
       if (!inningsRow?.id) continue;
@@ -646,9 +889,11 @@ exports.deleteMatch = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Match and all scoring data were deleted successfully.',
+      message:
+        'Match and all scoring data were deleted successfully.',
       match_id: matchId,
-      innings_deleted: inningsList.length
+      innings_deleted:
+        inningsList.length
     });
   } catch (error) {
     console.error(
@@ -665,7 +910,8 @@ exports.deleteMatch = async (req, res) => {
       message.includes('constraint')
     ) {
       return res.status(409).json({
-        error: 'This match is still linked to other data and could not be deleted.',
+        error:
+          'This match is still linked to other data and could not be deleted.',
         protected: true
       });
     }
