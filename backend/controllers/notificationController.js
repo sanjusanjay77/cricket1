@@ -1,3 +1,4 @@
+
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 
@@ -15,6 +16,14 @@ function cleanEmail(value) {
 
 function cleanPhone(value) {
   return cleanText(value, 20).replace(/[^\d+]/g, '');
+}
+
+function cleanFcmToken(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+
+  return String(value).trim().slice(0, 4096);
 }
 
 function isValidEmail(email) {
@@ -135,6 +144,7 @@ exports.registerUser = async (req, res) => {
         email,
         phone,
         notifications_enabled,
+        fcm_token,
         created_at
       FROM notification_users
       WHERE id = ?
@@ -172,6 +182,7 @@ exports.getUser = async (req, res) => {
         email,
         phone,
         notifications_enabled,
+        fcm_token,
         created_at
       FROM notification_users
       WHERE id = ?
@@ -240,6 +251,7 @@ exports.updatePreferences = async (req, res) => {
         email,
         phone,
         notifications_enabled,
+        fcm_token,
         created_at
       FROM notification_users
       WHERE id = ?
@@ -259,3 +271,101 @@ exports.updatePreferences = async (req, res) => {
     });
   }
 };
+
+
+// =====================================================
+// SAVE FCM TOKEN
+// PUT /api/notifications/:id/fcm-token
+// =====================================================
+exports.saveFcmToken = async (req, res) => {
+  try {
+    const userId = cleanText(req.params.id, 100);
+    const fcmToken = cleanFcmToken(req.body.fcm_token);
+
+
+    // ---------------------------------------------
+    // Validate token
+    // ---------------------------------------------
+    if (!userId) {
+      return res.status(400).json({
+        error: 'User ID is required.'
+      });
+    }
+
+    if (!fcmToken) {
+      return res.status(400).json({
+        error: 'FCM token is required.'
+      });
+    }
+
+
+    // ---------------------------------------------
+    // Check user
+    // ---------------------------------------------
+    const existing = await db.prepare(`
+      SELECT id
+      FROM notification_users
+      WHERE id = ?
+      LIMIT 1
+    `).get(userId);
+
+
+    if (!existing) {
+      return res.status(404).json({
+        error: 'User not found.'
+      });
+    }
+
+
+    // ---------------------------------------------
+    // Save FCM token
+    // ---------------------------------------------
+    await db.prepare(`
+      UPDATE notification_users
+      SET fcm_token = ?
+      WHERE id = ?
+    `).run(
+      fcmToken,
+      userId
+    );
+
+
+    // ---------------------------------------------
+    // Return updated user
+    // ---------------------------------------------
+    const user = await db.prepare(`
+      SELECT
+        id,
+        name,
+        email,
+        phone,
+        notifications_enabled,
+        fcm_token,
+        created_at
+      FROM notification_users
+      WHERE id = ?
+    `).get(userId);
+
+
+    console.log(
+      `🔔 FCM token saved for notification user: ${userId}`
+    );
+
+
+    return res.json({
+      success: true,
+      user
+    });
+
+  } catch (error) {
+    console.error(
+      'Save FCM token error:',
+      error
+    );
+
+    return res.status(500).json({
+      error: 'Unable to save FCM token.'
+    });
+  }
+};
+
