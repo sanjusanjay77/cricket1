@@ -1,3 +1,4 @@
+
 const { createClient } = require('@libsql/client');
 require('dotenv').config();
 
@@ -108,9 +109,6 @@ function removeSqlComments(sql) {
 
 /**
  * Split a schema into individual SQL statements.
- *
- * Your schema contains normal CREATE TABLE / CREATE INDEX /
- * PRAGMA statements, so this is safe for the current schema.
  */
 function splitSqlStatements(schemaSql) {
   const cleaned = removeSqlComments(schemaSql);
@@ -119,6 +117,91 @@ function splitSqlStatements(schemaSql) {
     .split(';')
     .map((statement) => statement.trim())
     .filter(Boolean);
+}
+
+/**
+ * Check whether a column exists in a table.
+ */
+async function columnExists(tableName, columnName) {
+  const result = await client.execute({
+    sql: `PRAGMA table_info(${tableName})`,
+  });
+
+  const columns = result.rows || [];
+
+  return columns.some(
+    (column) => String(column.name) === columnName
+  );
+}
+
+/**
+ * Add columns that are required by newer versions
+ * of the application.
+ *
+ * This replaces the need for a migrations folder
+ * for these small schema updates.
+ */
+async function ensureDatabaseUpdates() {
+  console.log('🔄 Checking database updates...');
+
+  try {
+    /**
+     * FCM Web Push token.
+     *
+     * Existing notification_users tables will receive
+     * this column automatically.
+     */
+    const hasFcmToken = await columnExists(
+      'notification_users',
+      'fcm_token'
+    );
+
+    if (!hasFcmToken) {
+      console.log(
+        '➕ Adding fcm_token column to notification_users...'
+      );
+
+      await client.execute(`
+        ALTER TABLE notification_users
+        ADD COLUMN fcm_token TEXT
+      `);
+
+      console.log(
+        '✅ fcm_token column added successfully'
+      );
+    } else {
+      console.log(
+        '✅ fcm_token column already exists'
+      );
+    }
+
+    /**
+     * Future database updates can be added here.
+     *
+     * Example:
+     *
+     * const exists = await columnExists(
+     *   'some_table',
+     *   'some_column'
+     * );
+     *
+     * if (!exists) {
+     *   await client.execute(
+     *     'ALTER TABLE some_table ADD COLUMN some_column TEXT'
+     *   );
+     * }
+     */
+  } catch (error) {
+    console.error(
+      '❌ Database update failed:'
+    );
+
+    console.error(error);
+
+    throw error;
+  }
+
+  console.log('✅ Database updates completed');
 }
 
 const db = {
@@ -167,10 +250,6 @@ const db = {
 
   /**
    * Initialize database schema.
-   *
-   * IMPORTANT:
-   * We intentionally execute each SQL statement separately
-   * instead of sending the entire schema to executeMultiple().
    */
   async initSchema(schemaSql) {
     const statements = splitSqlStatements(schemaSql);
@@ -195,8 +274,17 @@ const db = {
       }
     }
 
-    console.log('✅ Database schema initialized successfully');
+    console.log(
+      '✅ Database schema initialized successfully'
+    );
+
+    /**
+     * Run database updates AFTER the main schema
+     * has been initialized.
+     */
+    await ensureDatabaseUpdates();
   },
 };
 
 module.exports = db;
+
