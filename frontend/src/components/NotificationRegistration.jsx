@@ -1,8 +1,10 @@
+
 import { useEffect, useState } from 'react';
 import { Notifications } from '../api/api.js';
 import socket, {
   registerNotificationUser
 } from '../socket.js';
+import { requestPushPermission } from '../notifications.js';
 
 const STORAGE_KEY = 'gccNotificationUserId';
 
@@ -26,7 +28,7 @@ export default function NotificationRegistration() {
   }, []);
 
   /* =======================================================
-     LISTEN FOR LIVE MATCH NOTIFICATIONS
+     LISTEN FOR SOCKET.IO LIVE MATCH NOTIFICATIONS
   ======================================================= */
 
   useEffect(() => {
@@ -37,7 +39,13 @@ export default function NotificationRegistration() {
       );
 
       /*
-       * Browser notification
+       * Socket.IO browser notification.
+       *
+       * This works while the GCC Cricket page/browser
+       * JavaScript is running.
+       *
+       * Firebase Cloud Messaging handles background
+       * notifications when the page is not open.
        */
       if (
         'Notification' in window &&
@@ -51,12 +59,10 @@ export default function NotificationRegistration() {
               body:
                 notification.message ||
                 'A match is now live!',
-              icon:
-                '/favicon.ico',
+              icon: '/favicon.ico',
               tag:
                 `gcc-match-${notification.matchId}`,
-              requireInteraction:
-                true
+              requireInteraction: true
             }
           );
 
@@ -75,10 +81,6 @@ export default function NotificationRegistration() {
           browserNotification.close();
         };
       } else {
-        /*
-         * Fallback if browser notification
-         * permission is unavailable.
-         */
         console.log(
           '🔔 Match is live:',
           notification
@@ -100,7 +102,56 @@ export default function NotificationRegistration() {
   }, []);
 
   /* =======================================================
-     CHECK USER
+     SET UP FCM PUSH NOTIFICATIONS
+  ======================================================= */
+
+  const setupPushNotifications = async (userId) => {
+    if (!userId) {
+      console.warn(
+        '⚠️ Cannot setup push notifications: user ID missing.'
+      );
+
+      return null;
+    }
+
+    try {
+      console.log(
+        '🔔 Setting up Firebase push notifications...'
+      );
+
+      const token =
+        await requestPushPermission(userId);
+
+      if (token) {
+        console.log(
+          '🎉 Firebase push notifications enabled.'
+        );
+
+        return token;
+      }
+
+      console.warn(
+        '⚠️ Firebase push notification setup was not completed.'
+      );
+
+      return null;
+
+    } catch (error) {
+      /*
+       * Push notification failure should NOT prevent
+       * normal GCC Cricket registration.
+       */
+      console.error(
+        '❌ Firebase push setup error:',
+        error
+      );
+
+      return null;
+    }
+  };
+
+  /* =======================================================
+     CHECK EXISTING USER
   ======================================================= */
 
   const checkExistingUser = async () => {
@@ -114,12 +165,14 @@ export default function NotificationRegistration() {
     }
 
     try {
-      await Notifications.getUser(
-        savedUserId
-      );
+      const result =
+        await Notifications.getUser(
+          savedUserId
+        );
 
       /*
        * Existing user.
+       *
        * Connect this browser to the user's
        * Socket.IO notification room.
        */
@@ -128,9 +181,24 @@ export default function NotificationRegistration() {
       );
 
       /*
+       * Setup Firebase push notifications again.
+       *
+       * Firebase getToken() normally returns the
+       * existing token if one already exists.
+       */
+      setupPushNotifications(
+        savedUserId
+      );
+
+      /*
        * No registration form.
        */
       setShow(false);
+
+      console.log(
+        '✅ Existing notification user loaded:',
+        result
+      );
 
     } catch (err) {
       console.error(
@@ -150,7 +218,7 @@ export default function NotificationRegistration() {
   };
 
   /* =======================================================
-     REGISTER
+     REGISTER USER
   ======================================================= */
 
   const handleSubmit = async (e) => {
@@ -178,29 +246,11 @@ export default function NotificationRegistration() {
     setSaving(true);
 
     try {
-
       /*
-       * Ask browser permission.
+       * Register user in database FIRST.
        *
-       * This happens after the user clicks
-       * Notify Me, which is required by
-       * modern browsers.
-       */
-      if (
-        'Notification' in window &&
-        Notification.permission === 'default'
-      ) {
-        const permission =
-          await Notification.requestPermission();
-
-        console.log(
-          '🔔 Notification permission:',
-          permission
-        );
-      }
-
-      /*
-       * Register user in database.
+       * We need the generated user ID before
+       * we can save the FCM token.
        */
       const result =
         await Notifications.register({
@@ -237,7 +287,9 @@ export default function NotificationRegistration() {
       );
 
       /*
-       * Hide registration form.
+       * Hide registration form immediately.
+       *
+       * Firebase permission/setup happens next.
        */
       setShow(false);
 
@@ -246,8 +298,18 @@ export default function NotificationRegistration() {
         userId
       );
 
-    } catch (err) {
+      /*
+       * Now request Firebase push permission
+       * and save the FCM token.
+       *
+       * Failure here does NOT undo the user's
+       * normal notification registration.
+       */
+      await setupPushNotifications(
+        userId
+      );
 
+    } catch (err) {
       console.error(
         'Notification registration failed:',
         err
@@ -457,6 +519,7 @@ export default function NotificationRegistration() {
               "
             >
               Email address
+
               <span
                 className="
                   text-slate-500
@@ -509,6 +572,7 @@ export default function NotificationRegistration() {
               "
             >
               Phone number
+
               <span
                 className="
                   text-slate-500
@@ -626,3 +690,4 @@ export default function NotificationRegistration() {
     </div>
   );
 }
+
