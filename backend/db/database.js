@@ -1,5 +1,5 @@
 
-const { createClient } = require('@libsql/client');
+const { createClient } = require('@tursodatabase/serverless/compat');
 require('dotenv').config();
 
 if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
