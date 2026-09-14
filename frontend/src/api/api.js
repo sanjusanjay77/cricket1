@@ -78,4 +78,21 @@ export const Records = {
     api.get('/records').then(r => r.data),
 };
 
+export const Notifications = {
+  register: (data) =>
+    api.post('/notifications/register', data).then(r => r.data),
+
+  unregister: (data) =>
+    api.post('/notifications/unregister', data).then(r => r.data),
+};
+
+export function getApiErrorMessage(error, fallback = 'Something went wrong') {
+  return (
+    error?.response?.data?.message ||
+    error?.response?.data?.error ||
+    error?.message ||
+    fallback
+  );
+}
+
 export default api;
