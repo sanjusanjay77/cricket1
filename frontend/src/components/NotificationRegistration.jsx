@@ -51,20 +51,37 @@ export default function NotificationRegistration() {
         'Notification' in window &&
         Notification.permission === 'granted'
       ) {
-        const browserNotification =
-          new Notification(
-            notification.title ||
-              '🏏 GCC Cricket - Live Match',
-            {
-              body:
-                notification.message ||
-                'A match is now live!',
-              icon: '/favicon.ico',
-              tag:
-                `gcc-match-${notification.matchId}`,
-              requireInteraction: true
-            }
-          );
+        const notificationOptions = {
+  body:
+    notification.message ||
+    'A match is now live!',
+  icon: '/favicon.ico',
+  badge: '/favicon.ico',
+  tag:
+    `gcc-match-${notification.matchId}`,
+  requireInteraction: true,
+  data: {
+    matchId: notification.matchId,
+    url:
+      notification.url ||
+      `/match/${notification.matchId}/live`
+  }
+};
+
+navigator.serviceWorker.ready
+  .then((registration) => {
+    return registration.showNotification(
+      notification.title ||
+        '🏏 GCC Cricket - Live Match',
+      notificationOptions
+    );
+  })
+  .catch((error) => {
+    console.error(
+      '❌ Failed to show notification:',
+      error
+    );
+  });
 
         /*
          * Open live scoreboard when
