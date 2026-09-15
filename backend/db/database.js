@@ -89,7 +89,16 @@ function convertValue(value) {
 /**
  * Convert a database row into a normal object.
  */
-function convertRow(row) {
+function convertRow(row, columns = []) {
+  if (Array.isArray(row)) {
+    return Object.fromEntries(
+      columns.map((column, index) => [
+        column,
+        convertValue(row[index]),
+      ])
+    );
+  }
+
   return Object.fromEntries(
     Object.entries(row).map(([key, value]) => [
       key,
@@ -219,7 +228,7 @@ const db = {
           return undefined;
         }
 
-        return convertRow(result.rows[0]);
+        return convertRow(result.rows[0], result.columns);
       },
 
       async all(...args) {
@@ -230,7 +239,9 @@ const db = {
           args: query.args,
         });
 
-        return (result.rows || []).map(convertRow);
+        return (result.rows || []).map((row) =>
+          convertRow(row, result.columns)
+        );
       },
 
       async run(...args) {
