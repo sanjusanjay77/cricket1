@@ -82,6 +82,9 @@ export const Notifications = {
   register: (data) =>
     api.post('/notifications/register', data).then(r => r.data),
 
+  getUser: (id) =>
+    api.get(`/notifications/${id}`).then(r => r.data),
+
   unregister: (data) =>
     api.post('/notifications/unregister', data).then(r => r.data),
 };

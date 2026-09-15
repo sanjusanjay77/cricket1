@@ -7,7 +7,7 @@ const VAPID_KEY =
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
-  'https://cricket1-mvsi.onrender.com';
+  'https://cricket1-mvsi.onrender.com/api';
 
 
 // =====================================================
@@ -32,7 +32,7 @@ async function saveFcmToken(userId, token) {
 
   try {
     const response = await fetch(
-      `${API_URL}/api/notifications/${userId}/fcm-token`,
+      `${API_URL}/notifications/${userId}/fcm-token`,
       {
         method: 'PUT',
 
