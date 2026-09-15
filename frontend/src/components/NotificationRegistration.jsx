@@ -87,16 +87,6 @@ navigator.serviceWorker.ready
          * Open live scoreboard when
          * notification is clicked.
          */
-        browserNotification.onclick = () => {
-          window.focus();
-
-          if (notification.matchId) {
-            window.location.href =
-              `/match/${notification.matchId}/live`;
-          }
-
-          browserNotification.close();
-        };
       } else {
         console.log(
           '🔔 Match is live:',
