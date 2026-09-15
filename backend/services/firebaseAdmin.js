@@ -1,4 +1,4 @@
-const admin = require('firebase-admin');
+const { initializeApp, cert } = require('firebase-admin/app');
 
 let firebaseAdmin = null;
 
@@ -20,8 +20,8 @@ function getFirebaseAdmin() {
   }
 
   try {
-    firebaseAdmin = admin.initializeApp({
-      credential: admin.credential.cert({
+    firebaseAdmin = initializeApp({
+      credential: cert({
         projectId,
         clientEmail,
         privateKey: privateKey.replace(/\\n/g, '\n')
