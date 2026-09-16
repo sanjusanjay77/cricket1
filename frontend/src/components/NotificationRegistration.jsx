@@ -19,6 +19,12 @@ export default function NotificationRegistration() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const [notificationUserId, setNotificationUserId] =
+    useState(null);
+
+  const [testStatus, setTestStatus] = useState('');
+  const [testing, setTesting] = useState(false);
+
   /* =======================================================
      CHECK EXISTING USER
   ======================================================= */
@@ -38,55 +44,52 @@ export default function NotificationRegistration() {
         notification
       );
 
-      /*
-       * Socket.IO browser notification.
-       *
-       * This works while the GCC Cricket page/browser
-       * JavaScript is running.
-       *
-       * Firebase Cloud Messaging handles background
-       * notifications when the page is not open.
-       */
       if (
         'Notification' in window &&
         Notification.permission === 'granted'
       ) {
         const notificationOptions = {
-  body:
-    notification.message ||
-    'A match is now live!',
-  icon: '/favicon.ico',
-  badge: '/favicon.ico',
-  tag:
-    `gcc-match-${notification.matchId}`,
-  requireInteraction: true,
-  data: {
-    matchId: notification.matchId,
-    url:
-      notification.url ||
-      `/match/${notification.matchId}/live`
-  }
-};
+          body:
+            notification?.message ||
+            'A match is now live!',
 
-navigator.serviceWorker.ready
-  .then((registration) => {
-    return registration.showNotification(
-      notification.title ||
-        '🏏 GCC Cricket - Live Match',
-      notificationOptions
-    );
-  })
-  .catch((error) => {
-    console.error(
-      '❌ Failed to show notification:',
-      error
-    );
-  });
+          icon: '/favicon.ico',
 
-        /*
-         * Open live scoreboard when
-         * notification is clicked.
-         */
+          badge: '/favicon.ico',
+
+          tag:
+            `gcc-match-${notification?.matchId}`,
+
+          requireInteraction: true,
+
+          data: {
+            matchId:
+              notification?.matchId,
+
+            url:
+              notification?.url ||
+              (
+                notification?.matchId
+                  ? `/match/${notification.matchId}/live`
+                  : '/'
+              )
+          }
+        };
+
+        navigator.serviceWorker.ready
+          .then((registration) => {
+            return registration.showNotification(
+              notification?.title ||
+                '🏏 GCC Cricket - Live Match',
+              notificationOptions
+            );
+          })
+          .catch((error) => {
+            console.error(
+              '❌ Failed to show notification:',
+              error
+            );
+          });
       } else {
         console.log(
           '🔔 Match is live:',
@@ -144,16 +147,158 @@ navigator.serviceWorker.ready
       return null;
 
     } catch (error) {
-      /*
-       * Push notification failure should NOT prevent
-       * normal GCC Cricket registration.
-       */
       console.error(
         '❌ Firebase push setup error:',
         error
       );
 
       return null;
+    }
+  };
+
+  /* =======================================================
+     TEST MOBILE NOTIFICATION
+  ======================================================= */
+
+  const testMobileNotification = async () => {
+    setTesting(true);
+    setTestStatus('🔄 Starting test...');
+
+    try {
+      /*
+       * STEP 1
+       * Check browser notification support.
+       */
+      if (!('Notification' in window)) {
+        throw new Error(
+          'This browser does not support notifications.'
+        );
+      }
+
+      if (!('serviceWorker' in navigator)) {
+        throw new Error(
+          'This browser does not support Service Workers.'
+        );
+      }
+
+      setTestStatus(
+        `1/4 ✅ Browser supported. Permission: ${Notification.permission}`
+      );
+
+      /*
+       * STEP 2
+       * Check/request notification permission.
+       */
+      let permission =
+        Notification.permission;
+
+      if (permission !== 'granted') {
+        permission =
+          await Notification.requestPermission();
+      }
+
+      if (permission !== 'granted') {
+        throw new Error(
+          `Notification permission is "${permission}".`
+        );
+      }
+
+      setTestStatus(
+        '2/4 ✅ Notification permission granted.'
+      );
+
+      /*
+       * STEP 3
+       * Check Firebase Service Worker.
+       */
+      const registration =
+        await navigator.serviceWorker.register(
+          '/firebase-messaging-sw.js'
+        );
+
+      await navigator.serviceWorker.ready;
+
+      setTestStatus(
+        '3/4 ✅ Firebase Service Worker is ready.'
+      );
+
+      /*
+       * Show a direct browser notification.
+       *
+       * This does NOT depend on Firebase.
+       * If this appears on mobile, browser
+       * notifications themselves are working.
+       */
+      await registration.showNotification(
+        '🏏 GCC Cricket Mobile Test',
+        {
+          body:
+            'Mobile browser notifications are working.',
+
+          icon: '/favicon.ico',
+
+          badge: '/favicon.ico',
+
+          tag: 'gcc-mobile-test',
+
+          requireInteraction: true,
+
+          data: {
+            url: '/'
+          }
+        }
+      );
+
+      /*
+       * STEP 4
+       * Run your existing Firebase registration.
+       *
+       * This calls the same requestPushPermission()
+       * already used by the real application.
+       */
+      setTestStatus(
+        '4/4 🔄 Testing Firebase FCM token...'
+      );
+
+      const userId =
+        notificationUserId ||
+        localStorage.getItem(
+          STORAGE_KEY
+        );
+
+      if (!userId) {
+        throw new Error(
+          'No notification user ID found on this device.'
+        );
+      }
+
+      const token =
+        await setupPushNotifications(
+          userId
+        );
+
+      if (!token) {
+        throw new Error(
+          'Firebase did not return an FCM token. Check the browser console.'
+        );
+      }
+
+      setTestStatus(
+        '🎉 SUCCESS — Mobile notification + Firebase FCM are working.'
+      );
+
+    } catch (err) {
+      console.error(
+        '❌ Mobile notification test failed:',
+        err
+      );
+
+      setTestStatus(
+        `❌ FAILED: ${err?.message || 'Unknown error'}`
+      );
+
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -177,9 +322,11 @@ navigator.serviceWorker.ready
           savedUserId
         );
 
+      setNotificationUserId(
+        savedUserId
+      );
+
       /*
-       * Existing user.
-       *
        * Connect this browser to the user's
        * Socket.IO notification room.
        */
@@ -189,17 +336,11 @@ navigator.serviceWorker.ready
 
       /*
        * Setup Firebase push notifications again.
-       *
-       * Firebase getToken() normally returns the
-       * existing token if one already exists.
        */
       setupPushNotifications(
         savedUserId
       );
 
-      /*
-       * No registration form.
-       */
       setShow(false);
 
       console.log(
@@ -255,9 +396,6 @@ navigator.serviceWorker.ready
     try {
       /*
        * Register user in database FIRST.
-       *
-       * We need the generated user ID before
-       * we can save the FCM token.
        */
       const result =
         await Notifications.register({
@@ -266,9 +404,7 @@ navigator.serviceWorker.ready
           phone: phone.trim()
         });
 
-      if (
-        !result?.user?.id
-      ) {
+      if (!result?.user?.id) {
         throw new Error(
           'Registration failed. Please try again.'
         );
@@ -285,18 +421,19 @@ navigator.serviceWorker.ready
         userId
       );
 
+      setNotificationUserId(
+        userId
+      );
+
       /*
-       * Connect user to their Socket.IO
-       * notification room.
+       * Connect user to Socket.IO room.
        */
       registerNotificationUser(
         userId
       );
 
       /*
-       * Hide registration form immediately.
-       *
-       * Firebase permission/setup happens next.
+       * Hide registration form.
        */
       setShow(false);
 
@@ -306,11 +443,7 @@ navigator.serviceWorker.ready
       );
 
       /*
-       * Now request Firebase push permission
-       * and save the FCM token.
-       *
-       * Failure here does NOT undo the user's
-       * normal notification registration.
+       * Setup Firebase push.
        */
       await setupPushNotifications(
         userId
@@ -334,15 +467,86 @@ navigator.serviceWorker.ready
   };
 
   /* =======================================================
-     RENDER
+     LOADING
   ======================================================= */
 
-  if (
-    checking ||
-    !show
-  ) {
+  if (checking) {
     return null;
   }
+
+  /* =======================================================
+     EXISTING USER
+     SHOW TEMPORARY TEST BUTTON
+  ======================================================= */
+
+  if (!show) {
+    return (
+      <div
+        className="
+          fixed
+          bottom-4
+          right-4
+          z-[9999]
+          w-[calc(100%-2rem)]
+          sm:w-auto
+          sm:min-w-[280px]
+        "
+      >
+        <div
+          className="
+            rounded-2xl
+            bg-slate-950
+            border
+            border-slate-800
+            shadow-2xl
+            p-3
+          "
+        >
+          <button
+            type="button"
+            onClick={testMobileNotification}
+            disabled={testing}
+            className="
+              w-full
+              min-h-[46px]
+              px-4
+              rounded-xl
+              bg-emerald-500
+              hover:bg-emerald-400
+              disabled:opacity-50
+              disabled:cursor-not-allowed
+              text-white
+              font-bold
+              transition
+            "
+          >
+            {testing
+              ? '🔄 Testing...'
+              : '🔔 Test Mobile Notification'}
+          </button>
+
+          {testStatus && (
+            <div
+              className="
+                mt-2
+                px-2
+                text-xs
+                leading-5
+                text-slate-300
+                break-words
+              "
+            >
+              {testStatus}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* =======================================================
+     REGISTRATION FORM
+  ======================================================= */
 
   return (
     <div
