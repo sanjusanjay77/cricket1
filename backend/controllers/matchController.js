@@ -1,7 +1,9 @@
+
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const { getScoreboard } = require('../utils/scoreCalculator');
 const { getFirebaseAdmin } = require('../services/firebaseAdmin');
+const { getMessaging } = require('firebase-admin/messaging');
 
 function cleanId(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -77,11 +79,6 @@ async function sendLiveMatchNotification(
       notificationMessage ||
       `${match.team1_name} vs ${match.team2_name} is now live!`;
 
-    /*
-     * IMPORTANT:
-     * This is the public Netlify URL that opens when
-     * the user clicks the push notification.
-     */
     const liveUrl =
       `https://gcc-cricket.netlify.app/match/${match.id}/live`;
 
@@ -163,12 +160,6 @@ async function sendLiveMatchNotification(
       return;
     }
 
-    /*
-     * Get only users who:
-     * - enabled notifications
-     * - have an FCM token
-     */
-
     const fcmUsers = await db.prepare(`
       SELECT
         id,
@@ -207,6 +198,7 @@ async function sendLiveMatchNotification(
 
         data: {
           matchId: String(match.id),
+          match_id: String(match.id),
           title: payload.title,
           body: payload.message,
           teams: payload.teams,
@@ -214,6 +206,13 @@ async function sendLiveMatchNotification(
         },
 
         webpush: {
+          notification: {
+            title: payload.title,
+            body: payload.message,
+            icon: '/favicon.ico',
+            badge: '/favicon.ico'
+          },
+
           fcmOptions: {
             link: payload.url
           }
@@ -221,10 +220,16 @@ async function sendLiveMatchNotification(
       };
 
       try {
+        /*
+         * Firebase Admin SDK v14:
+         * use getMessaging().send()
+         *
+         * Do NOT use:
+         * firebaseAdmin.messaging().send()
+         */
+
         const response =
-          await firebaseAdmin
-            .messaging()
-            .send(fcmMessage);
+          await getMessaging().send(fcmMessage);
 
         fcmSentCount++;
 
@@ -239,12 +244,12 @@ async function sendLiveMatchNotification(
           fcmError?.message || fcmError
         );
 
+        const errorCode =
+          fcmError?.code || '';
+
         /*
          * Remove expired/invalid FCM tokens.
          */
-
-        const errorCode =
-          fcmError?.code || '';
 
         if (
           errorCode ===
@@ -923,3 +928,4 @@ exports.deleteMatch = async (req, res) => {
     );
   }
 };
+
