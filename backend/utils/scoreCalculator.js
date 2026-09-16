@@ -2336,6 +2336,576 @@ async function getPlayerCareerStats(
   };
 }
 
+/**
+ * GET CAREER STATISTICS FOR ALL ACTIVE GCC PLAYERS
+ *
+ * Loads innings and balls once, then calculates
+ * batting + bowling statistics for every player in memory.
+ *
+ * This avoids running separate career-stat database
+ * queries for every player.
+ */
+async function getAllPlayerCareerStats() {
+
+  /*
+   * -------------------------------------------------------
+   * LOAD ACTIVE GCC PLAYERS
+   * -------------------------------------------------------
+   */
+
+  const players =
+    await db.prepare(`
+      SELECT
+        p.*,
+        t.name AS team_name,
+        t.short_name AS team_short,
+        t.logo_color AS team_color
+      FROM players p
+      INNER JOIN teams t
+        ON t.id = p.team_id
+      WHERE p.active = 1
+        AND LOWER(TRIM(t.name)) = 'gcc'
+      ORDER BY
+        p.jersey_no ASC,
+        p.name ASC
+    `).all();
+
+  if (!players.length) {
+    return [];
+  }
+
+  /*
+   * -------------------------------------------------------
+   * CREATE PLAYER STAT MAPS
+   * -------------------------------------------------------
+   */
+
+  const battingStats =
+    new Map();
+
+  const bowlingStats =
+    new Map();
+
+  for (const player of players) {
+
+    const playerId =
+      String(player.id);
+
+    battingStats.set(
+      playerId,
+      {
+        inningsSet: new Set(),
+        runs: 0,
+        ballsFaced: 0,
+        fours: 0,
+        sixes: 0,
+        timesOut: 0,
+        inningsScores: new Map()
+      }
+    );
+
+    bowlingStats.set(
+      playerId,
+      {
+        inningsSet: new Set(),
+        legalBalls: 0,
+        runs: 0,
+        wickets: 0,
+        foursGiven: 0,
+        sixesGiven: 0
+      }
+    );
+  }
+
+  /*
+   * -------------------------------------------------------
+   * LOAD ALL INNINGS ONCE
+   * -------------------------------------------------------
+   */
+
+  const inningsRows =
+    await db.prepare(`
+      SELECT
+        id,
+        match_id,
+        innings_number,
+        batting_team_id
+      FROM innings
+    `).all();
+
+  const inningsMap =
+    new Map(
+      inningsRows.map(
+        innings => [
+          String(innings.id),
+          innings
+        ]
+      )
+    );
+
+  /*
+   * -------------------------------------------------------
+   * LOAD ALL BALLS ONCE
+   * -------------------------------------------------------
+   */
+
+  const balls =
+    await db.prepare(`
+      SELECT *
+      FROM balls
+      ORDER BY
+        innings_id,
+        ball_sequence ASC
+    `).all();
+
+  /*
+   * -------------------------------------------------------
+   * PROCESS EVERY BALL ONCE
+   * -------------------------------------------------------
+   */
+
+  for (const ball of balls) {
+
+    const inningsId =
+      String(ball.innings_id);
+
+    const innings =
+      inningsMap.get(
+        inningsId
+      );
+
+    if (!innings) {
+      continue;
+    }
+
+    /*
+     * ---------------------------------------------------
+     * BATTING
+     * ---------------------------------------------------
+     */
+
+    const batsmanId =
+      String(
+        ball.batsman_id || ''
+      );
+
+    const batting =
+      battingStats.get(
+        batsmanId
+      );
+
+    if (batting) {
+
+      batting.inningsSet.add(
+        inningsId
+      );
+
+      if (
+        !batting.inningsScores.has(
+          inningsId
+        )
+      ) {
+        batting.inningsScores.set(
+          inningsId,
+          0
+        );
+      }
+
+      /*
+       * Wide balls do not count as balls faced.
+       */
+
+      if (
+        ball.extra_type !==
+        'wide'
+      ) {
+        batting.ballsFaced += 1;
+      }
+
+      /*
+       * Batting runs are counted on
+       * normal deliveries and no-balls.
+       */
+
+      if (
+        !ball.extra_type ||
+        ball.extra_type ===
+          'noball'
+      ) {
+
+        const batRuns =
+          Number(
+            ball.runs_batsman || 0
+          );
+
+        batting.runs +=
+          batRuns;
+
+        batting.inningsScores.set(
+          inningsId,
+          Number(
+            batting.inningsScores.get(
+              inningsId
+            ) || 0
+          ) + batRuns
+        );
+
+        if (
+          batRuns === 4
+        ) {
+          batting.fours += 1;
+        }
+
+        if (
+          batRuns === 6
+        ) {
+          batting.sixes += 1;
+        }
+      }
+    }
+
+    /*
+     * ---------------------------------------------------
+     * NON-STRIKER
+     *
+     * A player appearing as non-striker counts as having
+     * batted in that innings, just like the existing
+     * computeCareerBattingStats() function.
+     * ---------------------------------------------------
+     */
+
+    const nonStrikerId =
+      String(
+        ball.non_striker_id || ''
+      );
+
+    const nonStrikerBatting =
+      battingStats.get(
+        nonStrikerId
+      );
+
+    if (
+      nonStrikerBatting
+    ) {
+
+      nonStrikerBatting.inningsSet.add(
+        inningsId
+      );
+
+      if (
+        !nonStrikerBatting.inningsScores.has(
+          inningsId
+        )
+      ) {
+        nonStrikerBatting.inningsScores.set(
+          inningsId,
+          0
+        );
+      }
+    }
+
+    /*
+     * ---------------------------------------------------
+     * DISMISSALS
+     * ---------------------------------------------------
+     */
+
+    if (
+      Number(ball.is_wicket) === 1
+    ) {
+
+      const dismissedId =
+        String(
+          ball.dismissed_id || ''
+        );
+
+      const dismissedBatting =
+        battingStats.get(
+          dismissedId
+        );
+
+      if (
+        dismissedBatting
+      ) {
+        dismissedBatting.timesOut += 1;
+
+        /*
+         * Make sure dismissal innings is counted.
+         */
+
+        dismissedBatting.inningsSet.add(
+          inningsId
+        );
+      }
+    }
+
+    /*
+     * ---------------------------------------------------
+     * BOWLING
+     * ---------------------------------------------------
+     */
+
+    const bowlerId =
+      String(
+        ball.bowler_id || ''
+      );
+
+    const bowling =
+      bowlingStats.get(
+        bowlerId
+      );
+
+    if (
+      !bowling
+    ) {
+      continue;
+    }
+
+    bowling.inningsSet.add(
+      inningsId
+    );
+
+    /*
+     * Legal delivery count.
+     */
+
+    if (
+      Number(ball.is_legal) === 1
+    ) {
+      bowling.legalBalls += 1;
+    }
+
+    /*
+     * Use the SAME run-effect calculation as the
+     * existing bowling statistics.
+     */
+
+    const effect =
+      computeRunEffects({
+        runs:
+          ball.runs_batsman,
+
+        extra_type:
+          ball.extra_type,
+
+        extra_runs:
+          ball.extra_runs
+      });
+
+    /*
+     * Byes and leg-byes are not charged to the bowler.
+     */
+
+    const chargedRuns =
+      ball.extra_type ===
+        'bye' ||
+      ball.extra_type ===
+        'legbye'
+        ? 0
+        : effect.teamRuns;
+
+    bowling.runs +=
+      Number(
+        chargedRuns || 0
+      );
+
+    /*
+     * Run-outs are not credited as bowler wickets.
+     */
+
+    if (
+      Number(ball.is_wicket) === 1 &&
+      ball.wicket_type &&
+      ball.wicket_type !==
+        'run-out'
+    ) {
+
+      bowling.wickets += 1;
+    }
+
+    /*
+     * Boundaries conceded.
+     */
+
+    if (
+      (
+        !ball.extra_type ||
+        ball.extra_type ===
+          'noball'
+      ) &&
+      Number(
+        ball.runs_batsman
+      ) === 4
+    ) {
+
+      bowling.foursGiven += 1;
+    }
+
+    if (
+      (
+        !ball.extra_type ||
+        ball.extra_type ===
+          'noball'
+      ) &&
+      Number(
+        ball.runs_batsman
+      ) === 6
+    ) {
+
+      bowling.sixesGiven += 1;
+    }
+  }
+
+  /*
+   * -------------------------------------------------------
+   * BUILD FINAL RESPONSE
+   * -------------------------------------------------------
+   */
+
+  return players.map(
+    player => {
+
+      const playerId =
+        String(player.id);
+
+      const batting =
+        battingStats.get(
+          playerId
+        );
+
+      const bowling =
+        bowlingStats.get(
+          playerId
+        );
+
+      const inningsBatted =
+        batting.inningsSet.size;
+
+      const inningsScoreValues =
+        [
+          ...batting.inningsScores.values()
+        ].map(
+          value =>
+            Number(value || 0)
+        );
+
+      const highestScore =
+        inningsScoreValues.length > 0
+          ? Math.max(
+              ...inningsScoreValues
+            )
+          : 0;
+
+      const notOuts =
+        Math.max(
+          0,
+          inningsBatted -
+          batting.timesOut
+        );
+
+      const strikeRate =
+        batting.ballsFaced > 0
+          ? Number(
+              (
+                (
+                  batting.runs /
+                  batting.ballsFaced
+                ) * 100
+              ).toFixed(2)
+            )
+          : 0;
+
+      const average =
+        batting.timesOut > 0
+          ? Number(
+              (
+                batting.runs /
+                batting.timesOut
+              ).toFixed(2)
+            )
+          : batting.runs;
+
+      const economy =
+        bowling.legalBalls > 0
+          ? Number(
+              (
+                bowling.runs /
+                (
+                  bowling.legalBalls /
+                  6
+                )
+              ).toFixed(2)
+            )
+          : 0;
+
+      return {
+
+        ...player,
+
+        batting: {
+
+          innings_batted:
+            inningsBatted,
+
+          runs:
+            batting.runs,
+
+          highest_score:
+            highestScore,
+
+          balls_faced:
+            batting.ballsFaced,
+
+          fours:
+            batting.fours,
+
+          sixes:
+            batting.sixes,
+
+          times_out:
+            batting.timesOut,
+
+          not_outs:
+            notOuts,
+
+          strike_rate:
+            strikeRate,
+
+          average
+        },
+
+        bowling: {
+
+          innings_bowled:
+            bowling.inningsSet.size,
+
+          overs:
+            oversStr(
+              bowling.legalBalls
+            ),
+
+          balls_bowled:
+            bowling.legalBalls,
+
+          runs_given:
+            bowling.runs,
+
+          wickets:
+            bowling.wickets,
+
+          fours_given:
+            bowling.foursGiven,
+
+          sixes_given:
+            bowling.sixesGiven,
+
+          economy
+        }
+      };
+    }
+  );
+}
+
 /* =========================================================
    ALL TIME RECORDS — OPTIMIZED
 ========================================================= */
@@ -3571,6 +4141,8 @@ module.exports = {
   computeCareerBowlingStats,
 
   getPlayerCareerStats,
+
+  getAllPlayerCareerStats,
 
   getAllTimeRecords
 };

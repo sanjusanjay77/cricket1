@@ -1,3 +1,4 @@
+
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 const calc = require('../utils/scoreCalculator');
@@ -62,14 +63,12 @@ exports.createPlayer = async (req, res) => {
       jersey_no
     } = req.body;
 
-    // Basic validation
     if (!team_id || !name || !String(name).trim()) {
       return res.status(400).json({
         error: 'team_id and name are required'
       });
     }
 
-    // Check team exists
     const team = await db
       .prepare(`
         SELECT id
@@ -84,8 +83,6 @@ exports.createPlayer = async (req, res) => {
       });
     }
 
-    // If jersey number is provided, make sure it is not already
-    // used by another active player in the same team.
     if (
       jersey_no !== undefined &&
       jersey_no !== null &&
@@ -100,11 +97,15 @@ exports.createPlayer = async (req, res) => {
             AND active = 1
           LIMIT 1
         `)
-        .get(team_id, jersey_no);
+        .get(
+          team_id,
+          jersey_no
+        );
 
       if (duplicate) {
         return res.status(409).json({
-          error: 'Jersey number is already used by another active player'
+          error:
+            'Jersey number is already used by another active player'
         });
       }
     }
@@ -165,7 +166,6 @@ exports.updatePlayer = async (req, res) => {
   try {
     const playerId = req.params.id;
 
-    // Find existing player
     const existing = await db
       .prepare(`
         SELECT *
@@ -188,11 +188,6 @@ exports.updatePlayer = async (req, res) => {
       jersey_no
     } = req.body;
 
-    /*
-     * Check jersey number conflict.
-     *
-     * We exclude the current player from the search.
-     */
     if (
       jersey_no !== undefined &&
       jersey_no !== null &&
@@ -216,7 +211,8 @@ exports.updatePlayer = async (req, res) => {
 
       if (duplicate) {
         return res.status(409).json({
-          error: 'Jersey number is already used by another active player'
+          error:
+            'Jersey number is already used by another active player'
         });
       }
     }
@@ -250,7 +246,11 @@ exports.updatePlayer = async (req, res) => {
           : existing.bowling_style,
 
         jersey_no !== undefined
-          ? (jersey_no === '' ? null : jersey_no)
+          ? (
+              jersey_no === ''
+                ? null
+                : jersey_no
+            )
           : existing.jersey_no,
 
         playerId
@@ -284,32 +284,16 @@ exports.updatePlayer = async (req, res) => {
  *
  * IMPORTANT:
  *
- * NEVER physically delete a player.
+ * This is a SOFT DELETE.
  *
- * Historical cricket records may reference the player through:
- *
- * - balls
- * - innings
- * - wickets
- * - batting records
- * - bowling records
- * - partnerships
- * - match scorecards
- * - other foreign-key tables
- *
- * Therefore:
- *
- * active = 0
- *
- * hides the player from future selection while preserving
- * all historical records.
+ * Historical cricket records are preserved.
+ * The player is only hidden from active selection.
  * ============================================================
  */
 exports.deletePlayer = async (req, res) => {
   try {
     const playerId = req.params.id;
 
-    // Check player exists
     const player = await db
       .prepare(`
         SELECT *
@@ -323,18 +307,6 @@ exports.deletePlayer = async (req, res) => {
         error: 'Player not found'
       });
     }
-
-    /*
-     * DO NOT USE:
-     *
-     * DELETE FROM players WHERE id = ?
-     *
-     * This can cause:
-     *
-     * SQLITE_CONSTRAINT: FOREIGN KEY constraint failed
-     *
-     * because old cricket records may still reference this player.
-     */
 
     await db
       .prepare(`
@@ -359,10 +331,6 @@ exports.deletePlayer = async (req, res) => {
   } catch (err) {
     console.error('❌ deletePlayer error:', err);
 
-    /*
-     * Send the error to the frontend instead of allowing
-     * the request to become an unhandled rejection.
-     */
     return res.status(500).json({
       error: 'Failed to remove player',
       details: err.message
@@ -374,9 +342,6 @@ exports.deletePlayer = async (req, res) => {
 /**
  * ============================================================
  * LIST ALL ACTIVE PLAYERS WITH TEAM INFORMATION
- * ============================================================
- *
- * Used by Player Stats / Records pages.
  * ============================================================
  */
 exports.listAllWithTeams = async (req, res) => {
@@ -402,7 +367,10 @@ exports.listAllWithTeams = async (req, res) => {
     return res.json(players);
 
   } catch (err) {
-    console.error('❌ listAllWithTeams error:', err);
+    console.error(
+      '❌ listAllWithTeams error:',
+      err
+    );
 
     return res.status(500).json({
       error: 'Failed to load player statistics',
@@ -415,6 +383,14 @@ exports.listAllWithTeams = async (req, res) => {
 /**
  * ============================================================
  * GET PLAYER CAREER STATISTICS
+ * ============================================================
+ *
+ * Existing endpoint.
+ *
+ * KEEP THIS because other parts of the application may still
+ * use:
+ *
+ * GET /api/players/:id/stats
  * ============================================================
  */
 exports.getPlayerStats = async (req, res) => {
@@ -440,7 +416,10 @@ exports.getPlayerStats = async (req, res) => {
       });
     }
 
-    const stats = await calc.getPlayerCareerStats(playerId);
+    const stats =
+      await calc.getPlayerCareerStats(
+        playerId
+      );
 
     return res.json({
       player,
@@ -448,7 +427,10 @@ exports.getPlayerStats = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ getPlayerStats error:', err);
+    console.error(
+      '❌ getPlayerStats error:',
+      err
+    );
 
     return res.status(500).json({
       error: 'Failed to load player statistics',
@@ -456,3 +438,51 @@ exports.getPlayerStats = async (req, res) => {
     });
   }
 };
+
+
+/**
+ * ============================================================
+ * GET ALL ACTIVE GCC PLAYERS WITH CAREER STATISTICS
+ * ============================================================
+ *
+ * NEW OPTIMIZED ENDPOINT.
+ *
+ * Returns:
+ *
+ * - Player information
+ * - Team information
+ * - Batting career statistics
+ * - Bowling career statistics
+ *
+ * for all active GCC players in one request.
+ *
+ * This is used to remove the extra request that currently
+ * happens when a player is selected on the Player Stats page.
+ * ============================================================
+ */
+exports.getAllPlayerCareerStats = async (
+  req,
+  res
+) => {
+  try {
+    const players =
+      await calc.getAllPlayerCareerStats();
+
+    return res.json(players);
+
+  } catch (err) {
+    console.error(
+      '❌ getAllPlayerCareerStats error:',
+      err
+    );
+
+    return res.status(500).json({
+      error:
+        'Failed to load all player statistics',
+      details:
+        err.message
+    });
+  }
+};
+
+

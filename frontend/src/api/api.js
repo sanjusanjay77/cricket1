@@ -22,6 +22,13 @@ export const Players = {
   listAll: () =>
     api.get('/players/all/with-teams').then(r => r.data),
 
+  // NEW:
+  // Loads all active players with their career batting
+  // and bowling statistics in one request.
+  allCareerStats: () =>
+    api.get('/players/all/career-stats').then(r => r.data),
+
+  // Existing single-player stats endpoint.
   stats: (id) =>
     api.get(`/players/${id}/stats`).then(r => r.data),
 
@@ -89,7 +96,10 @@ export const Notifications = {
     api.post('/notifications/unregister', data).then(r => r.data),
 };
 
-export function getApiErrorMessage(error, fallback = 'Something went wrong') {
+export function getApiErrorMessage(
+  error,
+  fallback = 'Something went wrong'
+) {
   return (
     error?.response?.data?.message ||
     error?.response?.data?.error ||

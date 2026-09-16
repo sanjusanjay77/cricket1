@@ -6,7 +6,7 @@ export default function PlayerRecords() {
   const [teams, setTeams] = useState([]);
   const [selected, setSelected] = useState(null);
   const [stats, setStats] = useState(null);
-  const [loadingStats, setLoadingStats] = useState(false);
+  const [loadingStats, setLoadingStats] = useState(true);
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [activeTab, setActiveTab] = useState('batting');
@@ -19,45 +19,97 @@ export default function PlayerRecords() {
 
   const [deletingId, setDeletingId] = useState(null);
 
-  const loadPlayers = () => {
-    Players.listAll()
-      .then(setPlayers)
-      .catch((err) => {
-        console.error('Failed to load players:', err);
-      });
+  /*
+   * ============================================================
+   * LOAD ALL PLAYER DATA
+   * ============================================================
+   *
+   * ONE request:
+   * /players/all/career-stats
+   *
+   * This already contains:
+   * - player
+   * - team
+   * - batting statistics
+   * - bowling statistics
+   *
+   * So clicking a player does NOT need another API request.
+   */
+  const loadPlayers = async () => {
+    setLoadingStats(true);
+
+    try {
+      const data = await Players.allCareerStats();
+
+      setPlayers(Array.isArray(data) ? data : []);
+
+    } catch (err) {
+      console.error(
+        'Failed to load player career statistics:',
+        err
+      );
+
+      setPlayers([]);
+
+    } finally {
+      setLoadingStats(false);
+    }
   };
 
+  /*
+   * ============================================================
+   * INITIAL LOAD
+   * ============================================================
+   */
   useEffect(() => {
     loadPlayers();
 
     Teams.list()
       .then(setTeams)
       .catch((err) => {
-        console.error('Failed to load teams:', err);
+        console.error(
+          'Failed to load teams:',
+          err
+        );
       });
   }, []);
 
-  const openPlayer = async (player) => {
+  /*
+   * ============================================================
+   * OPEN PLAYER
+   * ============================================================
+   *
+   * NO API REQUEST HERE.
+   *
+   * The player's complete statistics were already loaded.
+   */
+  const openPlayer = (player) => {
     setSelected(player);
-    setStats(null);
-    setActiveTab('batting');
-    setLoadingStats(true);
 
-    try {
-      const data = await Players.stats(player.id);
-      setStats(data);
-    } catch (err) {
-      console.error('Failed to load player stats:', err);
-    } finally {
-      setLoadingStats(false);
-    }
+    setStats({
+      player,
+      batting: player.batting || {},
+      bowling: player.bowling || {}
+    });
+
+    setActiveTab('batting');
   };
 
+  /*
+   * ============================================================
+   * ADD PLAYER
+   * ============================================================
+   */
   const addPlayer = async (e) => {
     e.preventDefault();
 
-    if (!newPlayer.team_id || !newPlayer.name.trim()) {
-      alert('Select a team and enter player name');
+    if (
+      !newPlayer.team_id ||
+      !newPlayer.name.trim()
+    ) {
+      alert(
+        'Select a team and enter player name'
+      );
       return;
     }
 
@@ -71,9 +123,17 @@ export default function PlayerRecords() {
       });
 
       setShowAdd(false);
-      loadPlayers();
+
+      /*
+       * Reload the combined player/statistics endpoint.
+       */
+      await loadPlayers();
+
     } catch (err) {
-      console.error('Failed to add player:', err);
+      console.error(
+        'Failed to add player:',
+        err
+      );
 
       alert(
         err?.response?.data?.error ||
@@ -83,6 +143,11 @@ export default function PlayerRecords() {
     }
   };
 
+  /*
+   * ============================================================
+   * REMOVE PLAYER
+   * ============================================================
+   */
   const removePlayer = async (player, e) => {
     e.stopPropagation();
 
@@ -104,37 +169,59 @@ export default function PlayerRecords() {
         setStats(null);
       }
 
-      loadPlayers();
+      /*
+       * Reload combined data.
+       */
+      await loadPlayers();
+
     } catch (err) {
-      console.error('Failed to remove player:', err);
+      console.error(
+        'Failed to remove player:',
+        err
+      );
 
       alert(
         err?.response?.data?.error ||
           err?.message ||
           'Failed to remove player'
       );
+
     } finally {
       setDeletingId(null);
     }
   };
 
+  /*
+   * ============================================================
+   * SEARCH
+   * ============================================================
+   */
   const filtered = players.filter((player) =>
     String(player.name || '')
       .toLowerCase()
       .includes(search.toLowerCase())
   );
 
-  const grouped = filtered.reduce((acc, player) => {
-    const teamName = player.team_name || 'Team';
+  /*
+   * ============================================================
+   * GROUP BY TEAM
+   * ============================================================
+   */
+  const grouped = filtered.reduce(
+    (acc, player) => {
+      const teamName =
+        player.team_name || 'Team';
 
-    if (!acc[teamName]) {
-      acc[teamName] = [];
-    }
+      if (!acc[teamName]) {
+        acc[teamName] = [];
+      }
 
-    acc[teamName].push(player);
+      acc[teamName].push(player);
 
-    return acc;
-  }, {});
+      return acc;
+    },
+    {}
+  );
 
   return (
     <div className="grid md:grid-cols-2 gap-4 md:gap-6 fade-in">
@@ -153,9 +240,13 @@ export default function PlayerRecords() {
           <button
             type="button"
             className="btn btn-primary text-sm whitespace-nowrap min-h-[44px]"
-            onClick={() => setShowAdd((value) => !value)}
+            onClick={() =>
+              setShowAdd((value) => !value)
+            }
           >
-            {showAdd ? 'Cancel' : '+ Add Player'}
+            {showAdd
+              ? 'Cancel'
+              : '+ Add Player'}
           </button>
         </div>
 
@@ -250,101 +341,123 @@ export default function PlayerRecords() {
           className="input mb-4 min-h-[46px]"
           placeholder="Search player..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) =>
+            setSearch(e.target.value)
+          }
         />
 
         {/* =====================================================
-            NO PLAYERS
+            LOADING
         ===================================================== */}
-        {Object.keys(grouped).length === 0 && (
+        {loadingStats && (
           <div className="card text-slate-400">
-            No players found. Add one above.
+            Loading player statistics...
           </div>
         )}
 
         {/* =====================================================
+            NO PLAYERS
+        ===================================================== */}
+        {!loadingStats &&
+          Object.keys(grouped).length === 0 && (
+            <div className="card text-slate-400">
+              No players found. Add one above.
+            </div>
+          )}
+
+        {/* =====================================================
             PLAYER LIST
         ===================================================== */}
-        {Object.entries(grouped).map(
-          ([teamName, teamPlayers]) => (
-            <div
-              key={teamName}
-              className="mb-4"
-            >
-              <h2 className="text-sm font-semibold text-slate-400 mb-2">
-                {teamName}
-              </h2>
+        {!loadingStats &&
+          Object.entries(grouped).map(
+            ([teamName, teamPlayers]) => (
+              <div
+                key={teamName}
+                className="mb-4"
+              >
+                <h2 className="text-sm font-semibold text-slate-400 mb-2">
+                  {teamName}
+                </h2>
 
-              <div className="space-y-2">
-                {teamPlayers.map((player) => (
-                  <div
-                    key={player.id}
-                    onClick={() => openPlayer(player)}
-                    className={`
-                      card
-                      flex
-                      items-center
-                      justify-between
-                      gap-3
-                      py-3
-                      px-3
-                      cursor-pointer
-                      transition
-                      hover:border-emerald-500
-                      active:scale-[0.99]
-                      ${
-                        selected?.id === player.id
-                          ? 'border-emerald-500 bg-slate-800/60'
-                          : ''
+                <div className="space-y-2">
+                  {teamPlayers.map((player) => (
+                    <div
+                      key={player.id}
+                      onClick={() =>
+                        openPlayer(player)
                       }
-                    `}
-                  >
-                    {/* PLAYER NAME */}
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">
-                        {player.name}
+                      className={`
+                        card
+                        flex
+                        items-center
+                        justify-between
+                        gap-3
+                        py-3
+                        px-3
+                        cursor-pointer
+                        transition
+                        hover:border-emerald-500
+                        active:scale-[0.99]
+                        ${
+                          selected?.id === player.id
+                            ? 'border-emerald-500 bg-slate-800/60'
+                            : ''
+                        }
+                      `}
+                    >
+
+                      {/* PLAYER NAME */}
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">
+                          {player.name}
+                        </div>
+                      </div>
+
+                      {/* PLAYER ROLE + DELETE */}
+                      <div className="flex items-center gap-2 shrink-0">
+
+                        <span className="text-xs text-slate-400 hidden sm:block">
+                          {player.role ||
+                            'Player'}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={(e) =>
+                            removePlayer(
+                              player,
+                              e
+                            )
+                          }
+                          disabled={
+                            deletingId ===
+                            player.id
+                          }
+                          className="
+                            min-w-[36px]
+                            min-h-[36px]
+                            flex
+                            items-center
+                            justify-center
+                            rounded-lg
+                            text-red-400
+                            hover:text-red-300
+                            hover:bg-red-500/10
+                          "
+                        >
+                          {deletingId ===
+                          player.id
+                            ? '...'
+                            : '🗑️'}
+                        </button>
+
                       </div>
                     </div>
-
-                    {/* PLAYER ROLE + DELETE */}
-                    <div className="flex items-center gap-2 shrink-0">
-
-                      <span className="text-xs text-slate-400 hidden sm:block">
-                        {player.role || 'Player'}
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={(e) =>
-                          removePlayer(player, e)
-                        }
-                        disabled={
-                          deletingId === player.id
-                        }
-                        className="
-                          min-w-[36px]
-                          min-h-[36px]
-                          flex
-                          items-center
-                          justify-center
-                          rounded-lg
-                          text-red-400
-                          hover:text-red-300
-                          hover:bg-red-500/10
-                        "
-                      >
-                        {deletingId === player.id
-                          ? '...'
-                          : '🗑'}
-                      </button>
-
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )
-        )}
+            )
+          )}
 
       </div>
 
@@ -360,20 +473,13 @@ export default function PlayerRecords() {
         {/* NOTHING SELECTED */}
         {!selected && (
           <div className="card text-slate-400">
-            Select a player to see their full batting and bowling
-            record.
-          </div>
-        )}
-
-        {/* LOADING */}
-        {selected && loadingStats && (
-          <div className="card text-slate-400">
-            Loading...
+            Select a player to see their full
+            batting and bowling record.
           </div>
         )}
 
         {/* STATS */}
-        {selected && !loadingStats && stats && (
+        {selected && stats && (
           <div className="space-y-4">
 
             {/* =================================================
@@ -418,7 +524,9 @@ export default function PlayerRecords() {
               {/* BATTING */}
               <button
                 type="button"
-                onClick={() => setActiveTab('batting')}
+                onClick={() =>
+                  setActiveTab('batting')
+                }
                 className={`
                   min-h-[48px]
                   rounded-lg
@@ -443,7 +551,9 @@ export default function PlayerRecords() {
               {/* BOWLING */}
               <button
                 type="button"
-                onClick={() => setActiveTab('bowling')}
+                onClick={() =>
+                  setActiveTab('bowling')
+                }
                 className={`
                   min-h-[48px]
                   rounded-lg
@@ -488,7 +598,8 @@ export default function PlayerRecords() {
                   <Stat
                     label="Innings Batted"
                     value={
-                      stats.batting?.innings_batted
+                      stats.batting
+                        ?.innings_batted
                     }
                   />
 
@@ -502,14 +613,16 @@ export default function PlayerRecords() {
                   <Stat
                     label="Highest Score"
                     value={
-                      stats.batting?.highest_score
+                      stats.batting
+                        ?.highest_score
                     }
                   />
 
                   <Stat
                     label="Balls Faced"
                     value={
-                      stats.batting?.balls_faced
+                      stats.batting
+                        ?.balls_faced
                     }
                   />
 
@@ -530,7 +643,8 @@ export default function PlayerRecords() {
                   <Stat
                     label="Strike Rate"
                     value={
-                      stats.batting?.strike_rate
+                      stats.batting
+                        ?.strike_rate
                     }
                   />
 
@@ -581,7 +695,8 @@ export default function PlayerRecords() {
                   <Stat
                     label="Innings Bowled"
                     value={
-                      stats.bowling?.innings_bowled
+                      stats.bowling
+                        ?.innings_bowled
                     }
                   />
 
@@ -595,14 +710,16 @@ export default function PlayerRecords() {
                   <Stat
                     label="Balls Bowled"
                     value={
-                      stats.bowling?.balls_bowled
+                      stats.bowling
+                        ?.balls_bowled
                     }
                   />
 
                   <Stat
                     label="Runs Given"
                     value={
-                      stats.bowling?.runs_given
+                      stats.bowling
+                        ?.runs_given
                     }
                   />
 
@@ -623,14 +740,16 @@ export default function PlayerRecords() {
                   <Stat
                     label="Fours Given"
                     value={
-                      stats.bowling?.fours_given
+                      stats.bowling
+                        ?.fours_given
                     }
                   />
 
                   <Stat
                     label="Sixes Given"
                     value={
-                      stats.bowling?.sixes_given
+                      stats.bowling
+                        ?.sixes_given
                     }
                   />
 
@@ -643,11 +762,14 @@ export default function PlayerRecords() {
         )}
 
         {/* FAILED */}
-        {selected && !loadingStats && !stats && (
-          <div className="card text-red-400">
-            Unable to load this player's statistics.
-          </div>
-        )}
+        {selected &&
+          !stats &&
+          !loadingStats && (
+            <div className="card text-red-400">
+              Unable to load this player's
+              statistics.
+            </div>
+          )}
 
       </div>
 
