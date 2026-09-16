@@ -1,4 +1,3 @@
-
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
 
@@ -895,7 +894,7 @@ async function finalizeMatch(matchId) {
 
   if (!match) {
     console.error(
-      '❌ Cannot finalize match: match not found',
+      'Cannot finalize match: match not found',
       matchId
     );
 
@@ -925,7 +924,7 @@ async function finalizeMatch(matchId) {
   if (!inn1 || !inn2) {
 
     console.error(
-      '❌ Cannot finalize match: innings missing',
+      'Cannot finalize match: innings missing',
       {
         matchId,
         inningsCount: allInnings.length
@@ -934,10 +933,6 @@ async function finalizeMatch(matchId) {
 
     return;
   }
-
-  /* -------------------------------------------------------
-     SAFE TEAM LOOKUP
-  ------------------------------------------------------- */
 
   const team1 =
     inn1.batting_team_id
@@ -957,17 +952,10 @@ async function finalizeMatch(matchId) {
         `).get(inn2.batting_team_id)
       : null;
 
-  /*
-   * IMPORTANT:
-   *
-   * Never use team1.name / team1.id or
-   * team2.name / team2.id when the team
-   * does not exist.
-   */
   if (!team1 || !team2) {
 
     console.error(
-      '❌ Cannot finalize match: team not found',
+      'Cannot finalize match: team not found',
       {
         matchId,
 
@@ -1103,12 +1091,6 @@ function buildBattingScorecard(balls) {
 
     ensure(b.non_striker_id);
 
-    /*
-     * Wides are not balls faced.
-     *
-     * No-ball DOES count as a ball faced
-     * in this scoreboard implementation.
-     */
     if (b.extra_type !== 'wide') {
 
       if (striker) {
@@ -1116,9 +1098,6 @@ function buildBattingScorecard(balls) {
       }
     }
 
-    /*
-     * Batsman runs.
-     */
     if (
       !b.extra_type ||
       b.extra_type === 'noball'
@@ -1143,9 +1122,6 @@ function buildBattingScorecard(balls) {
       }
     }
 
-    /*
-     * Wicket.
-     */
     if (
       Number(b.is_wicket) === 1 &&
       b.dismissed_id
@@ -1832,36 +1808,27 @@ async function computeCurrentOver(
 
 async function getScoreboard(inningsId) {
 
-  /*
-   * Validate innings ID first.
-   */
   if (!inningsId) {
     console.error(
-      '❌ getScoreboard: inningsId is missing'
+      'getScoreboard: inningsId is missing'
     );
 
     return null;
   }
 
-  /*
-   * Load innings.
-   */
   const innings =
     await getInnings(inningsId);
 
   if (!innings) {
 
     console.error(
-      '❌ getScoreboard: innings not found',
+      'getScoreboard: innings not found',
       inningsId
     );
 
     return null;
   }
 
-  /*
-   * Load balls.
-   */
   const ballsResult =
     await db.prepare(`
       SELECT *
@@ -1870,26 +1837,17 @@ async function getScoreboard(inningsId) {
       ORDER BY ball_sequence ASC
     `).all(inningsId);
 
-  /*
-   * Always work with an array.
-   */
   const balls =
     Array.isArray(ballsResult)
       ? ballsResult
       : [];
 
-  /*
-   * Build scorecards.
-   */
   const battingCard =
     buildBattingScorecard(balls);
 
   const bowlingCard =
     buildBowlingScorecard(balls);
 
-  /*
-   * Recent balls.
-   */
   const recentBalls =
     balls
       .slice(-18)
@@ -1901,22 +1859,12 @@ async function getScoreboard(inningsId) {
         })
       );
 
-  /*
-   * Current over.
-   */
   const currentOver =
     buildCurrentOver(
       balls,
       innings.total_balls
     );
 
-  /*
-   * -------------------------------------------------------
-   * CURRENT BOWLER
-   * -------------------------------------------------------
-   *
-   * Do not assume that the player exists.
-   */
   let currentBowler = null;
 
   if (innings.current_bowler_id) {
@@ -1936,11 +1884,6 @@ async function getScoreboard(inningsId) {
       ) || null;
   }
 
-  /*
-   * -------------------------------------------------------
-   * STRIKER
-   * -------------------------------------------------------
-   */
   let striker = null;
 
   if (innings.striker_id) {
@@ -1960,11 +1903,6 @@ async function getScoreboard(inningsId) {
       ) || null;
   }
 
-  /*
-   * -------------------------------------------------------
-   * NON-STRIKER
-   * -------------------------------------------------------
-   */
   let nonStriker = null;
 
   if (innings.non_striker_id) {
@@ -1984,11 +1922,6 @@ async function getScoreboard(inningsId) {
       ) || null;
   }
 
-  /*
-   * -------------------------------------------------------
-   * TOTALS
-   * -------------------------------------------------------
-   */
   const ballsTotal =
     Number(
       innings.total_balls || 0
@@ -1999,9 +1932,6 @@ async function getScoreboard(inningsId) {
       innings.total_runs || 0
     );
 
-  /*
-   * Run rate.
-   */
   const runRate =
     ballsTotal > 0
       ? Number(
@@ -2012,42 +1942,27 @@ async function getScoreboard(inningsId) {
         )
       : 0;
 
-  /*
-   * Extras.
-   */
   const extras =
     buildExtras(
       innings,
       balls
     );
 
-  /*
-   * Current partnership.
-   */
   const partnership =
     buildPartnership(
       balls
     );
 
-  /*
-   * All partnerships.
-   */
   const partnerships =
     buildPartnerships(
       balls
     );
 
-  /*
-   * Fall of wickets.
-   */
   const fallOfWickets =
     buildFallOfWickets(
       balls
     );
 
-  /*
-   * Current over number.
-   */
   const currentOverNumber =
     ballsTotal === 0
       ? 0
@@ -2055,11 +1970,6 @@ async function getScoreboard(inningsId) {
           (ballsTotal - 1) / 6
         );
 
-  /*
-   * -------------------------------------------------------
-   * COMPLETE SCOREBOARD
-   * -------------------------------------------------------
-   */
   return {
 
     innings,
@@ -2278,6 +2188,7 @@ async function computeCareerBowlingStats(
       SELECT *
       FROM balls
       WHERE bowler_id = ?
+      ORDER BY innings_id, ball_sequence ASC
     `).all(playerId);
 
   let legalBalls = 0;
@@ -2286,7 +2197,14 @@ async function computeCareerBowlingStats(
   let foursGiven = 0;
   let sixesGiven = 0;
 
+  const inningsSet =
+    new Set();
+
   for (const b of balls) {
+
+    inningsSet.add(
+      String(b.innings_id)
+    );
 
     const effect =
       computeRunEffects({
@@ -2301,7 +2219,7 @@ async function computeCareerBowlingStats(
       });
 
     if (
-      Number(b.is_legal)
+      Number(b.is_legal) === 1
     ) {
 
       legalBalls += 1;
@@ -2319,7 +2237,7 @@ async function computeCareerBowlingStats(
       chargedRuns;
 
     if (
-      Number(b.is_wicket) &&
+      Number(b.is_wicket) === 1 &&
       b.wicket_type &&
       b.wicket_type !==
         'run-out'
@@ -2357,17 +2275,8 @@ async function computeCareerBowlingStats(
     }
   }
 
-  const inningsRow =
-    await db.prepare(`
-      SELECT COUNT(DISTINCT innings_id) AS c
-      FROM balls
-      WHERE bowler_id = ?
-    `).get(playerId);
-
   const inningsBowled =
-    Number(
-      inningsRow?.c || 0
-    );
+    inningsSet.size;
 
   return {
 
@@ -2428,10 +2337,16 @@ async function getPlayerCareerStats(
 }
 
 /* =========================================================
-   ALL TIME RECORDS — GCC ONLY
+   ALL TIME RECORDS — OPTIMIZED
 ========================================================= */
 
 async function getAllTimeRecords() {
+
+  /*
+   * -------------------------------------------------------
+   * LOAD GCC PLAYERS ONCE
+   * -------------------------------------------------------
+   */
 
   const gccPlayers =
     await db.prepare(`
@@ -2449,19 +2364,25 @@ async function getAllTimeRecords() {
   const gccPlayerIds =
     new Set(
       gccPlayers.map(
-        p => String(p.id)
+        player => String(player.id)
       )
     );
 
-  console.log(
-    'GCC PLAYER IDS:',
-    [...gccPlayerIds]
-  );
+  const playerMap =
+    new Map(
+      gccPlayers.map(
+        player => [
+          String(player.id),
+          player
+        ]
+      )
+    );
 
-  console.log(
-    'GCC PLAYERS:',
-    gccPlayers
-  );
+  /*
+   * -------------------------------------------------------
+   * LOAD INNINGS ONCE
+   * -------------------------------------------------------
+   */
 
   const inningsRows =
     await db.prepare(`
@@ -2476,79 +2397,677 @@ async function getAllTimeRecords() {
         innings_number
     `).all();
 
-  let bestBattingFigure = null;
-  let bestBowling = null;
+  const inningsMap =
+    new Map(
+      inningsRows.map(
+        innings => [
+          String(innings.id),
+          innings
+        ]
+      )
+    );
 
-  for (
-    const inn of inningsRows
+  /*
+   * -------------------------------------------------------
+   * LOAD BALLS ONCE
+   *
+   * This replaces the old repeated ball-table scans.
+   * -------------------------------------------------------
+   */
+
+  const allBalls =
+    await db.prepare(`
+      SELECT
+        b.*,
+        i.match_id,
+        i.innings_number,
+        i.batting_team_id
+      FROM balls b
+      INNER JOIN innings i
+        ON i.id = b.innings_id
+      ORDER BY
+        b.innings_id,
+        b.ball_sequence
+    `).all();
+
+  /*
+   * -------------------------------------------------------
+   * CAREER STAT CONTAINERS
+   * -------------------------------------------------------
+   */
+
+  const battingStats =
+    new Map();
+
+  const bowlingStats =
+    new Map();
+
+  function createBattingStats(playerId) {
+
+    const key =
+      String(playerId);
+
+    if (!battingStats.has(key)) {
+
+      battingStats.set(
+        key,
+        {
+          player_id:
+            playerId,
+
+          inningsSet:
+            new Set(),
+
+          runs:
+            0,
+
+          balls_faced:
+            0,
+
+          fours:
+            0,
+
+          sixes:
+            0,
+
+          times_out:
+            0,
+
+          inningsScores:
+            new Map()
+        }
+      );
+    }
+
+    return battingStats.get(key);
+  }
+
+  function createBowlingStats(playerId) {
+
+    const key =
+      String(playerId);
+
+    if (!bowlingStats.has(key)) {
+
+      bowlingStats.set(
+        key,
+        {
+          player_id:
+            playerId,
+
+          inningsSet:
+            new Set(),
+
+          balls_bowled:
+            0,
+
+          runs_given:
+            0,
+
+          wickets:
+            0,
+
+          fours_given:
+            0,
+
+          sixes_given:
+            0
+        }
+      );
+    }
+
+    return bowlingStats.get(key);
+  }
+
+  /*
+   * Ensure every GCC player appears.
+   */
+
+  for (const player of gccPlayers) {
+
+    createBattingStats(
+      player.id
+    );
+
+    createBowlingStats(
+      player.id
+    );
+  }
+
+  /*
+   * -------------------------------------------------------
+   * SINGLE-INNINGS RECORD CONTAINERS
+   * -------------------------------------------------------
+   */
+
+  const inningsBatting =
+    new Map();
+
+  const inningsBowling =
+    new Map();
+
+  function getInningsBattingStats(
+    inningsId,
+    playerId
   ) {
 
-    const batting =
-      await computeBattingScorecard(
-        inn.id
-      );
+    const inningsKey =
+      String(inningsId);
 
-    for (
-      const b of batting
+    const playerKey =
+      String(playerId);
+
+    if (
+      !inningsBatting.has(
+        inningsKey
+      )
     ) {
 
+      inningsBatting.set(
+        inningsKey,
+        new Map()
+      );
+    }
+
+    const map =
+      inningsBatting.get(
+        inningsKey
+      );
+
+    if (
+      !map.has(playerKey)
+    ) {
+
+      map.set(
+        playerKey,
+        {
+          player_id:
+            playerId,
+
+          runs:
+            0,
+
+          balls:
+            0,
+
+          fours:
+            0,
+
+          sixes:
+            0
+        }
+      );
+    }
+
+    return map.get(playerKey);
+  }
+
+  function getInningsBowlingStats(
+    inningsId,
+    playerId
+  ) {
+
+    const inningsKey =
+      String(inningsId);
+
+    const playerKey =
+      String(playerId);
+
+    if (
+      !inningsBowling.has(
+        inningsKey
+      )
+    ) {
+
+      inningsBowling.set(
+        inningsKey,
+        new Map()
+      );
+    }
+
+    const map =
+      inningsBowling.get(
+        inningsKey
+      );
+
+    if (
+      !map.has(playerKey)
+    ) {
+
+      map.set(
+        playerKey,
+        {
+          player_id:
+            playerId,
+
+          legalBalls:
+            0,
+
+          runs:
+            0,
+
+          wickets:
+            0
+        }
+      );
+    }
+
+    return map.get(playerKey);
+  }
+
+  let bestBattingFigure =
+    null;
+
+  let bestBowling =
+    null;
+
+  /*
+   * -------------------------------------------------------
+   * ONE PASS THROUGH ALL BALLS
+   * -------------------------------------------------------
+   */
+
+  for (const b of allBalls) {
+
+    const inningsId =
+      String(b.innings_id);
+
+    const innings =
+      inningsMap.get(
+        inningsId
+      );
+
+    if (!innings) {
+      continue;
+    }
+
+    /* =====================================================
+       BATTING
+    ===================================================== */
+
+    const batsmanId =
+      b.batsman_id;
+
+    const batsmanKey =
+      batsmanId != null
+        ? String(batsmanId)
+        : null;
+
+    if (
+      batsmanKey &&
+      gccPlayerIds.has(
+        batsmanKey
+      )
+    ) {
+
+      const career =
+        createBattingStats(
+          batsmanId
+        );
+
+      career.inningsSet.add(
+        inningsId
+      );
+
+      /*
+       * Preserve current application behavior:
+       * every non-wide delivery counts as a ball faced.
+       */
+
       if (
-        !gccPlayerIds.has(
-          String(b.player_id)
+        b.extra_type !== 'wide'
+      ) {
+
+        career.balls_faced += 1;
+      }
+
+      const inningBatting =
+        getInningsBattingStats(
+          inningsId,
+          batsmanId
+        );
+
+      if (
+        b.extra_type !== 'wide'
+      ) {
+
+        inningBatting.balls += 1;
+      }
+
+      if (
+        !b.extra_type ||
+        b.extra_type === 'noball'
+      ) {
+
+        const batRuns =
+          Number(
+            b.runs_batsman || 0
+          );
+
+        career.runs +=
+          batRuns;
+
+        inningBatting.runs +=
+          batRuns;
+
+        if (
+          batRuns === 4
+        ) {
+
+          career.fours += 1;
+
+          inningBatting.fours +=
+            1;
+        }
+
+        if (
+          batRuns === 6
+        ) {
+
+          career.sixes += 1;
+
+          inningBatting.sixes +=
+            1;
+        }
+
+        const previousScore =
+          Number(
+            career.inningsScores.get(
+              inningsId
+            ) || 0
+          );
+
+        career.inningsScores.set(
+          inningsId,
+          previousScore +
+            batRuns
+        );
+      }
+    }
+
+    /*
+     * -----------------------------------------------------
+     * NON-STRIKER
+     *
+     * Preserve old behavior where an innings is counted
+     * when batsman_id OR non_striker_id matches.
+     * -----------------------------------------------------
+     */
+
+    const nonStrikerId =
+      b.non_striker_id;
+
+    const nonStrikerKey =
+      nonStrikerId != null
+        ? String(nonStrikerId)
+        : null;
+
+    if (
+      nonStrikerKey &&
+      gccPlayerIds.has(
+        nonStrikerKey
+      )
+    ) {
+
+      const career =
+        createBattingStats(
+          nonStrikerId
+        );
+
+      career.inningsSet.add(
+        inningsId
+      );
+    }
+
+    /*
+     * -----------------------------------------------------
+     * DISMISSAL
+     * -----------------------------------------------------
+     */
+
+    if (
+      Number(b.is_wicket) === 1 &&
+      b.dismissed_id
+    ) {
+
+      const dismissedKey =
+        String(
+          b.dismissed_id
+        );
+
+      if (
+        gccPlayerIds.has(
+          dismissedKey
         )
       ) {
+
+        const career =
+          createBattingStats(
+            b.dismissed_id
+          );
+
+        career.times_out +=
+          1;
+      }
+    }
+
+    /* =====================================================
+       BOWLING
+    ===================================================== */
+
+    const bowlerId =
+      b.bowler_id;
+
+    const bowlerKey =
+      bowlerId != null
+        ? String(bowlerId)
+        : null;
+
+    if (
+      bowlerKey &&
+      gccPlayerIds.has(
+        bowlerKey
+      )
+    ) {
+
+      const career =
+        createBowlingStats(
+          bowlerId
+        );
+
+      career.inningsSet.add(
+        inningsId
+      );
+
+      const effect =
+        computeRunEffects({
+          runs:
+            b.runs_batsman,
+
+          extra_type:
+            b.extra_type,
+
+          extra_runs:
+            b.extra_runs
+        });
+
+      if (
+        Number(b.is_legal) === 1
+      ) {
+
+        career.balls_bowled +=
+          1;
+      }
+
+      const chargedRuns =
+        b.extra_type === 'bye' ||
+        b.extra_type === 'legbye'
+          ? 0
+          : effect.teamRuns;
+
+      career.runs_given +=
+        chargedRuns;
+
+      if (
+        Number(b.is_wicket) === 1 &&
+        b.wicket_type &&
+        b.wicket_type !== 'run-out'
+      ) {
+
+        career.wickets +=
+          1;
+      }
+
+      if (
+        (
+          !b.extra_type ||
+          b.extra_type === 'noball'
+        ) &&
+        Number(
+          b.runs_batsman
+        ) === 4
+      ) {
+
+        career.fours_given +=
+          1;
+      }
+
+      if (
+        (
+          !b.extra_type ||
+          b.extra_type === 'noball'
+        ) &&
+        Number(
+          b.runs_batsman
+        ) === 6
+      ) {
+
+        career.sixes_given +=
+          1;
+      }
+
+      const inningBowling =
+        getInningsBowlingStats(
+          inningsId,
+          bowlerId
+        );
+
+      if (
+        Number(b.is_legal) === 1
+      ) {
+
+        inningBowling.legalBalls +=
+          1;
+      }
+
+      inningBowling.runs +=
+        chargedRuns;
+
+      if (
+        Number(b.is_wicket) === 1 &&
+        b.wicket_type &&
+        b.wicket_type !== 'run-out'
+      ) {
+
+        inningBowling.wickets +=
+          1;
+      }
+    }
+  }
+
+  /*
+   * -------------------------------------------------------
+   * BEST SINGLE-INNINGS BATTING
+   * -------------------------------------------------------
+   */
+
+  for (
+    const [
+      inningsId,
+      playerStatsMap
+    ]
+    of inningsBatting
+  ) {
+
+    const innings =
+      inningsMap.get(
+        inningsId
+      );
+
+    if (!innings) {
+      continue;
+    }
+
+    for (
+      const stats
+      of playerStatsMap.values()
+    ) {
+
+      const player =
+        playerMap.get(
+          String(
+            stats.player_id
+          )
+        );
+
+      if (!player) {
         continue;
       }
+
+      const strikeRate =
+        stats.balls > 0
+          ? Number(
+              (
+                (
+                  stats.runs /
+                  stats.balls
+                ) * 100
+              ).toFixed(2)
+            )
+          : 0;
 
       const candidate = {
 
         player_id:
-          b.player_id,
+          stats.player_id,
 
         player_name:
-          gccPlayers.find(
-            p =>
-              String(p.id) ===
-              String(b.player_id)
-          )?.name ||
-          'Unknown Player',
+          player.name,
 
         runs:
           Number(
-            b.runs || 0
+            stats.runs || 0
           ),
 
         balls:
           Number(
-            b.balls || 0
+            stats.balls || 0
           ),
 
         fours:
           Number(
-            b.fours || 0
+            stats.fours || 0
           ),
 
         sixes:
           Number(
-            b.sixes || 0
+            stats.sixes || 0
           ),
 
         strike_rate:
-          Number(
-            b.strike_rate || 0
-          ),
+          strikeRate,
 
         innings_id:
-          inn.id,
+          innings.id,
 
         match_id:
-          inn.match_id,
+          innings.match_id,
 
         innings_number:
-          inn.innings_number,
+          innings.innings_number,
 
         batting_team_id:
-          inn.batting_team_id
+          innings.batting_team_id
       };
 
       const isBetter =
@@ -2560,7 +3079,6 @@ async function getAllTimeRecords() {
         (
           candidate.runs ===
           bestBattingFigure.runs &&
-
           candidate.balls <
           bestBattingFigure.balls
         ) ||
@@ -2568,10 +3086,8 @@ async function getAllTimeRecords() {
         (
           candidate.runs ===
           bestBattingFigure.runs &&
-
           candidate.balls ===
           bestBattingFigure.balls &&
-
           candidate.strike_rate >
           bestBattingFigure.strike_rate
         ) ||
@@ -2579,13 +3095,10 @@ async function getAllTimeRecords() {
         (
           candidate.runs ===
           bestBattingFigure.runs &&
-
           candidate.balls ===
           bestBattingFigure.balls &&
-
           candidate.strike_rate ===
           bestBattingFigure.strike_rate &&
-
           candidate.fours >
           bestBattingFigure.fours
         ) ||
@@ -2593,16 +3106,12 @@ async function getAllTimeRecords() {
         (
           candidate.runs ===
           bestBattingFigure.runs &&
-
           candidate.balls ===
           bestBattingFigure.balls &&
-
           candidate.strike_rate ===
           bestBattingFigure.strike_rate &&
-
           candidate.fours ===
           bestBattingFigure.fours &&
-
           candidate.sixes >
           bestBattingFigure.sixes
         );
@@ -2612,71 +3121,101 @@ async function getAllTimeRecords() {
           candidate;
       }
     }
+  }
 
-    const bowling =
-      await computeBowlingScorecard(
-        inn.id
+  /*
+   * -------------------------------------------------------
+   * BEST SINGLE-INNINGS BOWLING
+   * -------------------------------------------------------
+   */
+
+  for (
+    const [
+      inningsId,
+      playerStatsMap
+    ]
+    of inningsBowling
+  ) {
+
+    const innings =
+      inningsMap.get(
+        inningsId
       );
 
+    if (!innings) {
+      continue;
+    }
+
     for (
-      const b of bowling
+      const stats
+      of playerStatsMap.values()
     ) {
 
-      if (
-        !gccPlayerIds.has(
-          String(b.player_id)
-        )
-      ) {
+      const player =
+        playerMap.get(
+          String(
+            stats.player_id
+          )
+        );
+
+      if (!player) {
         continue;
       }
+
+      const economy =
+        stats.legalBalls > 0
+          ? Number(
+              (
+                stats.runs /
+                (
+                  stats.legalBalls /
+                  6
+                )
+              ).toFixed(2)
+            )
+          : 0;
 
       const candidate = {
 
         player_id:
-          b.player_id,
+          stats.player_id,
 
         player_name:
-          gccPlayers.find(
-            p =>
-              String(p.id) ===
-              String(b.player_id)
-          )?.name ||
-          'Unknown Player',
+          player.name,
 
         wickets:
           Number(
-            b.wickets || 0
+            stats.wickets || 0
           ),
 
         runs:
           Number(
-            b.runs || 0
+            stats.runs || 0
           ),
 
         overs:
-          b.overs,
+          oversStr(
+            stats.legalBalls
+          ),
 
         balls:
           Number(
-            b.balls || 0
+            stats.legalBalls || 0
           ),
 
-        economy:
-          Number(
-            b.economy || 0
-          ),
+        economy,
 
         innings_id:
-          inn.id,
+          innings.id,
 
         match_id:
-          inn.match_id,
+          innings.match_id,
 
         innings_number:
-          inn.innings_number,
+          innings.innings_number,
 
         bowling_team_id:
-          inn.batting_team_id
+          innings.batting_team_id
       };
 
       const better =
@@ -2688,7 +3227,6 @@ async function getAllTimeRecords() {
         (
           candidate.wickets ===
           bestBowling.wickets &&
-
           candidate.runs <
           bestBowling.runs
         ) ||
@@ -2696,10 +3234,8 @@ async function getAllTimeRecords() {
         (
           candidate.wickets ===
           bestBowling.wickets &&
-
           candidate.runs ===
           bestBowling.runs &&
-
           candidate.economy <
           bestBowling.economy
         );
@@ -2711,10 +3247,71 @@ async function getAllTimeRecords() {
     }
   }
 
+  /*
+   * -------------------------------------------------------
+   * CAREER BATTING LEADERS
+   * -------------------------------------------------------
+   */
+
   const battingLeaders =
-    await Promise.all(
-      gccPlayers.map(
-        async player => ({
+    gccPlayers.map(
+      player => {
+
+        const stats =
+          battingStats.get(
+            String(
+              player.id
+            )
+          );
+
+        const inningsBatted =
+          stats.inningsSet.size;
+
+        const inningsScoreValues =
+          [
+            ...stats.inningsScores.values()
+          ].map(
+            value =>
+              Number(value || 0)
+          );
+
+        const highestScore =
+          inningsScoreValues.length > 0
+            ? Math.max(
+                ...inningsScoreValues
+              )
+            : 0;
+
+        const notOuts =
+          Math.max(
+            0,
+            inningsBatted -
+            stats.times_out
+          );
+
+        const strikeRate =
+          stats.balls_faced > 0
+            ? Number(
+                (
+                  (
+                    stats.runs /
+                    stats.balls_faced
+                  ) * 100
+                ).toFixed(2)
+              )
+            : 0;
+
+        const average =
+          stats.times_out > 0
+            ? Number(
+                (
+                  stats.runs /
+                  stats.times_out
+                ).toFixed(2)
+              )
+            : stats.runs;
+
+        return {
 
           player_id:
             player.id,
@@ -2722,17 +3319,69 @@ async function getAllTimeRecords() {
           player_name:
             player.name,
 
-          ...await computeCareerBattingStats(
-            player.id
-          )
-        })
-      )
+          innings_batted:
+            inningsBatted,
+
+          runs:
+            stats.runs,
+
+          highest_score:
+            highestScore,
+
+          balls_faced:
+            stats.balls_faced,
+
+          fours:
+            stats.fours,
+
+          sixes:
+            stats.sixes,
+
+          times_out:
+            stats.times_out,
+
+          not_outs:
+            notOuts,
+
+          strike_rate:
+            strikeRate,
+
+          average
+        };
+      }
     );
+
+  /*
+   * -------------------------------------------------------
+   * CAREER BOWLING LEADERS
+   * -------------------------------------------------------
+   */
 
   const bowlingLeaders =
-    await Promise.all(
-      gccPlayers.map(
-        async player => ({
+    gccPlayers.map(
+      player => {
+
+        const stats =
+          bowlingStats.get(
+            String(
+              player.id
+            )
+          );
+
+        const economy =
+          stats.balls_bowled > 0
+            ? Number(
+                (
+                  stats.runs_given /
+                  (
+                    stats.balls_bowled /
+                    6
+                  )
+                ).toFixed(2)
+              )
+            : 0;
+
+        return {
 
           player_id:
             player.id,
@@ -2740,12 +3389,39 @@ async function getAllTimeRecords() {
           player_name:
             player.name,
 
-          ...await computeCareerBowlingStats(
-            player.id
-          )
-        })
-      )
+          innings_bowled:
+            stats.inningsSet.size,
+
+          overs:
+            oversStr(
+              stats.balls_bowled
+            ),
+
+          balls_bowled:
+            stats.balls_bowled,
+
+          runs_given:
+            stats.runs_given,
+
+          wickets:
+            stats.wickets,
+
+          fours_given:
+            stats.fours_given,
+
+          sixes_given:
+            stats.sixes_given,
+
+          economy
+        };
+      }
     );
+
+  /*
+   * -------------------------------------------------------
+   * TOP RECORD HELPER
+   * -------------------------------------------------------
+   */
 
   const topBy =
     (
@@ -2774,6 +3450,12 @@ async function getAllTimeRecords() {
           0,
           n
         );
+
+  /*
+   * -------------------------------------------------------
+   * FINAL RECORD RESPONSE
+   * -------------------------------------------------------
+   */
 
   return {
 
@@ -2808,9 +3490,9 @@ async function getAllTimeRecords() {
     bestStrikeRate:
       topBy(
         battingLeaders.filter(
-          b =>
+          player =>
             Number(
-              b.balls_faced || 0
+              player.balls_faced || 0
             ) >= 10
         ),
         'strike_rate'
@@ -2831,9 +3513,9 @@ async function getAllTimeRecords() {
     bestEconomy:
       [...bowlingLeaders]
         .filter(
-          b =>
+          player =>
             Number(
-              b.balls_bowled || 0
+              player.balls_bowled || 0
             ) >= 12
         )
         .sort(
@@ -2892,4 +3574,3 @@ module.exports = {
 
   getAllTimeRecords
 };
-
