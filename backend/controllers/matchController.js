@@ -565,15 +565,19 @@ exports.setToss = async (req, res) => {
     const updatedMatch =
       await getMatchById(matchId);
 
-    await sendLiveMatchNotification(
-      req,
-      matchId,
-      `${
-        match.team1_id && match.team2_id
-          ? 'GCC Cricket match'
-          : 'Match'
-      } is now live!`
-    );
+    console.log(
+  `🚨 LIVE MATCH NOTIFICATION TRIGGERED for match ${matchId}`
+);
+
+await sendLiveMatchNotification(
+  req,
+  matchId,
+  `${
+    match.team1_id && match.team2_id
+      ? 'GCC Cricket match'
+      : 'Match'
+  } is now live!`
+);
 
     return res.json({
       match: updatedMatch,
