@@ -144,22 +144,17 @@ async function columnExists(tableName, columnName) {
 }
 
 /**
- * Add columns that are required by newer versions
- * of the application.
- *
- * This replaces the need for a migrations folder
- * for these small schema updates.
+ * Add columns and tables required by newer
+ * versions of the application.
  */
 async function ensureDatabaseUpdates() {
   console.log('🔄 Checking database updates...');
 
   try {
-    /**
-     * FCM Web Push token.
-     *
-     * Existing notification_users tables will receive
-     * this column automatically.
-     */
+    // =====================================================
+    // FCM TOKEN - LEGACY COMPATIBILITY
+    // =====================================================
+
     const hasFcmToken = await columnExists(
       'notification_users',
       'fcm_token'
@@ -184,22 +179,50 @@ async function ensureDatabaseUpdates() {
       );
     }
 
-    /**
-     * Future database updates can be added here.
-     *
-     * Example:
-     *
-     * const exists = await columnExists(
-     *   'some_table',
-     *   'some_column'
-     * );
-     *
-     * if (!exists) {
-     *   await client.execute(
-     *     'ALTER TABLE some_table ADD COLUMN some_column TEXT'
-     *   );
-     * }
-     */
+    // =====================================================
+    // MULTI-DEVICE NOTIFICATION TABLE
+    // =====================================================
+    //
+    // One notification user can have:
+    //
+    // 💻 Laptop
+    // 📱 Phone
+    // 📱 Tablet
+    //
+    // Each device has its own FCM token.
+    //
+    // The old notification_users.fcm_token column
+    // is intentionally kept for compatibility.
+    // =====================================================
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS notification_devices (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        fcm_token TEXT NOT NULL UNIQUE,
+        device_name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id)
+          REFERENCES notification_users(id)
+          ON DELETE CASCADE
+      )
+    `);
+
+    // =====================================================
+    // INDEX FOR FAST USER DEVICE LOOKUPS
+    // =====================================================
+
+    await client.execute(`
+      CREATE INDEX IF NOT EXISTS
+      idx_notification_devices_user
+      ON notification_devices(user_id)
+    `);
+
+    console.log(
+      '✅ Multi-device notification table ready'
+    );
+
   } catch (error) {
     console.error(
       '❌ Database update failed:'
@@ -210,7 +233,9 @@ async function ensureDatabaseUpdates() {
     throw error;
   }
 
-  console.log('✅ Database updates completed');
+  console.log(
+    '✅ Database updates completed'
+  );
 }
 
 const db = {
@@ -228,7 +253,10 @@ const db = {
           return undefined;
         }
 
-        return convertRow(result.rows[0], result.columns);
+        return convertRow(
+          result.rows[0],
+          result.columns
+        );
       },
 
       async all(...args) {

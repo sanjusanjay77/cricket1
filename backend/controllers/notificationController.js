@@ -277,14 +277,39 @@ exports.updatePreferences = async (req, res) => {
 // SAVE FCM TOKEN
 // PUT /api/notifications/:id/fcm-token
 // =====================================================
+//
+// IMPORTANT:
+//
+// Old system:
+// notification_users
+// └── fcm_token  ← one device only
+//
+// New system:
+// notification_users
+// └── user
+//
+// notification_devices
+// ├── laptop token
+// ├── phone token
+// └── other device tokens
+//
+// This allows the same notification user to receive
+// notifications on multiple devices.
+// =====================================================
 exports.saveFcmToken = async (req, res) => {
   try {
     const userId = cleanText(req.params.id, 100);
     const fcmToken = cleanFcmToken(req.body.fcm_token);
 
+    // Optional device name sent by frontend.
+    const deviceName = cleanText(
+      req.body.device_name,
+      100
+    );
+
 
     // ---------------------------------------------
-    // Validate token
+    // Validate user ID
     // ---------------------------------------------
     if (!userId) {
       return res.status(400).json({
@@ -292,6 +317,10 @@ exports.saveFcmToken = async (req, res) => {
       });
     }
 
+
+    // ---------------------------------------------
+    // Validate FCM token
+    // ---------------------------------------------
     if (!fcmToken) {
       return res.status(400).json({
         error: 'FCM token is required.'
@@ -318,7 +347,91 @@ exports.saveFcmToken = async (req, res) => {
 
 
     // ---------------------------------------------
-    // Save FCM token
+    // Check whether this token already exists
+    // ---------------------------------------------
+    const existingDevice = await db.prepare(`
+      SELECT
+        id,
+        user_id,
+        fcm_token
+      FROM notification_devices
+      WHERE fcm_token = ?
+      LIMIT 1
+    `).get(fcmToken);
+
+
+    if (existingDevice) {
+
+      // -------------------------------------------
+      // Token already exists for this user
+      // -------------------------------------------
+      if (existingDevice.user_id === userId) {
+
+        await db.prepare(`
+          UPDATE notification_devices
+          SET
+            device_name = ?,
+            last_seen_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(
+          deviceName || null,
+          existingDevice.id
+        );
+
+      } else {
+
+        // -------------------------------------------
+        // FCM token moved to another user
+        // -------------------------------------------
+        await db.prepare(`
+          UPDATE notification_devices
+          SET
+            user_id = ?,
+            device_name = ?,
+            last_seen_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(
+          userId,
+          deviceName || null,
+          existingDevice.id
+        );
+      }
+
+    } else {
+
+      // ---------------------------------------------
+      // New device token
+      // ---------------------------------------------
+      const deviceId = uuidv4();
+
+      await db.prepare(`
+        INSERT INTO notification_devices (
+          id,
+          user_id,
+          fcm_token,
+          device_name,
+          created_at,
+          last_seen_at
+        )
+        VALUES (
+          ?,
+          ?,
+          ?,
+          ?,
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+      `).run(
+        deviceId,
+        userId,
+        fcmToken,
+        deviceName || null
+      );
+    }
+
+
+    // ---------------------------------------------
+    // Keep legacy token updated
     // ---------------------------------------------
     await db.prepare(`
       UPDATE notification_users
@@ -328,6 +441,16 @@ exports.saveFcmToken = async (req, res) => {
       fcmToken,
       userId
     );
+
+
+    // ---------------------------------------------
+    // Get device count
+    // ---------------------------------------------
+    const deviceCount = await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM notification_devices
+      WHERE user_id = ?
+    `).get(userId);
 
 
     // ---------------------------------------------
@@ -348,13 +471,18 @@ exports.saveFcmToken = async (req, res) => {
 
 
     console.log(
-      `🔔 FCM token saved for notification user: ${userId}`
+      `🔔 FCM device token saved for notification user: ${userId}`
+    );
+
+    console.log(
+      `📱 Registered notification devices: ${deviceCount?.count || 0}`
     );
 
 
     return res.json({
       success: true,
-      user
+      user,
+      device_count: Number(deviceCount?.count || 0)
     });
 
   } catch (error) {
