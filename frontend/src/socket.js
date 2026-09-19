@@ -7,7 +7,10 @@ const socketUrl =
 
 const socket = io(socketUrl, {
   autoConnect: true,
-  transports: ['websocket', 'polling']
+  transports: ['polling', 'websocket'],
+  reconnection: true,
+  reconnectionAttempts: 20,
+  reconnectionDelay: 1000
 });
 
 export function registerNotificationUser(userId) {
