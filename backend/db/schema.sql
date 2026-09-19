@@ -168,6 +168,8 @@ ON players(name);
 CREATE INDEX IF NOT EXISTS idx_matches_date
 ON matches(match_date DESC);
 
+CREATE INDEX IF NOT EXISTS idx_matches_created_at
+ON matches(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_matches_status
 ON matches(status);
 
