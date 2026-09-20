@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { Matches } from '../api/api.js';
 import socket from '../socket.js';
 import { exportMatchPdf } from '../utils/exportPdf.js';
@@ -381,8 +381,19 @@ function BowlerRow({
 export default function LiveScoreboard() {
   const { matchId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [detail, setDetail] = useState(null);
+  const initialMatch = location.state?.match || null;
+
+  const [detail, setDetail] = useState(
+    initialMatch
+      ? {
+          match: initialMatch,
+          innings: initialMatch.innings || [],
+          players: initialMatch.players || [],
+        }
+      : null
+  );
   const [tab, setTab] = useState(0);
   const [boundary, setBoundary] = useState(null);
   const [flashWicket, setFlashWicket] = useState(false);
@@ -395,29 +406,56 @@ export default function LiveScoreboard() {
      LOAD MATCH
   ======================================================= */
 
-  const load = useCallback(() => {
-    Matches.get(matchId)
-      .then((data) => {
-        setDetail(data);
+  /* =======================================================
+   LOAD MATCH
+======================================================= */
 
-        setTab(
-          Math.max(
-            0,
-            (data.innings || []).length - 1
-          )
-        );
-      })
-      .catch((error) => {
-        console.error(
-          'Failed to load match:',
-          error
-        );
-      });
-  }, [matchId]);
+const load = useCallback(() => {
+  Matches.get(matchId)
+    .then((data) => {
+      setDetail(data);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+      setTab(
+        Math.max(
+          0,
+          (data.innings || []).length - 1
+        )
+      );
+    })
+    .catch((error) => {
+      // Ignore browser/network abort errors.
+      // The initial match data is already displayed when available.
+      if (
+        error?.code === 'ERR_CANCELED' ||
+        error?.message === 'Request aborted' ||
+        error?.name === 'CanceledError'
+      ) {
+        return;
+      }
+
+      console.error(
+        'Failed to load match:',
+        error
+      );
+    });
+}, [matchId]);
+
+useEffect(() => {
+  // If Home already supplied the match, let the page
+  // render immediately and fetch the complete data
+  // just after the first paint.
+  if (initialMatch) {
+    const timer = setTimeout(() => {
+      load();
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }
+
+  load();
+}, [load, initialMatch]);
 
   /* =======================================================
      EFFECTS

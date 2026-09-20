@@ -1,8 +1,11 @@
+
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Matches, getApiErrorMessage } from '../api/api.js';
 import socket from '../socket.js';
 import { exportMatchPdf } from '../utils/exportPdf.js';
+
+const MATCHES_CACHE_KEY = 'gcc_matches_cache_v1';
 
 const statusBadge = {
   upcoming:
@@ -40,58 +43,122 @@ function showDeleteError(error) {
 }
 
 /* =========================================================
+   CACHE HELPERS
+========================================================= */
+
+function readMatchesCache() {
+  try {
+    const cached =
+      localStorage.getItem(
+        MATCHES_CACHE_KEY
+      );
+
+    if (!cached) {
+      return [];
+    }
+
+    const parsed =
+      JSON.parse(cached);
+
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
+
+  } catch (error) {
+    console.warn(
+      'Failed to read matches cache:',
+      error
+    );
+
+    return [];
+  }
+}
+
+function writeMatchesCache(matches) {
+  try {
+    localStorage.setItem(
+      MATCHES_CACHE_KEY,
+      JSON.stringify(matches)
+    );
+  } catch (error) {
+    console.warn(
+      'Failed to save matches cache:',
+      error
+    );
+  }
+}
+
+/* =========================================================
    LIVE MATCH CARD
 ========================================================= */
 
 function LiveHero({
-  matchId,
+  match,
   onDeleted,
 }) {
+  const [data, setData] = useState({
+    match,
+    innings: match?.innings || [],
+    players: match?.players || [],
+  });
 
-  const [data, setData] = useState(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deleting, setDeleting] =
+    useState(false);
 
-  const load = useCallback(() => {
+  /*
+   * Keep Home data immediately available.
+   *
+   * IMPORTANT:
+   * Do not call Matches.get() here.
+   */
+  useEffect(() => {
+    setData((current) => ({
+      ...current,
 
-    Matches.get(matchId)
-      .then(setData)
-      .catch((error) => {
+      match,
 
-        console.error(
-          'Failed to load live match:',
-          error
-        );
+      innings:
+        match?.innings ||
+        current.innings ||
+        [],
 
-      });
+      players:
+        match?.players ||
+        current.players ||
+        [],
+    }));
+  }, [match]);
 
-  }, [matchId]);
+  /* =======================================================
+     REALTIME SOCKET
+  ======================================================= */
 
   useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
+    if (!match?.id) {
+      return;
+    }
 
     socket.emit(
       'join-match',
-      matchId
+      match.id
     );
 
     const onUpdate = ({
-      match,
+      match: updatedMatch,
       innings,
     }) => {
+      setData((current) => ({
+        ...current,
 
-      setData((current) =>
-        current
-          ? {
-              ...current,
-              match,
-              innings,
-            }
-          : current
-      );
+        match:
+          updatedMatch ||
+          current.match,
 
+        innings:
+          Array.isArray(innings)
+            ? innings
+            : current.innings,
+      }));
     };
 
     socket.on(
@@ -100,64 +167,75 @@ function LiveHero({
     );
 
     return () => {
-
       socket.emit(
         'leave-match',
-        matchId
+        match.id
       );
 
       socket.off(
         'score-update',
         onUpdate
       );
-
     };
+  }, [match?.id]);
 
-  }, [matchId]);
-
-  if (!data) {
+  if (!data?.match) {
     return null;
   }
 
-  const { match } = data;
+  const currentMatch =
+    data.match;
 
   const innings =
     data.innings?.[
       data.innings.length - 1
     ];
 
-  if (!innings) {
-    return null;
-  }
-
   const battingTeam =
-    innings.innings.batting_team_id ===
-    match.team1_id
-      ? match.team1_name
-      : match.team2_name;
+    innings?.innings?.batting_team_id ===
+    currentMatch.team1_id
+      ? currentMatch.team1_name
+      : innings?.innings?.batting_team_id ===
+          currentMatch.team2_id
+        ? currentMatch.team2_name
+        : null;
 
   const battingShort =
-    innings.innings.batting_team_id ===
-    match.team1_id
-      ? match.team1_short
-      : match.team2_short;
+    innings?.innings?.batting_team_id ===
+    currentMatch.team1_id
+      ? currentMatch.team1_short ||
+        currentMatch.team1_name ||
+        currentMatch.team1_short
+      : innings?.innings?.batting_team_id ===
+          currentMatch.team2_id
+        ? currentMatch.team2_short ||
+          currentMatch.team2_name ||
+          currentMatch.team2_short
+        : null;
 
   /* =======================================================
      DOWNLOAD PDF
   ======================================================= */
 
-  const downloadPdf = () => {
-
+  const downloadPdf = async () => {
     try {
+      const detail =
+        await Matches.get(
+          currentMatch.id
+        );
 
-      exportMatchPdf({
-        match: data.match,
-        innings: data.innings || [],
-        players: data.players || [],
+      await exportMatchPdf({
+        match:
+          detail.match,
+
+        innings:
+          detail.innings || [],
+
+        players:
+          detail.players || [],
       });
 
     } catch (error) {
-
       console.error(
         'PDF export failed:',
         error
@@ -166,9 +244,7 @@ function LiveHero({
       alert(
         'Unable to create PDF. Please try again.'
       );
-
     }
-
   };
 
   /* =======================================================
@@ -176,7 +252,6 @@ function LiveHero({
   ======================================================= */
 
   const deleteMatch = async () => {
-
     if (deleting) {
       return;
     }
@@ -195,51 +270,47 @@ function LiveHero({
     setDeleting(true);
 
     try {
-
       console.log(
         '🗑️ Deleting live match:',
-        matchId
+        currentMatch.id
       );
 
       await Matches.remove(
-        matchId
+        currentMatch.id
       );
 
       console.log(
         '✅ Live match deleted:',
-        matchId
+        currentMatch.id
       );
 
-      /*
-       * Tell parent to remove the match
-       * from the screen.
-       */
       if (onDeleted) {
-        onDeleted(matchId);
+        onDeleted(
+          currentMatch.id
+        );
       }
 
     } catch (error) {
-
-      showDeleteError(
-        error
-      );
+      showDeleteError(error);
 
       setDeleting(false);
-
     }
-
   };
 
   return (
     <div className="mb-4 overflow-hidden rounded-xl border border-red-500/25 bg-slate-900 shadow-md shadow-black/10">
 
-      {/* LIVE HEADER */}
+      {/* =================================================
+          LIVE HEADER
+      ================================================= */}
 
       <Link
-        to={`/match/${matchId}/live`}
+        to={`/match/${currentMatch.id}/live`}
+        state={{
+          match: currentMatch,
+        }}
         className="block"
       >
-
         <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
 
           <div className="flex items-center gap-1.5">
@@ -259,12 +330,14 @@ function LiveHero({
           </div>
 
           <div className="text-[10px] text-slate-600">
-            {match.overs_limit} overs
+            {currentMatch.overs_limit} overs
           </div>
 
         </div>
 
-        {/* TEAMS */}
+        {/* =================================================
+            TEAMS
+        ================================================= */}
 
         <div className="px-3 pt-3">
 
@@ -273,7 +346,7 @@ function LiveHero({
             <div className="min-w-0 flex-1 text-right">
 
               <div className="truncate text-sm font-bold text-white">
-                {match.team1_short}
+                {currentMatch.team1_short}
               </div>
 
             </div>
@@ -285,7 +358,7 @@ function LiveHero({
             <div className="min-w-0 flex-1 text-left">
 
               <div className="truncate text-sm font-bold text-white">
-                {match.team2_short}
+                {currentMatch.team2_short}
               </div>
 
             </div>
@@ -294,67 +367,86 @@ function LiveHero({
 
         </div>
 
-        {/* SCORE */}
+        {/* =================================================
+            SCORE
+        ================================================= */}
 
         <div className="px-3 pb-3 pt-2 text-center">
 
-          <div className="mb-0.5 text-[9px] uppercase tracking-wider text-slate-600">
-            {battingShort} batting
-          </div>
+          {innings ? (
+            <>
+              <div className="mb-0.5 text-[9px] uppercase tracking-wider text-slate-600">
+                {battingShort} batting
+              </div>
 
-          <div className="text-[38px] font-black leading-none tracking-tight text-white">
+              <div className="text-[38px] font-black leading-none tracking-tight text-white">
 
-            {innings.innings.total_runs}
+                {innings.innings.total_runs}
 
-            <span className="text-slate-500">
-              /{innings.innings.total_wickets}
-            </span>
+                <span className="text-slate-500">
+                  /{innings.innings.total_wickets}
+                </span>
 
-          </div>
+              </div>
 
-          <div className="mt-1 text-[11px] text-slate-500">
+              <div className="mt-1 text-[11px] text-slate-500">
 
-            {innings.overs}
+                {innings.overs}
 
-            <span className="mx-1.5 text-slate-700">
-              •
-            </span>
-
-            RR {innings.runRate}
-
-            {innings.innings.target && (
-              <>
                 <span className="mx-1.5 text-slate-700">
                   •
                 </span>
 
-                Target {innings.innings.target}
-              </>
-            )}
+                RR {innings.runRate}
+
+                {innings.innings.target && (
+                  <>
+                    <span className="mx-1.5 text-slate-700">
+                      •
+                    </span>
+
+                    Target {innings.innings.target}
+                  </>
+                )}
+
+              </div>
+            </>
+          ) : (
+            <div className="py-3 text-[11px] text-slate-500">
+              Live match
+            </div>
+          )}
+
+        </div>
+
+        {/* =================================================
+            BATTING TEAM
+        ================================================= */}
+
+        {battingTeam && (
+          <div className="px-3 pb-3 text-center">
+
+            <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-medium text-slate-500">
+              {battingTeam}
+            </span>
 
           </div>
-
-        </div>
-
-        {/* BATTING TEAM */}
-
-        <div className="px-3 pb-3 text-center">
-
-          <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-medium text-slate-500">
-            {battingTeam}
-          </span>
-
-        </div>
+        )}
 
       </Link>
 
-      {/* ACTION BAR */}
+      {/* =================================================
+          ACTION BAR
+      ================================================= */}
 
       <div className="grid grid-cols-3 gap-1.5 border-t border-slate-800 p-2">
 
         <Link
-          to={`/match/${matchId}/live`}
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-700"
+          to={`/match/${currentMatch.id}/live`}
+          state={{
+            match: currentMatch,
+          }}
+          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
         >
           View
         </Link>
@@ -395,7 +487,6 @@ function MatchCard({
   onDownload,
   deletingId,
 }) {
-
   const statusText =
     match.status === 'innings-break'
       ? 'Innings Break'
@@ -409,7 +500,9 @@ function MatchCard({
 
       <div className="px-3 py-3">
 
-        {/* TOP ROW */}
+        {/* =================================================
+            TOP ROW
+        ================================================= */}
 
         <div className="flex items-center justify-between gap-2">
 
@@ -440,13 +533,17 @@ function MatchCard({
 
         </div>
 
-        {/* MATCH INFO */}
+        {/* =================================================
+            MATCH INFO
+        ================================================= */}
 
         <div className="mt-1 text-[10px] text-slate-600">
           {match.overs_limit} overs
         </div>
 
-        {/* RESULT */}
+        {/* =================================================
+            RESULT
+        ================================================= */}
 
         {match.result_text && (
           <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-emerald-500/5 px-2 py-1.5">
@@ -464,7 +561,9 @@ function MatchCard({
 
       </div>
 
-      {/* BUTTONS */}
+      {/* =================================================
+          BUTTONS
+      ================================================= */}
 
       <div className="grid grid-cols-2 gap-1.5 border-t border-slate-800 p-2">
 
@@ -488,6 +587,9 @@ function MatchCard({
 
         <Link
           to={`/match/${match.id}/live`}
+          state={{
+            match,
+          }}
           className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
         >
           View
@@ -529,11 +631,28 @@ function MatchCard({
 
 export default function Home() {
 
-  const [matches, setMatches] =
-    useState([]);
+  /*
+   * IMPORTANT:
+   *
+   * Read cached matches immediately.
+   *
+   * This allows Home to render without waiting
+   * for the remote Render/Turso request.
+   */
+  const initialCachedMatches =
+    readMatchesCache();
 
+  const [matches, setMatches] =
+    useState(initialCachedMatches);
+
+  /*
+   * Only show the full loading screen when
+   * there is absolutely no cached data.
+   */
   const [loading, setLoading] =
-    useState(true);
+    useState(
+      initialCachedMatches.length === 0
+    );
 
   const [deletingId, setDeletingId] =
     useState(null);
@@ -545,16 +664,27 @@ export default function Home() {
   const loadMatches =
     useCallback(() => {
 
-      setLoading(true);
-
       Matches.list()
 
         .then((data) => {
 
-          setMatches(
+          const nextMatches =
             Array.isArray(data)
               ? data
-              : []
+              : [];
+
+          setMatches(
+            nextMatches
+          );
+
+          /*
+           * Save the fresh server response.
+           *
+           * Next time Home opens,
+           * this data can be displayed immediately.
+           */
+          writeMatchesCache(
+            nextMatches
           );
 
         })
@@ -566,22 +696,32 @@ export default function Home() {
             error
           );
 
-          setMatches([]);
+          /*
+           * Do NOT erase cached matches
+           * when the network request fails.
+           *
+           * This keeps the page usable even
+           * when Render/Turso is temporarily slow.
+           */
+          setMatches((current) =>
+            current.length > 0
+              ? current
+              : []
+          );
 
         })
 
         .finally(() => {
-
           setLoading(false);
-
         });
 
     }, []);
 
   useEffect(() => {
-
+    /*
+     * Always refresh in the background.
+     */
     loadMatches();
-
   }, [loadMatches]);
 
   /* =======================================================
@@ -592,7 +732,6 @@ export default function Home() {
     async (matchId) => {
 
       if (!matchId) {
-
         alert(
           'Invalid match ID.'
         );
@@ -636,28 +775,43 @@ export default function Home() {
         );
 
         /*
-         * Remove it immediately from the UI.
+         * Remove immediately from UI.
          */
-        setMatches((current) =>
-          current.filter(
-            (match) =>
-              match.id !== matchId
-          )
-        );
+        setMatches((current) => {
+
+          const next =
+            current.filter(
+              (match) =>
+                match.id !== matchId
+            );
+
+          writeMatchesCache(
+            next
+          );
+
+          return next;
+        });
 
         /*
          * Reload once from server to guarantee
-         * the frontend is synchronized with the DB.
+         * synchronization.
          */
         try {
 
           const latest =
             await Matches.list();
 
-          setMatches(
+          const latestMatches =
             Array.isArray(latest)
               ? latest
-              : []
+              : [];
+
+          setMatches(
+            latestMatches
+          );
+
+          writeMatchesCache(
+            latestMatches
           );
 
         } catch (reloadError) {
@@ -699,12 +853,17 @@ export default function Home() {
             matchId
           );
 
-        exportMatchPdf({
-          match: detail.match,
+        await exportMatchPdf({
+
+          match:
+            detail.match,
+
           innings:
             detail.innings || [],
+
           players:
             detail.players || [],
+
         });
 
       } catch (error) {
@@ -726,7 +885,10 @@ export default function Home() {
      LOADING
   ======================================================= */
 
-  if (loading) {
+  if (
+    loading &&
+    matches.length === 0
+  ) {
 
     return (
       <div className="flex min-h-[30vh] items-center justify-center">
@@ -815,23 +977,30 @@ export default function Home() {
 
           {liveMatches.map(
             (match) => (
-
               <LiveHero
                 key={match.id}
-                matchId={match.id}
+                match={match}
                 onDeleted={(id) => {
 
                   setMatches(
-                    (current) =>
-                      current.filter(
-                        (match) =>
-                          match.id !== id
-                      )
+                    (current) => {
+
+                      const next =
+                        current.filter(
+                          (match) =>
+                            match.id !== id
+                        );
+
+                      writeMatchesCache(
+                        next
+                      );
+
+                      return next;
+                    }
                   );
 
                 }}
               />
-
             )
           )}
 
@@ -843,7 +1012,6 @@ export default function Home() {
       ================================================= */}
 
       {matches.length === 0 && (
-
         <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
 
           <div className="text-3xl">
@@ -867,7 +1035,6 @@ export default function Home() {
           </Link>
 
         </div>
-
       )}
 
       {/* =================================================
@@ -875,7 +1042,6 @@ export default function Home() {
       ================================================= */}
 
       {others.length > 0 && (
-
         <section>
 
           <div className="mb-2 flex items-center justify-between">
@@ -894,7 +1060,6 @@ export default function Home() {
 
             {others.map(
               (match) => (
-
                 <MatchCard
                   key={match.id}
                   match={match}
@@ -908,16 +1073,15 @@ export default function Home() {
                     deletingId
                   }
                 />
-
               )
             )}
 
           </div>
 
         </section>
-
       )}
 
     </div>
   );
 }
+

@@ -469,15 +469,92 @@ async function recordBall(inningsId, payload = {}) {
     .prepare(updateSql)
     .run(...updateParams);
 
-  /* -------------------------------------------------------
-     FINALIZATION
+    /* -------------------------------------------------------
+     FAST FINALIZATION
   ------------------------------------------------------- */
 
-  await checkAndFinalizeInnings(inningsId);
+  /*
+   * Most balls cannot possibly finish the innings.
+   *
+   * Only check finalization when:
+   * 1. all wickets are down
+   * 2. the target has been reached
+   * 3. an over has just completed
+   *
+   * This avoids 2 remote Turso reads on ordinary balls.
+   */
 
-  const updatedInnings =
-    await getInnings(inningsId);
+  const targetReached =
+    innings.target != null &&
+    newTotalRuns >= Number(innings.target);
 
+  const allOut =
+    newTotalWickets >= MAX_WICKETS;
+
+  const needsFinalizationCheck =
+    allOut ||
+    targetReached ||
+    overJustCompleted;
+
+  const updatedInnings = {
+    ...innings,
+
+    total_runs:
+      newTotalRuns,
+
+    total_wickets:
+      newTotalWickets,
+
+    total_balls:
+      newTotalBalls,
+
+    striker_id:
+      newStriker,
+
+    non_striker_id:
+      newNonStriker,
+
+    current_bowler_id:
+      newBowler
+  };
+
+  /*
+   * Update the local extras value too.
+   */
+  if (extraColumn) {
+    const extrasToAdd =
+      extra_type === 'wide'
+        ? teamRuns
+        : extra_runs;
+
+    updatedInnings[extraColumn] =
+      Number(
+        innings[extraColumn] || 0
+      ) + extrasToAdd;
+  }
+
+  /*
+   * Only contact Turso for finalization
+   * when it is actually possible.
+   */
+  if (needsFinalizationCheck) {
+
+    await checkAndFinalizeInnings(
+      inningsId
+    );
+
+    /*
+     * checkAndFinalizeInnings() sets these
+     * values when the innings is completed.
+     */
+    if (
+      allOut ||
+      targetReached
+    ) {
+      updatedInnings.is_completed = 1;
+      updatedInnings.current_bowler_id = null;
+    }
+  }
   /* -------------------------------------------------------
      SAVED BALL
   ------------------------------------------------------- */

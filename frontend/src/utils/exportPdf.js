@@ -1,19 +1,18 @@
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 /**
  * Builds and downloads a clean, user-friendly cricket scorecard PDF.
  *
- * Includes:
- * - Match summary
- * - Innings summary
- * - Batting scorecard
- * - Extras
- * - Bowling scorecard
- * - Partnerships
- * - Fall of wickets
+ * PDF libraries are loaded only when this function is called.
+ * This keeps the main application fast.
  */
-export function exportMatchPdf({ match, innings, players }) {
+export async function exportMatchPdf({ match, innings, players }) {
+  // Load PDF libraries only when the user actually exports a PDF.
+  const [{ default: jsPDF }, { default: autoTable }] =
+    await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ]);
+
   const safePlayers = Array.isArray(players) ? players : [];
   const safeInnings = Array.isArray(innings) ? innings : [];
 
@@ -48,12 +47,6 @@ export function exportMatchPdf({ match, innings, players }) {
   const margin = 14;
   const contentWidth = pageWidth - margin * 2;
 
-  /*
-   * ---------------------------------------------------------
-   * COLORS
-   * ---------------------------------------------------------
-   */
-
   const COLORS = {
     green: [15, 81, 50],
     lightGreen: [232, 247, 239],
@@ -75,12 +68,6 @@ export function exportMatchPdf({ match, innings, players }) {
     white: [255, 255, 255],
   };
 
-  /*
-   * ---------------------------------------------------------
-   * HELPERS
-   * ---------------------------------------------------------
-   */
-
   const setText = (size, color = COLORS.dark) => {
     doc.setFontSize(size);
     doc.setTextColor(...color);
@@ -95,6 +82,7 @@ export function exportMatchPdf({ match, innings, players }) {
     const height = subtitle ? 15 : 11;
 
     doc.setFillColor(...color);
+
     doc.roundedRect(
       margin,
       y,
@@ -108,11 +96,17 @@ export function exportMatchPdf({ match, innings, players }) {
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...COLORS.white);
-    doc.text(title, margin + 5, y + 7);
+
+    doc.text(
+      title,
+      margin + 5,
+      y + 7
+    );
 
     if (subtitle) {
       doc.setFontSize(7.5);
       doc.setFont('helvetica', 'normal');
+
       doc.text(
         subtitle,
         margin + 5,
@@ -209,7 +203,11 @@ export function exportMatchPdf({ match, innings, players }) {
     const totalPages =
       doc.internal.getNumberOfPages();
 
-    for (let page = 1; page <= totalPages; page++) {
+    for (
+      let page = 1;
+      page <= totalPages;
+      page++
+    ) {
       doc.setPage(page);
 
       doc.setDrawColor(...COLORS.border);
@@ -238,12 +236,6 @@ export function exportMatchPdf({ match, innings, players }) {
       );
     }
   };
-
-  /*
-   * ---------------------------------------------------------
-   * START PDF
-   * ---------------------------------------------------------
-   */
 
   let y = 18;
 
@@ -316,6 +308,7 @@ export function exportMatchPdf({ match, innings, players }) {
    */
 
   const boxGap = 4;
+
   const boxWidth =
     (contentWidth - boxGap * 2) / 3;
 
@@ -346,9 +339,7 @@ export function exportMatchPdf({ match, innings, players }) {
   y += 25;
 
   /*
-   * ---------------------------------------------------------
    * EACH INNINGS
-   * ---------------------------------------------------------
    */
 
   safeInnings.forEach((inn, idx) => {
@@ -396,7 +387,7 @@ export function exportMatchPdf({ match, innings, players }) {
     );
 
     /*
-     * SCORE SUMMARY BOX
+     * SCORE SUMMARY
      */
 
     const scoreBoxWidth =
@@ -416,6 +407,7 @@ export function exportMatchPdf({ match, innings, players }) {
     );
 
     setText(7.5, COLORS.gray);
+
     doc.text(
       'SCORE',
       margin + 5,
@@ -423,6 +415,7 @@ export function exportMatchPdf({ match, innings, players }) {
     );
 
     setText(15, COLORS.green);
+
     doc.setFont('helvetica', 'bold');
 
     doc.text(
@@ -454,6 +447,7 @@ export function exportMatchPdf({ match, innings, players }) {
     );
 
     setText(15, COLORS.blue);
+
     doc.setFont('helvetica', 'bold');
 
     doc.text(
@@ -485,6 +479,7 @@ export function exportMatchPdf({ match, innings, players }) {
     );
 
     setText(15, COLORS.orange);
+
     doc.setFont('helvetica', 'bold');
 
     doc.text(
@@ -498,9 +493,7 @@ export function exportMatchPdf({ match, innings, players }) {
     y += 27;
 
     /*
-     * -------------------------------------------------------
      * BATTING
-     * -------------------------------------------------------
      */
 
     ensureSpace(45);
@@ -596,9 +589,7 @@ export function exportMatchPdf({ match, innings, players }) {
     }
 
     /*
-     * -------------------------------------------------------
      * EXTRAS
-     * -------------------------------------------------------
      */
 
     ensureSpace(24);
@@ -663,9 +654,7 @@ export function exportMatchPdf({ match, innings, players }) {
     y += 25;
 
     /*
-     * -------------------------------------------------------
      * BOWLING
-     * -------------------------------------------------------
      */
 
     ensureSpace(45);
@@ -751,9 +740,7 @@ export function exportMatchPdf({ match, innings, players }) {
     }
 
     /*
-     * -------------------------------------------------------
      * PARTNERSHIPS
-     * -------------------------------------------------------
      */
 
     ensureSpace(45);
@@ -856,9 +843,7 @@ export function exportMatchPdf({ match, innings, players }) {
     }
 
     /*
-     * -------------------------------------------------------
      * FALL OF WICKETS
-     * -------------------------------------------------------
      */
 
     ensureSpace(45);
@@ -984,9 +969,7 @@ export function exportMatchPdf({ match, innings, players }) {
   });
 
   /*
-   * ---------------------------------------------------------
    * FINAL MATCH RESULT
-   * ---------------------------------------------------------
    */
 
   if (match.result_text) {
@@ -1033,17 +1016,13 @@ export function exportMatchPdf({ match, innings, players }) {
   }
 
   /*
-   * ---------------------------------------------------------
    * FOOTER
-   * ---------------------------------------------------------
    */
 
   addFooter();
 
   /*
-   * ---------------------------------------------------------
    * DOWNLOAD
-   * ---------------------------------------------------------
    */
 
   const team1 =
@@ -1056,10 +1035,11 @@ export function exportMatchPdf({ match, innings, players }) {
     match.team2_name ||
     'Team2';
 
-  const cleanFileName = `${team1}-vs-${team2}-scorecard`
-    .replace(/[^a-zA-Z0-9-_]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+  const cleanFileName =
+    `${team1}-vs-${team2}-scorecard`
+      .replace(/[^a-zA-Z0-9-_]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
 
   doc.save(`${cleanFileName}.pdf`);
 }

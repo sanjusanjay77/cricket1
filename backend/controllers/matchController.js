@@ -5,14 +5,28 @@ const { getFirebaseAdmin } = require('../services/firebaseAdmin');
 const { getMessaging } = require('firebase-admin/messaging');
 
 function cleanId(value) {
-  if (value === undefined || value === null || value === '') return null;
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
+    return null;
+  }
+
   return String(value);
 }
 
-function sendError(res, error, fallback = 'Something went wrong') {
+function sendError(
+  res,
+  error,
+  fallback = 'Something went wrong'
+) {
   console.error(error);
+
   return res.status(500).json({
-    error: error?.message || fallback
+    error:
+      error?.message ||
+      fallback
   });
 }
 
@@ -45,7 +59,7 @@ async function teamExists(teamId) {
  * 2. Firebase FCM push notification when browser is closed
  *
  * IMPORTANT:
- * FCM now uses notification_devices so that one user can
+ * FCM uses notification_devices so that one user can
  * receive notifications on multiple phones/browsers.
  * ============================================================
  */
@@ -56,25 +70,32 @@ async function sendLiveMatchNotification(
   notificationMessage
 ) {
   try {
-    const io = req.app.get('io');
 
-    const match = await db.prepare(`
-      SELECT
-        m.id,
-        m.team1_id,
-        m.team2_id,
-        t1.name AS team1_name,
-        t2.name AS team2_name
-      FROM matches m
-      JOIN teams t1 ON t1.id = m.team1_id
-      JOIN teams t2 ON t2.id = m.team2_id
-      WHERE m.id = ?
-    `).get(matchId);
+    const io =
+      req.app.get('io');
+
+    const match =
+      await db.prepare(`
+        SELECT
+          m.id,
+          m.team1_id,
+          m.team2_id,
+          t1.name AS team1_name,
+          t2.name AS team2_name
+        FROM matches m
+        JOIN teams t1
+          ON t1.id = m.team1_id
+        JOIN teams t2
+          ON t2.id = m.team2_id
+        WHERE m.id = ?
+      `).get(matchId);
 
     if (!match) {
+
       console.warn(
         `⚠️ Match ${matchId} not found while sending notification.`
       );
+
       return;
     }
 
@@ -86,11 +107,20 @@ async function sendLiveMatchNotification(
       `https://gcc-cricket.netlify.app/match/${match.id}/live`;
 
     const payload = {
-      matchId: String(match.id),
-      title: '🏏 GCC Cricket - Match Live',
-      message: messageText,
-      teams: `${match.team1_name} vs ${match.team2_name}`,
-      url: liveUrl
+      matchId:
+        String(match.id),
+
+      title:
+        '🏏 GCC Cricket - Match Live',
+
+      message:
+        messageText,
+
+      teams:
+        `${match.team1_name} vs ${match.team2_name}`,
+
+      url:
+        liveUrl
     };
 
     /*
@@ -102,16 +132,22 @@ async function sendLiveMatchNotification(
     let socketSentCount = 0;
 
     if (io) {
-      const users = await db.prepare(`
-        SELECT id
-        FROM notification_users
-        WHERE notifications_enabled = 1
-      `).all();
 
-      const registeredUsers = users || [];
+      const users =
+        await db.prepare(`
+          SELECT id
+          FROM notification_users
+          WHERE notifications_enabled = 1
+        `).all();
+
+      const registeredUsers =
+        users || [];
 
       for (const user of registeredUsers) {
-        if (!user?.id) continue;
+
+        if (!user?.id) {
+          continue;
+        }
 
         const room =
           `notification-user-${String(user.id)}`;
@@ -120,7 +156,9 @@ async function sendLiveMatchNotification(
           io.sockets.adapter.rooms.get(room);
 
         const connectedCount =
-          roomSockets ? roomSockets.size : 0;
+          roomSockets
+            ? roomSockets.size
+            : 0;
 
         console.log(
           `🔔 Socket room ${room}: ${connectedCount} connected socket(s)`
@@ -141,7 +179,9 @@ async function sendLiveMatchNotification(
       console.log(
         `🔔 Socket.IO notifications emitted: ${socketSentCount}`
       );
+
     } else {
+
       console.warn(
         '⚠️ Socket.IO instance not available.'
       );
@@ -153,9 +193,11 @@ async function sendLiveMatchNotification(
      * ========================================================
      */
 
-    const firebaseAdmin = getFirebaseAdmin();
+    const firebaseAdmin =
+      getFirebaseAdmin();
 
     if (!firebaseAdmin) {
+
       console.warn(
         '⚠️ Firebase Admin unavailable. FCM notification skipped.'
       );
@@ -164,38 +206,30 @@ async function sendLiveMatchNotification(
     }
 
     /*
-     * IMPORTANT:
-     *
-     * Do NOT read notification_users.fcm_token here.
-     *
-     * notification_users contains one legacy token only.
-     *
-     * notification_devices contains one row per device,
-     * allowing the same user to have:
-     *
-     * - laptop token
-     * - Android token
-     * - another phone token
-     * - another browser token
+     * notification_devices contains one row per device.
      */
 
-    const fcmDevices = await db.prepare(`
-      SELECT
-        d.id AS device_id,
-        d.user_id,
-        d.fcm_token
-      FROM notification_devices d
-      INNER JOIN notification_users u
-        ON u.id = d.user_id
-      WHERE u.notifications_enabled = 1
-        AND d.fcm_token IS NOT NULL
-        AND d.fcm_token != ''
-    `).all();
+    const fcmDevices =
+      await db.prepare(`
+        SELECT
+          d.id AS device_id,
+          d.user_id,
+          d.fcm_token
+        FROM notification_devices d
+        INNER JOIN notification_users u
+          ON u.id = d.user_id
+        WHERE u.notifications_enabled = 1
+          AND d.fcm_token IS NOT NULL
+          AND d.fcm_token != ''
+      `).all();
 
     const devicesWithTokens =
       fcmDevices || [];
 
-    if (devicesWithTokens.length === 0) {
+    if (
+      devicesWithTokens.length === 0
+    ) {
+
       console.log(
         '🔔 No notification devices with FCM tokens found.'
       );
@@ -210,7 +244,10 @@ async function sendLiveMatchNotification(
     let fcmSentCount = 0;
     let fcmFailedCount = 0;
 
-    for (const device of devicesWithTokens) {
+    for (
+      const device of devicesWithTokens
+    ) {
+
       if (
         !device?.device_id ||
         !device?.user_id ||
@@ -220,73 +257,87 @@ async function sendLiveMatchNotification(
       }
 
       const fcmMessage = {
-        token: String(device.fcm_token),
+
+        token:
+          String(device.fcm_token),
 
         notification: {
-          title: payload.title,
-          body: payload.message
+          title:
+            payload.title,
+
+          body:
+            payload.message
         },
 
         data: {
-          matchId: String(match.id),
-          match_id: String(match.id),
-          title: payload.title,
-          body: payload.message,
-          teams: payload.teams,
-          url: payload.url
+          matchId:
+            String(match.id),
+
+          match_id:
+            String(match.id),
+
+          title:
+            payload.title,
+
+          body:
+            payload.message,
+
+          teams:
+            payload.teams,
+
+          url:
+            payload.url
         },
 
         webpush: {
+
           notification: {
-            title: payload.title,
-            body: payload.message,
-            icon: '/favicon.ico',
-            badge: '/favicon.ico'
+            title:
+              payload.title,
+
+            body:
+              payload.message,
+
+            icon:
+              '/favicon.ico',
+
+            badge:
+              '/favicon.ico'
           },
 
           fcmOptions: {
-            link: payload.url
+            link:
+              payload.url
           }
         }
       };
 
       try {
-        /*
-         * Firebase Admin SDK v14:
-         * use getMessaging().send()
-         *
-         * Do NOT use:
-         * firebaseAdmin.messaging().send()
-         */
 
         const response =
-          await getMessaging().send(fcmMessage);
+          await getMessaging().send(
+            fcmMessage
+          );
 
         fcmSentCount++;
 
         console.log(
           `📱 FCM notification sent to user ${device.user_id} (device ${device.device_id}): ${response}`
         );
+
       } catch (fcmError) {
+
         fcmFailedCount++;
 
         console.error(
           `❌ FCM notification failed for user ${device.user_id} (device ${device.device_id}):`,
-          fcmError?.message || fcmError
+          fcmError?.message ||
+            fcmError
         );
 
         const errorCode =
-          fcmError?.code || '';
-
-        /*
-         * ====================================================
-         * REMOVE ONLY THE INVALID DEVICE
-         * ====================================================
-         *
-         * IMPORTANT:
-         * We must NOT delete the entire user's notification
-         * record because the user may have another valid device.
-         */
+          fcmError?.code ||
+          '';
 
         if (
           errorCode ===
@@ -294,23 +345,19 @@ async function sendLiveMatchNotification(
           errorCode ===
             'messaging/invalid-registration-token'
         ) {
+
           try {
+
             await db.prepare(`
               DELETE FROM notification_devices
               WHERE id = ?
-            `).run(device.device_id);
+            `).run(
+              device.device_id
+            );
 
             console.log(
               `🧹 Removed invalid FCM device ${device.device_id} for user ${device.user_id}`
             );
-
-            /*
-             * Clear the old legacy token only if it is exactly
-             * the same invalid token.
-             *
-             * This prevents accidentally clearing another
-             * working device token.
-             */
 
             await db.prepare(`
               UPDATE notification_users
@@ -321,7 +368,9 @@ async function sendLiveMatchNotification(
               device.user_id,
               device.fcm_token
             );
+
           } catch (cleanupError) {
+
             console.error(
               `❌ Failed to remove invalid FCM device ${device.device_id}:`,
               cleanupError
@@ -334,7 +383,9 @@ async function sendLiveMatchNotification(
     console.log(
       `📱 FCM notification summary: ${fcmSentCount} sent, ${fcmFailedCount} failed`
     );
+
   } catch (notificationError) {
+
     /*
      * Notification errors must NEVER break
      * the actual cricket match operation.
@@ -353,23 +404,35 @@ async function sendLiveMatchNotification(
  * ============================================================
  */
 
-exports.listMatches = async (req, res) => {
-  try {
-    const matches = await db.prepare(`
-      SELECT
-        m.*,
-        t1.name AS team1_name,
-        t1.short_name AS team1_short,
-        t2.name AS team2_name,
-        t2.short_name AS team2_short
-      FROM matches m
-      JOIN teams t1 ON t1.id = m.team1_id
-      JOIN teams t2 ON t2.id = m.team2_id
-      ORDER BY m.created_at DESC
-    `).all();
+exports.listMatches = async (
+  req,
+  res
+) => {
 
-    return res.json(matches || []);
+  try {
+
+    const matches =
+      await db.prepare(`
+        SELECT
+          m.*,
+          t1.name AS team1_name,
+          t1.short_name AS team1_short,
+          t2.name AS team2_name,
+          t2.short_name AS team2_short
+        FROM matches m
+        JOIN teams t1
+          ON t1.id = m.team1_id
+        JOIN teams t2
+          ON t2.id = m.team2_id
+        ORDER BY m.created_at DESC
+      `).all();
+
+    return res.json(
+      matches || []
+    );
+
   } catch (error) {
+
     return sendError(
       res,
       error,
@@ -384,8 +447,13 @@ exports.listMatches = async (req, res) => {
  * ============================================================
  */
 
-exports.createMatch = async (req, res) => {
+exports.createMatch = async (
+  req,
+  res
+) => {
+
   try {
+
     const {
       team1_id,
       team2_id,
@@ -395,30 +463,41 @@ exports.createMatch = async (req, res) => {
       match_date
     } = req.body || {};
 
-    const team1 = cleanId(team1_id);
-    const team2 = cleanId(team2_id);
+    const team1 =
+      cleanId(team1_id);
+
+    const team2 =
+      cleanId(team2_id);
 
     if (!team1 || !team2) {
+
       return res.status(400).json({
-        error: 'team1_id and team2_id are required'
+        error:
+          'team1_id and team2_id are required'
       });
     }
 
     if (team1 === team2) {
+
       return res.status(400).json({
-        error: 'A team cannot play itself'
+        error:
+          'A team cannot play itself'
       });
     }
 
     if (!(await teamExists(team1))) {
+
       return res.status(400).json({
-        error: 'Team 1 does not exist'
+        error:
+          'Team 1 does not exist'
       });
     }
 
     if (!(await teamExists(team2))) {
+
       return res.status(400).json({
-        error: 'Team 2 does not exist'
+        error:
+          'Team 2 does not exist'
       });
     }
 
@@ -434,12 +513,15 @@ exports.createMatch = async (req, res) => {
       overs <= 0 ||
       overs > 1000
     ) {
+
       return res.status(400).json({
-        error: 'overs_limit must be between 1 and 1000'
+        error:
+          'overs_limit must be between 1 and 1000'
       });
     }
 
-    const id = uuidv4();
+    const id =
+      uuidv4();
 
     await db.prepare(`
       INSERT INTO matches (
@@ -466,8 +548,12 @@ exports.createMatch = async (req, res) => {
     const created =
       await getMatchById(id);
 
-    return res.status(201).json(created);
+    return res.status(201).json(
+      created
+    );
+
   } catch (error) {
+
     return sendError(
       res,
       error,
@@ -482,8 +568,13 @@ exports.createMatch = async (req, res) => {
  * ============================================================
  */
 
-exports.setToss = async (req, res) => {
+exports.setToss = async (
+  req,
+  res
+) => {
+
   try {
+
     const matchId =
       cleanId(req.params.id);
 
@@ -496,15 +587,23 @@ exports.setToss = async (req, res) => {
       cleanId(toss_winner_id);
 
     const match =
-      await getMatchById(matchId);
+      await getMatchById(
+        matchId
+      );
 
     if (!match) {
+
       return res.status(404).json({
-        error: 'Match not found'
+        error:
+          'Match not found'
       });
     }
 
-    if (match.status !== 'upcoming') {
+    if (
+      match.status !==
+      'upcoming'
+    ) {
+
       return res.status(400).json({
         error:
           'Toss can only be set before the match starts'
@@ -512,6 +611,7 @@ exports.setToss = async (req, res) => {
     }
 
     if (!tossWinner) {
+
       return res.status(400).json({
         error:
           'toss_winner_id is required'
@@ -522,8 +622,11 @@ exports.setToss = async (req, res) => {
       ![
         String(match.team1_id),
         String(match.team2_id)
-      ].includes(String(tossWinner))
+      ].includes(
+        String(tossWinner)
+      )
     ) {
+
       return res.status(400).json({
         error:
           'toss_winner_id must be one of the two playing teams'
@@ -531,8 +634,11 @@ exports.setToss = async (req, res) => {
     }
 
     if (
-      !['bat', 'bowl'].includes(toss_decision)
+      !['bat', 'bowl'].includes(
+        toss_decision
+      )
     ) {
+
       return res.status(400).json({
         error:
           'toss_decision must be bat or bowl'
@@ -548,6 +654,7 @@ exports.setToss = async (req, res) => {
       `).get(matchId);
 
     if (existingInnings) {
+
       return res.status(400).json({
         error:
           'Match innings have already been created'
@@ -588,6 +695,7 @@ exports.setToss = async (req, res) => {
     );
 
     try {
+
       await db.prepare(`
         INSERT INTO innings (
           id,
@@ -603,8 +711,11 @@ exports.setToss = async (req, res) => {
         battingFirstId,
         bowlingFirstId
       );
+
     } catch (inningsError) {
+
       try {
+
         await db.prepare(`
           UPDATE matches
           SET
@@ -620,7 +731,9 @@ exports.setToss = async (req, res) => {
           match.current_innings,
           matchId
         );
+
       } catch (rollbackError) {
+
         console.error(
           'CRITICAL: Failed to rollback toss:',
           rollbackError
@@ -631,13 +744,9 @@ exports.setToss = async (req, res) => {
     }
 
     const updatedMatch =
-      await getMatchById(matchId);
-
-    /*
-     * ========================================================
-     * LIVE MATCH NOTIFICATION
-     * ========================================================
-     */
+      await getMatchById(
+        matchId
+      );
 
     console.log(
       `🚨 LIVE MATCH NOTIFICATION TRIGGERED for match ${matchId}`
@@ -647,19 +756,29 @@ exports.setToss = async (req, res) => {
       req,
       matchId,
       `${
-        match.team1_id && match.team2_id
+        match.team1_id &&
+        match.team2_id
           ? 'GCC Cricket match'
           : 'Match'
       } is now live!`
     );
 
     return res.json({
-      match: updatedMatch,
-      innings_id: inningsId,
-      batting_first_id: battingFirstId,
-      bowling_first_id: bowlingFirstId
+      match:
+        updatedMatch,
+
+      innings_id:
+        inningsId,
+
+      batting_first_id:
+        battingFirstId,
+
+      bowling_first_id:
+        bowlingFirstId
     });
+
   } catch (error) {
+
     return sendError(
       res,
       error,
@@ -674,21 +793,34 @@ exports.setToss = async (req, res) => {
  * ============================================================
  */
 
-exports.startSecondInnings = async (req, res) => {
+exports.startSecondInnings = async (
+  req,
+  res
+) => {
+
   try {
+
     const matchId =
       cleanId(req.params.id);
 
     const match =
-      await getMatchById(matchId);
+      await getMatchById(
+        matchId
+      );
 
     if (!match) {
+
       return res.status(404).json({
-        error: 'Match not found'
+        error:
+          'Match not found'
       });
     }
 
-    if (match.status !== 'innings-break') {
+    if (
+      match.status !==
+      'innings-break'
+    ) {
+
       return res.status(400).json({
         error:
           'Match is not ready for the second innings'
@@ -705,13 +837,17 @@ exports.startSecondInnings = async (req, res) => {
       `).get(matchId);
 
     if (!inn1) {
+
       return res.status(400).json({
         error:
           'First innings not found'
       });
     }
 
-    if (Number(inn1.is_completed) !== 1) {
+    if (
+      Number(inn1.is_completed) !== 1
+    ) {
+
       return res.status(400).json({
         error:
           'First innings has not finished yet'
@@ -728,6 +864,7 @@ exports.startSecondInnings = async (req, res) => {
       `).get(matchId);
 
     if (existingSecond) {
+
       return res.status(400).json({
         error:
           'Second innings already exists'
@@ -735,7 +872,9 @@ exports.startSecondInnings = async (req, res) => {
     }
 
     const target =
-      Number(inn1.total_runs || 0) + 1;
+      Number(
+        inn1.total_runs || 0
+      ) + 1;
 
     const inningsId =
       uuidv4();
@@ -746,7 +885,11 @@ exports.startSecondInnings = async (req, res) => {
     const bowlingTeam =
       inn1.batting_team_id;
 
-    if (!battingTeam || !bowlingTeam) {
+    if (
+      !battingTeam ||
+      !bowlingTeam
+    ) {
+
       return res.status(400).json({
         error:
           'First innings team information is incomplete'
@@ -754,6 +897,7 @@ exports.startSecondInnings = async (req, res) => {
     }
 
     if (!(await teamExists(battingTeam))) {
+
       return res.status(400).json({
         error:
           'Second innings batting team does not exist'
@@ -761,6 +905,7 @@ exports.startSecondInnings = async (req, res) => {
     }
 
     if (!(await teamExists(bowlingTeam))) {
+
       return res.status(400).json({
         error:
           'Second innings bowling team does not exist'
@@ -786,6 +931,7 @@ exports.startSecondInnings = async (req, res) => {
     );
 
     try {
+
       await db.prepare(`
         UPDATE matches
         SET
@@ -797,13 +943,18 @@ exports.startSecondInnings = async (req, res) => {
         2,
         matchId
       );
+
     } catch (matchUpdateError) {
+
       try {
+
         await db.prepare(`
           DELETE FROM innings
           WHERE id = ?
         `).run(inningsId);
+
       } catch (rollbackError) {
+
         console.error(
           'CRITICAL: Failed to rollback second innings:',
           rollbackError
@@ -820,12 +971,20 @@ exports.startSecondInnings = async (req, res) => {
     );
 
     return res.json({
-      innings_id: inningsId,
+      innings_id:
+        inningsId,
+
       target,
-      batting_team_id: battingTeam,
-      bowling_team_id: bowlingTeam
+
+      batting_team_id:
+        battingTeam,
+
+      bowling_team_id:
+        bowlingTeam
     });
+
   } catch (error) {
+
     return sendError(
       res,
       error,
@@ -836,14 +995,33 @@ exports.startSecondInnings = async (req, res) => {
 
 /*
  * ============================================================
- * GET MATCH DETAIL
+ * GET MATCH DETAIL - OPTIMIZED
  * ============================================================
  */
 
-exports.getMatchDetail = async (req, res) => {
+exports.getMatchDetail = async (
+  req,
+  res
+) => {
+
   try {
+
     const matchId =
       cleanId(req.params.id);
+
+    if (!matchId) {
+
+      return res.status(400).json({
+        error:
+          'Match ID is required'
+      });
+    }
+
+    /*
+     * ========================================================
+     * 1. GET MATCH
+     * ========================================================
+     */
 
     const match =
       await db.prepare(`
@@ -864,10 +1042,26 @@ exports.getMatchDetail = async (req, res) => {
       `).get(matchId);
 
     if (!match) {
+
       return res.status(404).json({
-        error: 'Match not found'
+        error:
+          'Match not found'
       });
     }
+
+    /*
+     * ========================================================
+     * 2. GET INNINGS
+     * ========================================================
+     *
+     * IMPORTANT:
+     *
+     * These innings rows are passed directly into
+     * getScoreboard().
+     *
+     * This prevents getScoreboard() from querying
+     * the same innings again.
+     */
 
     const inningsRows =
       await db.prepare(`
@@ -877,29 +1071,48 @@ exports.getMatchDetail = async (req, res) => {
         ORDER BY innings_number ASC
       `).all(match.id);
 
-    const innings = [];
+    /*
+     * ========================================================
+     * 3. BUILD SCOREBOARDS IN PARALLEL
+     * ========================================================
+     */
 
-    for (const inningsRow of inningsRows) {
-      try {
-        const scoreboard =
-          await getScoreboard(
-            inningsRow.id
-          );
+    const innings =
+      await Promise.all(
+        (inningsRows || []).map(
+          async (inningsRow) => {
 
-        innings.push(scoreboard);
-      } catch (scoreError) {
-        console.error(
-          `Failed to build scoreboard for innings ${inningsRow.id}:`,
-          scoreError
-        );
+            try {
 
-        innings.push({
-          innings: inningsRow,
-          error:
-            'Scoreboard temporarily unavailable'
-        });
-      }
-    }
+              return await getScoreboard(
+                inningsRow.id,
+                inningsRow
+              );
+
+            } catch (scoreError) {
+
+              console.error(
+                `Failed to build scoreboard for innings ${inningsRow.id}:`,
+                scoreError
+              );
+
+              return {
+                innings:
+                  inningsRow,
+
+                error:
+                  'Scoreboard temporarily unavailable'
+              };
+            }
+          }
+        )
+      );
+
+    /*
+     * ========================================================
+     * 4. GET PLAYERS
+     * ========================================================
+     */
 
     const players =
       await db.prepare(`
@@ -912,12 +1125,30 @@ exports.getMatchDetail = async (req, res) => {
         match.team2_id
       );
 
+    /*
+     * ========================================================
+     * 5. RETURN RESPONSE
+     * ========================================================
+     */
+
     return res.json({
+
       match,
-      innings: innings || [],
-      players: players || []
+
+      innings:
+        innings || [],
+
+      players:
+        players || []
     });
+
   } catch (error) {
+
+    console.error(
+      'Failed to load match details:',
+      error
+    );
+
     return sendError(
       res,
       error,
@@ -932,23 +1163,34 @@ exports.getMatchDetail = async (req, res) => {
  * ============================================================
  */
 
-exports.deleteMatch = async (req, res) => {
+exports.deleteMatch = async (
+  req,
+  res
+) => {
+
   try {
+
     const matchId =
       cleanId(req.params.id);
 
     if (!matchId) {
+
       return res.status(400).json({
-        error: 'Match ID is required'
+        error:
+          'Match ID is required'
       });
     }
 
     const match =
-      await getMatchById(matchId);
+      await getMatchById(
+        matchId
+      );
 
     if (!match) {
+
       return res.status(404).json({
-        error: 'Match not found'
+        error:
+          'Match not found'
       });
     }
 
@@ -963,13 +1205,20 @@ exports.deleteMatch = async (req, res) => {
     const inningsList =
       inningsRows || [];
 
-    for (const inningsRow of inningsList) {
-      if (!inningsRow?.id) continue;
+    for (
+      const inningsRow of inningsList
+    ) {
+
+      if (!inningsRow?.id) {
+        continue;
+      }
 
       await db.prepare(`
         DELETE FROM balls
         WHERE innings_id = ?
-      `).run(inningsRow.id);
+      `).run(
+        inningsRow.id
+      );
     }
 
     await db.prepare(`
@@ -987,31 +1236,48 @@ exports.deleteMatch = async (req, res) => {
     );
 
     return res.status(200).json({
-      success: true,
+
+      success:
+        true,
+
       message:
         'Match and all scoring data were deleted successfully.',
-      match_id: matchId,
+
+      match_id:
+        matchId,
+
       innings_deleted:
         inningsList.length
     });
+
   } catch (error) {
+
     console.error(
       '❌ Delete match failed:',
       error
     );
 
     const message =
-      String(error?.message || '')
-        .toLowerCase();
+      String(
+        error?.message || ''
+      ).toLowerCase();
 
     if (
-      message.includes('foreign key') ||
-      message.includes('constraint')
+      message.includes(
+        'foreign key'
+      ) ||
+      message.includes(
+        'constraint'
+      )
     ) {
+
       return res.status(409).json({
+
         error:
           'This match is still linked to other data and could not be deleted.',
-        protected: true
+
+        protected:
+          true
       });
     }
 
