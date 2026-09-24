@@ -112,22 +112,64 @@ function LiveHero({
    * Do not call Matches.get() here.
    */
   useEffect(() => {
+  let cancelled = false;
+
+  const loadLiveMatch = async () => {
+    // Show the match immediately.
     setData((current) => ({
       ...current,
-
       match,
-
-      innings:
-        match?.innings ||
-        current.innings ||
-        [],
-
-      players:
-        match?.players ||
-        current.players ||
-        [],
+      innings: match?.innings || current.innings || [],
+      players: match?.players || current.players || [],
     }));
-  }, [match]);
+
+    if (!match?.id) {
+      return;
+    }
+
+    try {
+      const detailedMatch =
+        await Matches.get(match.id);
+
+      if (cancelled) {
+        return;
+      }
+
+      setData((current) => ({
+        ...current,
+
+        match:
+          detailedMatch?.match ||
+          detailedMatch ||
+          current.match,
+
+        innings:
+          detailedMatch?.innings ||
+          detailedMatch?.match?.innings ||
+          current.innings ||
+          [],
+
+        players:
+          detailedMatch?.players ||
+          detailedMatch?.match?.players ||
+          current.players ||
+          [],
+      }));
+
+    } catch (error) {
+      console.error(
+        'Failed to load live match details:',
+        error
+      );
+    }
+  };
+
+  loadLiveMatch();
+
+  return () => {
+    cancelled = true;
+  };
+}, [match]);
 
   /* =======================================================
      REALTIME SOCKET
@@ -661,68 +703,175 @@ export default function Home() {
      LOAD MATCHES
   ======================================================= */
 
-  const loadMatches =
-    useCallback(() => {
+    const loadMatches =
+    useCallback(async () => {
 
-      Matches.list()
+      try {
 
-        .then((data) => {
+        /*
+         * First load the normal match list.
+         */
+        const data =
+          await Matches.list();
 
-          const nextMatches =
-            Array.isArray(data)
-              ? data
-              : [];
+        const matchList =
+          Array.isArray(data)
+            ? data
+            : [];
 
-          setMatches(
-            nextMatches
+        /*
+         * Load detailed score information
+         * for live matches.
+         *
+         * Matches.list() gives the match/card data,
+         * while Matches.get(id) gives the detailed
+         * innings and player information.
+         */
+        const enrichedMatches =
+          await Promise.all(
+            matchList.map(
+              async (match) => {
+
+                /*
+                 * Only live matches need
+                 * detailed scoreboard data.
+                 */
+                if (
+                  match?.status !== 'live'
+                ) {
+                  return match;
+                }
+
+                try {
+
+                  const detail =
+                    await Matches.get(
+                      match.id
+                    );
+
+                  /*
+                   * Some endpoints return:
+                   *
+                   * {
+                   *   match: {...},
+                   *   innings: [...]
+                   * }
+                   *
+                   * Others may return the match
+                   * object directly.
+                   */
+                  const detailedMatch =
+                    detail?.match ||
+                    detail ||
+                    {};
+
+                  const detailedInnings =
+                    Array.isArray(
+                      detail?.innings
+                    )
+                      ? detail.innings
+                      : Array.isArray(
+                          detailedMatch?.innings
+                        )
+                        ? detailedMatch.innings
+                        : [];
+
+                  const detailedPlayers =
+                    Array.isArray(
+                      detail?.players
+                    )
+                      ? detail.players
+                      : Array.isArray(
+                          detailedMatch?.players
+                        )
+                        ? detailedMatch.players
+                        : [];
+
+                  return {
+                    ...match,
+
+                    /*
+                     * Keep the latest detailed
+                     * match information.
+                     */
+                    ...detailedMatch,
+
+                    /*
+                     * IMPORTANT:
+                     * Preserve the original ID/status
+                     * from the match list.
+                     */
+                    id: match.id,
+
+                    status:
+                      match.status,
+
+                    innings:
+                      detailedInnings,
+
+                    players:
+                      detailedPlayers,
+                  };
+
+                } catch (error) {
+
+                  console.error(
+                    `Failed to load live match details for ${match.id}:`,
+                    error
+                  );
+
+                  /*
+                   * If detailed loading fails,
+                   * keep the normal match card.
+                   */
+                  return match;
+                }
+              }
+            )
           );
 
-          /*
-           * Save the fresh server response.
-           *
-           * Next time Home opens,
-           * this data can be displayed immediately.
-           */
-          writeMatchesCache(
-            nextMatches
-          );
+        /*
+         * Update Home immediately.
+         */
+        setMatches(
+          enrichedMatches
+        );
 
-        })
+        /*
+         * Save enriched live matches in cache
+         * so Home can display the last known score
+         * while the server is loading next time.
+         */
+        writeMatchesCache(
+          enrichedMatches
+        );
 
-        .catch((error) => {
+      } catch (error) {
 
-          console.error(
-            'Failed to load matches:',
-            error
-          );
+        console.error(
+          'Failed to load matches:',
+          error
+        );
 
-          /*
-           * Do NOT erase cached matches
-           * when the network request fails.
-           *
-           * This keeps the page usable even
-           * when Render/Turso is temporarily slow.
-           */
-          setMatches((current) =>
-            current.length > 0
-              ? current
-              : []
-          );
+        /*
+         * Keep existing cached data if
+         * the server temporarily fails.
+         */
+        setMatches((current) =>
+          current.length > 0
+            ? current
+            : []
+        );
 
-        })
+      } finally {
 
-        .finally(() => {
-          setLoading(false);
-        });
+        setLoading(
+          false
+        );
+
+      }
 
     }, []);
-
-  useEffect(() => {
-    /*
-     * Always refresh in the background.
-     */
-    loadMatches();
-  }, [loadMatches]);
 
   /* =======================================================
      DELETE NORMAL MATCH
