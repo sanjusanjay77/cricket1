@@ -1804,7 +1804,7 @@ export default function Scorer() {
 
         {/* BATSMEN */}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
 
           <BatsmanCard
             player={striker}
@@ -1823,7 +1823,7 @@ export default function Scorer() {
 
         <div className="mt-2">
 
-          <div className="bg-slate-900/70 rounded-xl p-3 border border-slate-700">
+          <div className="bg-slate-900/70 rounded-xl p-2 border border-slate-700">
 
             <div className="flex justify-between items-center">
 
@@ -1874,20 +1874,9 @@ export default function Scorer() {
 
         </div>
 
-        {/* FALL OF WICKETS */}
-
-        <FallOfWickets
-          wickets={
-            optimistic?.fallOfWickets ||
-            currentInnings.fallOfWickets ||
-            []
-          }
-          players={players}
-        />
-
         {/* CURRENT OVER */}
 
-        <div className="mt-4 bg-slate-900/70 rounded-xl p-3">
+        <div className="mt-2 bg-slate-900/70 rounded-xl p-2">
 
           <div className="flex justify-between items-center mb-2">
 
@@ -1929,6 +1918,13 @@ export default function Scorer() {
 
         </div>
 
+      </div>
+
+      {error && (
+        <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
+          {error}
+        </div>
+      )}
 
       {/* SCORING CONTROLS */}
 
@@ -2207,63 +2203,52 @@ export default function Scorer() {
         </>
       )}
 
-      </div>
+      {/* CURRENT PARTNERSHIP */}
 
-      {error && (
-        <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
-          {error}
-        </div>
-      )}
+      <div className="mt-2 bg-slate-900/70 rounded-xl p-2 border border-slate-700">
 
+        <div className="flex justify-between items-center">
 
-        {/* PARTNERSHIP */}
-
-        <div className="mt-3 bg-slate-900/70 rounded-xl p-3 border border-slate-700">
-
-          <div className="flex justify-between items-center">
-
-            <div>
-              <div className="text-xs text-slate-500 uppercase tracking-wide">
-                Current Partnership
-              </div>
-
-              <div className="text-lg font-bold text-white mt-1">
-                {partnership.runs || 0}
-                {' '}
-                <span className="text-sm text-slate-400 font-normal">
-                  runs
-                </span>
-
-                {' · '}
-
-                {partnership.balls || 0}
-                {' '}
-                <span className="text-sm text-slate-400 font-normal">
-                  balls
-                </span>
-              </div>
+          <div>
+            <div className="text-xs text-slate-500 uppercase tracking-wide">
+              Current Partnership
             </div>
 
-            <div className="text-2xl">
-              🤝
-            </div>
+            <div className="text-base font-bold text-white mt-1">
+              {partnership.runs || 0}
+              {' '}
+              <span className="text-xs text-slate-400 font-normal">
+                runs
+              </span>
 
+              {' · '}
+
+              {partnership.balls || 0}
+              {' '}
+              <span className="text-xs text-slate-400 font-normal">
+                balls
+              </span>
+            </div>
+          </div>
+
+          <div className="text-xl">
+            🤝
           </div>
 
         </div>
 
+      </div>
 
-        {/* FALL OF WICKETS */}
+      {/* FALL OF WICKETS */}
 
-        <FallOfWickets
-          wickets={
-            optimistic?.fallOfWickets ||
-            currentInnings.fallOfWickets ||
-            []
-          }
-          players={players}
-        />
-
+      <FallOfWickets
+        wickets={
+          optimistic?.fallOfWickets ||
+          currentInnings.fallOfWickets ||
+          []
+        }
+        players={players}
+      />
 
       {/* SCOREBOARD */}
 
@@ -2415,7 +2400,7 @@ function BatsmanCard({
   striker = false
 }) {
   return (
-    <div className="bg-slate-900/70 rounded-xl p-3 border border-slate-700">
+    <div className="bg-slate-900/70 rounded-xl p-2 border border-slate-700">
 
       <div className="flex justify-between items-center">
 
@@ -2439,7 +2424,7 @@ function BatsmanCard({
 
       </div>
 
-      <div className="mt-2 flex items-center gap-4 flex-wrap">
+      <div className="mt-1 flex items-center gap-2 flex-wrap">
 
         <Stat
           value={
