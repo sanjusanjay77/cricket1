@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { flushSync } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
 import WicketModal from '../components/WicketModal.jsx';
@@ -24,10 +23,6 @@ export default function Scorer() {
   const [optimistic, setOptimistic] = useState(null);
   const optimisticRef = useRef(null);
 
-  /* Instant atomic batsman display: player + complete stats move together. */
-  const [displayBatsmen, setDisplayBatsmen] = useState(null);
-  const displayBatsmenRef = useRef(null);
-
   const scoreQueueRef = useRef([]);
   const processingQueueRef = useRef(false);
   const pendingCountRef = useRef(0);
@@ -46,8 +41,6 @@ export default function Scorer() {
 
     optimisticRef.current = null;
     setOptimistic(null);
-    displayBatsmenRef.current = null;
-    setDisplayBatsmen(null);
   }, []);
 
   const loadFull = useCallback(async () => {
@@ -1106,8 +1099,6 @@ export default function Scorer() {
 
           optimisticRef.current = null;
           setOptimistic(null);
-          displayBatsmenRef.current = null;
-          setDisplayBatsmen(null);
 
           try {
             const data =
@@ -1216,33 +1207,12 @@ export default function Scorer() {
             optimisticRef.current
         });
 
-      /*
-       * CRITICAL: update the two batsman positions and their stats in one
-       * synchronous React commit. The API save can take seconds, but the
-       * visible scorer must never wait for it.
-       */
-      const nextDisplayBatsmen = {
-        strikerId: nextOptimistic.strikerId,
-        nonStrikerId: nextOptimistic.nonStrikerId,
-        strikerStats: nextOptimistic.strikerStats || null,
-        nonStrikerStats: nextOptimistic.nonStrikerStats || null
-      };
+      optimisticRef.current =
+        nextOptimistic;
 
-      displayBatsmenRef.current =
-        nextDisplayBatsmen;
-
-      flushSync(() => {
-        optimisticRef.current =
-          nextOptimistic;
-
-        setOptimistic(
-          nextOptimistic
-        );
-
-        setDisplayBatsmen(
-          nextDisplayBatsmen
-        );
-      });
+      setOptimistic(
+        nextOptimistic
+      );
 
       scoreQueueRef.current.push({
         inningsId:
@@ -1426,12 +1396,10 @@ export default function Scorer() {
    * ACTIVE PLAYERS
    */
   const effectiveStrikerId =
-    displayBatsmen?.strikerId ??
     optimistic?.strikerId ??
     inn.striker_id;
 
   const effectiveNonStrikerId =
-    displayBatsmen?.nonStrikerId ??
     optimistic?.nonStrikerId ??
     inn.non_striker_id;
 
@@ -1653,28 +1621,20 @@ export default function Scorer() {
     };
 
   const strikerStats =
-    displayBatsmen?.strikerStats &&
-    displayBatsmen.strikerStats.player_id ===
+    optimistic &&
+    optimistic.strikerStats &&
+    optimistic.strikerStats.player_id ===
       effectiveStrikerId
-      ? displayBatsmen.strikerStats
-      : optimistic &&
-        optimistic.strikerStats &&
-        optimistic.strikerStats.player_id ===
-          effectiveStrikerId
-        ? optimistic.strikerStats
-        : serverStrikerStats;
+      ? optimistic.strikerStats
+      : serverStrikerStats;
 
   const nonStrikerStats =
-    displayBatsmen?.nonStrikerStats &&
-    displayBatsmen.nonStrikerStats.player_id ===
+    optimistic &&
+    optimistic.nonStrikerStats &&
+    optimistic.nonStrikerStats.player_id ===
       effectiveNonStrikerId
-      ? displayBatsmen.nonStrikerStats
-      : optimistic &&
-        optimistic.nonStrikerStats &&
-        optimistic.nonStrikerStats.player_id ===
-          effectiveNonStrikerId
-        ? optimistic.nonStrikerStats
-        : serverNonStrikerStats;
+      ? optimistic.nonStrikerStats
+      : serverNonStrikerStats;
 
   /*
    * -------------------------
@@ -2005,13 +1965,6 @@ export default function Scorer() {
 
         </div>
 
-      </div>
-
-      {error && (
-        <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
-          {error}
-        </div>
-      )}
 
       {/* SCORING CONTROLS */}
 
@@ -2288,6 +2241,14 @@ export default function Scorer() {
           </div>
 
         </>
+      )}
+
+      </div>
+
+      {error && (
+        <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
+          {error}
+        </div>
       )}
 
       {/* SCOREBOARD */}
