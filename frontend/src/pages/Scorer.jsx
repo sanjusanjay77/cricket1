@@ -1819,42 +1819,6 @@ export default function Scorer() {
 
         </div>
 
-        {/* PARTNERSHIP */}
-
-        <div className="mt-3 bg-slate-900/70 rounded-xl p-3 border border-slate-700">
-
-          <div className="flex justify-between items-center">
-
-            <div>
-              <div className="text-xs text-slate-500 uppercase tracking-wide">
-                Current Partnership
-              </div>
-
-              <div className="text-lg font-bold text-white mt-1">
-                {partnership.runs || 0}
-                {' '}
-                <span className="text-sm text-slate-400 font-normal">
-                  runs
-                </span>
-
-                {' · '}
-
-                {partnership.balls || 0}
-                {' '}
-                <span className="text-sm text-slate-400 font-normal">
-                  balls
-                </span>
-              </div>
-            </div>
-
-            <div className="text-2xl">
-              🤝
-            </div>
-
-          </div>
-
-        </div>
-
         {/* CURRENT BOWLER */}
 
         <div className="mt-2">
@@ -2250,6 +2214,56 @@ export default function Scorer() {
           {error}
         </div>
       )}
+
+
+        {/* PARTNERSHIP */}
+
+        <div className="mt-3 bg-slate-900/70 rounded-xl p-3 border border-slate-700">
+
+          <div className="flex justify-between items-center">
+
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wide">
+                Current Partnership
+              </div>
+
+              <div className="text-lg font-bold text-white mt-1">
+                {partnership.runs || 0}
+                {' '}
+                <span className="text-sm text-slate-400 font-normal">
+                  runs
+                </span>
+
+                {' · '}
+
+                {partnership.balls || 0}
+                {' '}
+                <span className="text-sm text-slate-400 font-normal">
+                  balls
+                </span>
+              </div>
+            </div>
+
+            <div className="text-2xl">
+              🤝
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* FALL OF WICKETS */}
+
+        <FallOfWickets
+          wickets={
+            optimistic?.fallOfWickets ||
+            currentInnings.fallOfWickets ||
+            []
+          }
+          players={players}
+        />
+
 
       {/* SCOREBOARD */}
 
