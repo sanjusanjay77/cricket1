@@ -24,17 +24,9 @@ export default function Scorer() {
   const [optimistic, setOptimistic] = useState(null);
   const optimisticRef = useRef(null);
 
-  /*
-   * FIXED BATSMAN CARDS
-   *
-   * The left/right cards never swap when an odd run is scored.
-   * Only strikerSide changes. Stats stay permanently attached to
-   * the player in that card. This removes the visual name/stats
-   * mismatch caused by swapping React card positions.
-   */
-  const [fixedBatsmen, setFixedBatsmen] = useState(null);
-  const fixedBatsmenRef = useRef(null);
-  const fixedBatsmenInningsRef = useRef(null);
+  /* Instant atomic batsman display: player + complete stats move together. */
+  const [displayBatsmen, setDisplayBatsmen] = useState(null);
+  const displayBatsmenRef = useRef(null);
 
   const scoreQueueRef = useRef([]);
   const processingQueueRef = useRef(false);
@@ -48,110 +40,14 @@ export default function Scorer() {
   const applyServerData = useCallback((data) => {
     if (!data) return;
 
-    const nextInnings = data.innings || [];
-    const latest = nextInnings[nextInnings.length - 1];
-    const latestInn = latest?.innings;
-    const latestInningsId = latestInn?.id ?? null;
-
     setMatch(data.match);
     setPlayers(data.players || []);
-    setInnings(nextInnings);
-
-    /*
-     * Preserve the fixed left/right cards across authoritative refreshes.
-     * Only the stats and strikerSide are synchronized from the server.
-     * A new innings gets a fresh pair.
-     */
-    setFixedBatsmen(previous => {
-      if (!latestInn || !latestInningsId) {
-        fixedBatsmenRef.current = null;
-        fixedBatsmenInningsRef.current = null;
-        return null;
-      }
-
-      const battingCard = latest?.battingCard || [];
-
-      const getStats = (playerId) => {
-        if (!playerId) return null;
-        return battingCard.find(
-          b => String(b.player_id) === String(playerId)
-        ) || {
-          player_id: playerId,
-          runs: 0,
-          balls: 0,
-          fours: 0,
-          sixes: 0,
-          strike_rate: 0,
-          is_out: false
-        };
-      };
-
-      const isNewInnings =
-        !previous ||
-        String(previous.inningsId) !== String(latestInningsId);
-
-      if (isNewInnings) {
-        const fresh = {
-          inningsId: latestInningsId,
-          leftPlayerId: latestInn.striker_id || null,
-          rightPlayerId: latestInn.non_striker_id || null,
-          leftStats: getStats(latestInn.striker_id),
-          rightStats: getStats(latestInn.non_striker_id),
-          strikerSide: 'left'
-        };
-
-        fixedBatsmenRef.current = fresh;
-        fixedBatsmenInningsRef.current = latestInningsId;
-        return fresh;
-      }
-
-      const leftId = previous.leftPlayerId;
-      const rightId = previous.rightPlayerId;
-
-      let leftPlayerId = leftId;
-      let rightPlayerId = rightId;
-
-      /* If a selection happened before the server refresh, keep it. */
-      if (!leftPlayerId && latestInn.striker_id && String(latestInn.striker_id) !== String(rightPlayerId)) {
-        leftPlayerId = latestInn.striker_id;
-      }
-
-      if (!rightPlayerId && latestInn.striker_id && String(latestInn.striker_id) !== String(leftPlayerId)) {
-        rightPlayerId = latestInn.striker_id;
-      }
-
-      if (!leftPlayerId && latestInn.non_striker_id && String(latestInn.non_striker_id) !== String(rightPlayerId)) {
-        leftPlayerId = latestInn.non_striker_id;
-      }
-
-      if (!rightPlayerId && latestInn.non_striker_id && String(latestInn.non_striker_id) !== String(leftPlayerId)) {
-        rightPlayerId = latestInn.non_striker_id;
-      }
-
-      const strikerSide =
-        String(latestInn.striker_id) === String(leftPlayerId)
-          ? 'left'
-          : String(latestInn.striker_id) === String(rightPlayerId)
-            ? 'right'
-            : previous.strikerSide;
-
-      const synced = {
-        ...previous,
-        inningsId: latestInningsId,
-        leftPlayerId,
-        rightPlayerId,
-        leftStats: getStats(leftPlayerId),
-        rightStats: getStats(rightPlayerId),
-        strikerSide
-      };
-
-      fixedBatsmenRef.current = synced;
-      fixedBatsmenInningsRef.current = latestInningsId;
-      return synced;
-    });
+    setInnings(data.innings || []);
 
     optimisticRef.current = null;
     setOptimistic(null);
+    displayBatsmenRef.current = null;
+    setDisplayBatsmen(null);
   }, []);
 
   const loadFull = useCallback(async () => {
@@ -192,50 +88,8 @@ export default function Scorer() {
         return;
       }
 
-      const nextInnings = updatedInnings || [];
-      const latest = nextInnings[nextInnings.length - 1];
-      const latestInn = latest?.innings;
-
       setMatch(updatedMatch);
-      setInnings(nextInnings);
-
-      if (latestInn) {
-        setFixedBatsmen(previous => {
-          if (!previous || String(previous.inningsId) !== String(latestInn.id)) {
-            return previous;
-          }
-
-          const card = latest?.battingCard || [];
-          const getStats = id =>
-            id
-              ? card.find(b => String(b.player_id) === String(id)) || {
-                  player_id: id,
-                  runs: 0,
-                  balls: 0,
-                  fours: 0,
-                  sixes: 0,
-                  strike_rate: 0
-                }
-              : null;
-
-          const strikerSide =
-            String(latestInn.striker_id) === String(previous.leftPlayerId)
-              ? 'left'
-              : String(latestInn.striker_id) === String(previous.rightPlayerId)
-                ? 'right'
-                : previous.strikerSide;
-
-          const synced = {
-            ...previous,
-            leftStats: getStats(previous.leftPlayerId),
-            rightStats: getStats(previous.rightPlayerId),
-            strikerSide
-          };
-
-          fixedBatsmenRef.current = synced;
-          return synced;
-        });
-      }
+      setInnings(updatedInnings || []);
 
       optimisticRef.current = null;
       setOptimistic(null);
@@ -1252,9 +1106,8 @@ export default function Scorer() {
 
           optimisticRef.current = null;
           setOptimistic(null);
-          fixedBatsmenRef.current = null;
-          fixedBatsmenInningsRef.current = null;
-          setFixedBatsmen(null);
+          displayBatsmenRef.current = null;
+          setDisplayBatsmen(null);
 
           try {
             const data =
@@ -1364,79 +1217,31 @@ export default function Scorer() {
         });
 
       /*
-       * FIXED-CARD UPDATE
-       *
-       * The cards never swap places. We keep the same left/right player IDs
-       * and only toggle strikerSide. Stats are attached to the player ID in
-       * that card, so a 1/3/5 can never visually separate a name from its
-       * stats.
+       * CRITICAL: update the two batsman positions and their stats in one
+       * synchronous React commit. The API save can take seconds, but the
+       * visible scorer must never wait for it.
        */
-      const previousFixed = fixedBatsmenRef.current;
-
-      const initialLeftId =
-        previousFixed?.leftPlayerId ??
-        effectiveStrikerId;
-
-      const initialRightId =
-        previousFixed?.rightPlayerId ??
-        effectiveNonStrikerId;
-
-      const statsById = new Map();
-
-      if (nextOptimistic.strikerStats?.player_id) {
-        statsById.set(
-          String(nextOptimistic.strikerStats.player_id),
-          nextOptimistic.strikerStats
-        );
-      }
-
-      if (nextOptimistic.nonStrikerStats?.player_id) {
-        statsById.set(
-          String(nextOptimistic.nonStrikerStats.player_id),
-          nextOptimistic.nonStrikerStats
-        );
-      }
-
-      /* Wicket: clear the dismissed player's card so the new batsman can
-       * occupy the same physical card after selection. */
-      let leftPlayerId = initialLeftId;
-      let rightPlayerId = initialRightId;
-
-      if (payload.is_wicket && payload.dismissed_id) {
-        if (String(leftPlayerId) === String(payload.dismissed_id)) {
-          leftPlayerId = null;
-        }
-        if (String(rightPlayerId) === String(payload.dismissed_id)) {
-          rightPlayerId = null;
-        }
-      }
-
-      const strikerSide =
-        String(nextOptimistic.strikerId) === String(leftPlayerId)
-          ? 'left'
-          : String(nextOptimistic.strikerId) === String(rightPlayerId)
-            ? 'right'
-            : previousFixed?.strikerSide || 'left';
-
-      const nextFixed = {
-        inningsId: current.id,
-        leftPlayerId,
-        rightPlayerId,
-        leftStats: leftPlayerId
-          ? statsById.get(String(leftPlayerId)) || previousFixed?.leftStats || null
-          : null,
-        rightStats: rightPlayerId
-          ? statsById.get(String(rightPlayerId)) || previousFixed?.rightStats || null
-          : null,
-        strikerSide
+      const nextDisplayBatsmen = {
+        strikerId: nextOptimistic.strikerId,
+        nonStrikerId: nextOptimistic.nonStrikerId,
+        strikerStats: nextOptimistic.strikerStats || null,
+        nonStrikerStats: nextOptimistic.nonStrikerStats || null
       };
 
-      fixedBatsmenRef.current = nextFixed;
+      displayBatsmenRef.current =
+        nextDisplayBatsmen;
 
       flushSync(() => {
-        optimisticRef.current = nextOptimistic;
-        setOptimistic(nextOptimistic);
-        setFixedBatsmen(nextFixed);
+        optimisticRef.current =
+          nextOptimistic;
+
+        setOptimistic(
+          nextOptimistic
+        );
+
+        setDisplayBatsmen(
+          nextDisplayBatsmen
+        );
       });
 
       scoreQueueRef.current.push({
@@ -1621,10 +1426,12 @@ export default function Scorer() {
    * ACTIVE PLAYERS
    */
   const effectiveStrikerId =
+    displayBatsmen?.strikerId ??
     optimistic?.strikerId ??
     inn.striker_id;
 
   const effectiveNonStrikerId =
+    displayBatsmen?.nonStrikerId ??
     optimistic?.nonStrikerId ??
     inn.non_striker_id;
 
@@ -1775,76 +1582,22 @@ export default function Scorer() {
           onSelect={(
             selectedStriker,
             selectedNonStriker
-          ) => {
-            const nextStriker =
-              selectedStriker || effectiveStrikerId;
-
-            const nextNonStriker =
-              selectedNonStriker || effectiveNonStrikerId;
-
-            const previousFixed = fixedBatsmenRef.current;
-
-            let leftPlayerId = previousFixed?.leftPlayerId ?? null;
-            let rightPlayerId = previousFixed?.rightPlayerId ?? null;
-
-            /* Fill the same physical card that became vacant after the wicket. */
-            if (!leftPlayerId && nextStriker && String(nextStriker) !== String(rightPlayerId)) {
-              leftPlayerId = nextStriker;
-            }
-
-            if (!rightPlayerId && nextStriker && String(nextStriker) !== String(leftPlayerId)) {
-              rightPlayerId = nextStriker;
-            }
-
-            if (!leftPlayerId && nextNonStriker && String(nextNonStriker) !== String(rightPlayerId)) {
-              leftPlayerId = nextNonStriker;
-            }
-
-            if (!rightPlayerId && nextNonStriker && String(nextNonStriker) !== String(leftPlayerId)) {
-              rightPlayerId = nextNonStriker;
-            }
-
-            const battingCard = currentInnings.battingCard || [];
-            const getStats = id =>
-              id
-                ? battingCard.find(b => String(b.player_id) === String(id)) || {
-                    player_id: id,
-                    runs: 0,
-                    balls: 0,
-                    fours: 0,
-                    sixes: 0,
-                    strike_rate: 0
-                  }
-                : null;
-
-            const nextFixed = {
-              inningsId: inn.id,
-              leftPlayerId,
-              rightPlayerId,
-              leftStats: getStats(leftPlayerId),
-              rightStats: getStats(rightPlayerId),
-              strikerSide:
-                String(nextStriker) === String(leftPlayerId)
-                  ? 'left'
-                  : 'right'
-            };
-
-            fixedBatsmenRef.current = nextFixed;
-
-            flushSync(() => {
-              setFixedBatsmen(nextFixed);
-            });
-
+          ) =>
             act(() =>
               Innings.setBatsmen(
                 inn.id,
                 {
-                  striker_id: nextStriker,
-                  non_striker_id: nextNonStriker
+                  striker_id:
+                    selectedStriker ||
+                    effectiveStrikerId,
+
+                  non_striker_id:
+                    selectedNonStriker ||
+                    effectiveNonStrikerId
                 }
               )
-            );
-          }}
+            )
+          }
         />
 
         {error && (
@@ -1859,59 +1612,69 @@ export default function Scorer() {
 
   /*
    * -------------------------
-   * FIXED BATSMAN CARDS
+   * BATSMAN STATS
    * -------------------------
    */
 
-  const battingCard =
-    currentInnings.battingCard || [];
-
-  const getServerBattingStats = (playerId) => {
-    if (!playerId) return null;
-
-    return battingCard.find(
-      b => String(b.player_id) === String(playerId)
+  const serverStrikerStats =
+    (
+      currentInnings.battingCard ||
+      []
+    ).find(
+      b =>
+        b.player_id ===
+        effectiveStrikerId
     ) || {
-      player_id: playerId,
+      player_id:
+        effectiveStrikerId,
       runs: 0,
       balls: 0,
       fours: 0,
       sixes: 0,
       strike_rate: 0
     };
-  };
 
-  const fixedLeftId =
-    fixedBatsmen?.leftPlayerId ??
-    inn.striker_id;
+  const serverNonStrikerStats =
+    (
+      currentInnings.battingCard ||
+      []
+    ).find(
+      b =>
+        b.player_id ===
+        effectiveNonStrikerId
+    ) || {
+      player_id:
+        effectiveNonStrikerId,
+      runs: 0,
+      balls: 0,
+      fours: 0,
+      sixes: 0,
+      strike_rate: 0
+    };
 
-  const fixedRightId =
-    fixedBatsmen?.rightPlayerId ??
-    inn.non_striker_id;
+  const strikerStats =
+    displayBatsmen?.strikerStats &&
+    displayBatsmen.strikerStats.player_id ===
+      effectiveStrikerId
+      ? displayBatsmen.strikerStats
+      : optimistic &&
+        optimistic.strikerStats &&
+        optimistic.strikerStats.player_id ===
+          effectiveStrikerId
+        ? optimistic.strikerStats
+        : serverStrikerStats;
 
-  const leftPlayer =
-    players.find(p => String(p.id) === String(fixedLeftId));
-
-  const rightPlayer =
-    players.find(p => String(p.id) === String(fixedRightId));
-
-  const leftStats =
-    fixedBatsmen?.leftStats ||
-    getServerBattingStats(fixedLeftId);
-
-  const rightStats =
-    fixedBatsmen?.rightStats ||
-    getServerBattingStats(fixedRightId);
-
-  const leftIsStriker =
-    fixedBatsmen
-      ? fixedBatsmen.strikerSide === 'left'
-      : String(effectiveStrikerId) === String(fixedLeftId);
-
-  const rightIsStriker =
-    fixedBatsmen
-      ? fixedBatsmen.strikerSide === 'right'
-      : String(effectiveStrikerId) === String(fixedRightId);
+  const nonStrikerStats =
+    displayBatsmen?.nonStrikerStats &&
+    displayBatsmen.nonStrikerStats.player_id ===
+      effectiveNonStrikerId
+      ? displayBatsmen.nonStrikerStats
+      : optimistic &&
+        optimistic.nonStrikerStats &&
+        optimistic.nonStrikerStats.player_id ===
+          effectiveNonStrikerId
+        ? optimistic.nonStrikerStats
+        : serverNonStrikerStats;
 
   /*
    * -------------------------
@@ -2084,15 +1847,14 @@ export default function Scorer() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
 
           <BatsmanCard
-            player={leftPlayer}
-            stats={leftStats}
-            striker={leftIsStriker}
+            player={striker}
+            stats={strikerStats}
+            striker
           />
 
           <BatsmanCard
-            player={rightPlayer}
-            stats={rightStats}
-            striker={rightIsStriker}
+            player={nonStriker}
+            stats={nonStrikerStats}
           />
 
         </div>
@@ -2678,13 +2440,7 @@ function BatsmanCard({
   striker = false
 }) {
   return (
-    <div
-      className={`bg-slate-900/70 rounded-xl p-3 border ${
-        striker
-          ? 'border-emerald-500/60'
-          : 'border-slate-700'
-      }`}
-    >
+    <div className="bg-slate-900/70 rounded-xl p-3 border border-slate-700">
 
       <div className="flex justify-between items-center">
 
@@ -2700,15 +2456,11 @@ function BatsmanCard({
 
         </div>
 
-        {striker && (
-          <span
-            className="text-emerald-400 text-sm font-bold"
-            title="Striker"
-            aria-label="Striker"
-          >
-            🏏
-          </span>
-        )}
+        <div className="text-xs text-slate-400">
+          {striker
+            ? 'STRIKER'
+            : 'NON-STRIKER'}
+        </div>
 
       </div>
 
