@@ -7,31 +7,28 @@ import {
   useState
 } from 'react';
 
-import { Players } from '../api/api.js';
+import { Teams } from '../api/api.js';
 
 /**
- * FAST PlayerAutocomplete
+ * FAST TeamAutocomplete
  *
- * Optimized for match creation where multiple player selectors
- * (batter/bowler) can exist on the same page.
+ * Optimized for match creation.
  *
- * Main optimizations:
- * - Only searches the first 8 matching players.
- * - Uses Set for excludeIds.
- * - Performs exact-match check during the same filtering pass.
- * - Avoids unnecessary callback recreation.
- * - Keeps typing state local to this component.
- * - Memoized with React.memo().
+ * - Memoized component
+ * - Uses one search pass for matches + exact match
+ * - Maximum 8 dropdown results
+ * - Uses Set-style lookup logic through direct comparisons
+ * - Selection happens immediately
+ * - Does not reload teams after selecting
  */
 
-function PlayerAutocomplete({
-  players = [],
+function TeamAutocomplete({
+  teams = [],
   value,
-  onChange,
   onCreated,
-  teamId,
-  placeholder = 'Type a player name…',
-  excludeIds = []
+  onChange,
+  placeholder = 'Type team name…',
+  excludeId = null
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -40,51 +37,41 @@ function PlayerAutocomplete({
   const boxRef = useRef(null);
 
   /*
-   * ----------------------------------------------------
-   * EXCLUDED PLAYERS
-   * ----------------------------------------------------
-   *
-   * Set lookup is much faster than:
-   *
-   * excludeIds.includes(p.id)
-   *
-   * especially when the component is rendered many times.
+   * ====================================================
+   * SELECTED TEAM
+   * ====================================================
    */
-  const excludedSet = useMemo(() => {
-    if (!excludeIds || excludeIds.length === 0) {
+
+  const selectedTeam = useMemo(() => {
+
+    if (
+      value === null ||
+      value === undefined ||
+      value === ''
+    ) {
       return null;
     }
 
-    return new Set(excludeIds);
-  }, [excludeIds]);
+    return (
+      teams.find(
+        team => String(team.id) === String(value)
+      ) || null
+    );
+
+  }, [teams, value]);
 
   /*
-   * ----------------------------------------------------
-   * SELECTED PLAYER
-   * ----------------------------------------------------
-   */
-
-  const selectedPlayer = useMemo(() => {
-    if (value === null || value === undefined || value === '') {
-      return null;
-    }
-
-    return players.find(
-      p => String(p.id) === String(value)
-    ) || null;
-  }, [players, value]);
-
-  /*
-   * ----------------------------------------------------
+   * ====================================================
    * SEARCH
-   * ----------------------------------------------------
+   * ====================================================
    *
-   * One loop does both:
+   * One loop handles:
    *
-   * 1. Build dropdown matches
-   * 2. Check exact match
+   * - filtering
+   * - exact match detection
+   * - maximum 8 results
    *
-   * This avoids two separate scans through players.
+   * instead of scanning teams multiple times.
    */
 
   const {
@@ -95,25 +82,32 @@ function PlayerAutocomplete({
     const trimmed = query.trim();
 
     /*
-     * No search text:
-     * show first 8 available players.
+     * ------------------------------------------------
+     * No search text
+     * ------------------------------------------------
      */
+
     if (!trimmed) {
 
       const result = [];
 
-      for (let i = 0; i < players.length && result.length < 8; i++) {
+      for (
+        let i = 0;
+        i < teams.length && result.length < 8;
+        i++
+      ) {
 
-        const player = players[i];
+        const team = teams[i];
 
         if (
-          excludedSet &&
-          excludedSet.has(player.id)
+          excludeId !== null &&
+          excludeId !== undefined &&
+          String(team.id) === String(excludeId)
         ) {
           continue;
         }
 
-        result.push(player);
+        result.push(team);
       }
 
       return {
@@ -122,45 +116,56 @@ function PlayerAutocomplete({
       };
     }
 
+    /*
+     * ------------------------------------------------
+     * Search text
+     * ------------------------------------------------
+     */
+
     const search = trimmed.toLowerCase();
 
     const result = [];
     let foundExact = false;
 
-    for (let i = 0; i < players.length; i++) {
+    for (let i = 0; i < teams.length; i++) {
 
-      const player = players[i];
+      const team = teams[i];
 
+      /*
+       * Don't show excluded team.
+       */
       if (
-        excludedSet &&
-        excludedSet.has(player.id)
+        excludeId !== null &&
+        excludeId !== undefined &&
+        String(team.id) === String(excludeId)
       ) {
         continue;
       }
 
-      const name = String(player.name || '');
+      const name = String(team.name || '');
       const lowerName = name.toLowerCase();
 
       /*
-       * Exact match.
+       * Exact team name.
        */
       if (lowerName === search) {
         foundExact = true;
       }
 
       /*
-       * Dropdown result.
+       * Matching teams.
        */
       if (
         result.length < 8 &&
         lowerName.includes(search)
       ) {
-        result.push(player);
+        result.push(team);
       }
 
       /*
-       * Once we have 8 results and already found
-       * the exact player, nothing else is needed.
+       * Nothing else needed once we have:
+       *
+       * 8 results + exact match.
        */
       if (
         result.length >= 8 &&
@@ -175,12 +180,12 @@ function PlayerAutocomplete({
       exactMatch: foundExact
     };
 
-  }, [players, query, excludedSet]);
+  }, [teams, query, excludeId]);
 
   /*
-   * ----------------------------------------------------
+   * ====================================================
    * OUTSIDE CLICK
-   * ----------------------------------------------------
+   * ====================================================
    */
 
   useEffect(() => {
@@ -202,31 +207,32 @@ function PlayerAutocomplete({
     );
 
     return () => {
+
       document.removeEventListener(
         'mousedown',
         handleOutsideClick
       );
+
     };
 
   }, []);
 
   /*
-   * ----------------------------------------------------
-   * SELECT PLAYER
-   * ----------------------------------------------------
+   * ====================================================
+   * SELECT TEAM
+   * ====================================================
+   *
+   * Important:
+   * No API call here.
+   *
+   * The parent receives the ID immediately.
    */
 
-  const selectPlayer = useCallback(
-    (playerId) => {
+  const selectTeam = useCallback(
+    (teamId) => {
 
-      /*
-       * Update parent immediately.
-       */
-      onChange(playerId);
+      onChange(teamId);
 
-      /*
-       * Close UI immediately.
-       */
       setQuery('');
       setOpen(false);
 
@@ -235,17 +241,15 @@ function PlayerAutocomplete({
   );
 
   /*
-   * ----------------------------------------------------
+   * ====================================================
    * INPUT CHANGE
-   * ----------------------------------------------------
+   * ====================================================
    */
 
   const handleInputChange = useCallback(
     (event) => {
 
-      const nextValue = event.target.value;
-
-      setQuery(nextValue);
+      setQuery(event.target.value);
       setOpen(true);
 
     },
@@ -253,20 +257,19 @@ function PlayerAutocomplete({
   );
 
   /*
-   * ----------------------------------------------------
-   * CREATE PLAYER
-   * ----------------------------------------------------
+   * ====================================================
+   * CREATE TEAM
+   * ====================================================
    */
 
-  const createPlayer = useCallback(
+  const createTeam = useCallback(
     async () => {
 
       const name = query.trim();
 
       if (
         !name ||
-        creating ||
-        !teamId
+        creating
       ) {
         return;
       }
@@ -275,23 +278,28 @@ function PlayerAutocomplete({
 
       try {
 
-        const player = await Players.create({
-          team_id: teamId,
+        const shortName =
           name
+            .slice(0, 4)
+            .toUpperCase();
+
+        const team = await Teams.create({
+          name,
+          short_name: shortName
         });
 
         /*
-         * Tell parent about newly-created player.
+         * Tell parent immediately.
          */
-        onCreated?.(player);
+        onCreated?.(team);
 
         /*
-         * Select immediately.
+         * Select newly-created team.
          */
-        onChange(player.id);
+        onChange(team.id);
 
         /*
-         * Close immediately.
+         * Close dropdown.
          */
         setQuery('');
         setOpen(false);
@@ -299,7 +307,7 @@ function PlayerAutocomplete({
       } catch (error) {
 
         console.error(
-          'Failed to create player:',
+          'Failed to create team:',
           error
         );
 
@@ -313,30 +321,43 @@ function PlayerAutocomplete({
     [
       query,
       creating,
-      teamId,
       onCreated,
       onChange
     ]
   );
 
   /*
-   * ----------------------------------------------------
-   * SELECTED PLAYER VIEW
-   * ----------------------------------------------------
+   * ====================================================
+   * SELECTED TEAM UI
+   * ====================================================
    */
 
-  if (selectedPlayer) {
+  if (selectedTeam) {
 
     return (
-      <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-lg px-3 py-2">
+      <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-xl px-3 py-2">
 
-        <span className="font-medium truncate">
-          {selectedPlayer.name}
+        <span className="font-medium flex items-center gap-2 min-w-0">
+
+          <span
+            className="w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold shrink-0"
+            style={{
+              background:
+                selectedTeam.logo_color
+            }}
+          >
+            {selectedTeam.short_name?.slice(0, 2)}
+          </span>
+
+          <span className="truncate">
+            {selectedTeam.name}
+          </span>
+
         </span>
 
         <button
           type="button"
-          className="ml-2 text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
+          className="ml-2 text-xs text-emerald-400 hover:text-emerald-300 font-semibold shrink-0"
           onClick={() => onChange(null)}
         >
           Change
@@ -347,9 +368,9 @@ function PlayerAutocomplete({
   }
 
   /*
-   * ----------------------------------------------------
+   * ====================================================
    * INPUT + DROPDOWN
-   * ----------------------------------------------------
+   * ====================================================
    */
 
   return (
@@ -373,46 +394,39 @@ function PlayerAutocomplete({
 
       {open && (
 
-        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-slate-800 border border-slate-600 rounded-lg shadow-xl">
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-slate-800 border border-slate-600 rounded-xl shadow-xl">
 
-          {matches.length === 0 && !query.trim() && (
-
-            <div className="px-3 py-2 text-sm text-slate-400">
-              No players yet
-            </div>
-
-          )}
-
-          {matches.map(player => (
+          {matches.map(team => (
 
             <button
               type="button"
-              key={player.id}
+              key={team.id}
 
-              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex items-center gap-2"
 
               onClick={() => {
-                selectPlayer(player.id);
+                selectTeam(team.id);
               }}
             >
 
-              <span className="truncate">
-                {player.name}
+              <span
+                className="w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold shrink-0"
+                style={{
+                  background: team.logo_color
+                }}
+              >
+                {team.short_name?.slice(0, 2)}
               </span>
 
-              {player.role && (
-                <span className="ml-2 text-slate-500 text-xs shrink-0">
-                  {player.role}
-                </span>
-              )}
+              <span className="truncate">
+                {team.name}
+              </span>
 
             </button>
 
           ))}
 
-          {teamId &&
-            query.trim() &&
-            !exactMatch && (
+          {query.trim() && !exactMatch && (
 
             <button
               type="button"
@@ -420,15 +434,23 @@ function PlayerAutocomplete({
 
               className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium disabled:opacity-50"
 
-              onClick={createPlayer}
+              onClick={createTeam}
             >
 
               {creating
-                ? 'Adding…'
-                : `+ Add new player "${query.trim()}"`
+                ? 'Creating…'
+                : `+ Create team "${query.trim()}"`
               }
 
             </button>
+
+          )}
+
+          {matches.length === 0 && !query.trim() && (
+
+            <div className="px-3 py-2 text-sm text-slate-400">
+              Start typing a team name…
+            </div>
 
           )}
 
@@ -441,19 +463,7 @@ function PlayerAutocomplete({
 }
 
 /*
- * ----------------------------------------------------
- * IMPORTANT
- * ----------------------------------------------------
- *
- * React.memo prevents this selector from rendering again
- * when its props haven't actually changed.
- *
- * This is particularly useful when your match creation
- * page contains:
- *
- * Batter 1
- * Batter 2
- * Bowler
- * etc.
+ * Prevent unnecessary renders when the parent
+ * re-renders for unrelated match-creation state.
  */
-export default memo(PlayerAutocomplete);
+export default memo(TeamAutocomplete);
