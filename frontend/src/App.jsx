@@ -1,11 +1,17 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 
 import Navbar from './components/Navbar.jsx';
 import NotificationRegistration from './components/NotificationRegistration.jsx';
 import ScoreboardGate from './components/ScoreboardGate.jsx';
+import { Players, Teams } from './api/api.js';
 
-// Load pages only when they are actually opened
+/*
+========================================================
+LAZY PAGE IMPORTS
+========================================================
+*/
+
 const Home = lazy(() => import('./pages/Home.jsx'));
 const TeamManager = lazy(() => import('./pages/TeamManager.jsx'));
 const PlayerRecords = lazy(() => import('./pages/PlayerRecords.jsx'));
@@ -14,6 +20,78 @@ const CreateMatch = lazy(() => import('./pages/CreateMatch.jsx'));
 const MatchSetup = lazy(() => import('./pages/MatchSetup.jsx'));
 const Scorer = lazy(() => import('./pages/Scorer.jsx'));
 const LiveScoreboard = lazy(() => import('./pages/LiveScoreboard.jsx'));
+
+/*
+========================================================
+PLAYER RECORDS CACHE
+========================================================
+*/
+
+const PLAYER_CACHE_KEY = 'gcc_player_records_cache_v2';
+const TEAMS_CACHE_KEY = 'gcc_teams_cache_v1';
+
+function saveCache(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore localStorage errors.
+  }
+}
+
+/*
+========================================================
+PRELOAD PLAYER RECORDS
+========================================================
+
+This starts loading the Player Records data while the
+rest of the application is being used.
+
+So when the user later clicks "Player Records",
+the data may already be available.
+*/
+
+function preloadPlayerRecords() {
+  /*
+   * Start downloading the PlayerRecords JS chunk.
+   *
+   * This removes the lazy-page delay when the page
+   * is opened later.
+   */
+  import('./pages/PlayerRecords.jsx').catch(() => {});
+
+  /*
+   * Start loading player career data immediately.
+   */
+  Players.allCareerStats()
+    .then((data) => {
+      if (Array.isArray(data)) {
+        saveCache(PLAYER_CACHE_KEY, data);
+      }
+    })
+    .catch(() => {
+      // Do not interrupt the application if preload fails.
+    });
+
+  /*
+   * Teams are also needed by Player Records when
+   * adding a player.
+   */
+  Teams.list()
+    .then((data) => {
+      if (Array.isArray(data)) {
+        saveCache(TEAMS_CACHE_KEY, data);
+      }
+    })
+    .catch(() => {
+      // Do not interrupt the application if preload fails.
+    });
+}
+
+/*
+========================================================
+PAGE LOADING
+========================================================
+*/
 
 function PageLoading() {
   return (
@@ -25,7 +103,22 @@ function PageLoading() {
   );
 }
 
+/*
+========================================================
+APP
+========================================================
+*/
+
 export default function App() {
+
+  /*
+   * Start Player Records preload as soon as the app
+   * has mounted.
+   */
+  useEffect(() => {
+    preloadPlayerRecords();
+  }, []);
+
   return (
     <div className="min-h-screen bg-stadium">
 
@@ -34,6 +127,7 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-4 py-6 lg:max-w-7xl">
 
         <Suspense fallback={<PageLoading />}>
+
           <Routes>
 
             <Route
@@ -85,6 +179,7 @@ export default function App() {
             />
 
           </Routes>
+
         </Suspense>
 
       </main>
