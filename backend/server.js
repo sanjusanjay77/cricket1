@@ -23,10 +23,23 @@ const allowedOrigins = [
 ];
 
 if (process.env.CORS_ORIGIN) {
-  allowedOrigins.push(process.env.CORS_ORIGIN);
+  allowedOrigins.push(
+    process.env.CORS_ORIGIN
+  );
 }
 
-const uniqueOrigins = [...new Set(allowedOrigins)];
+const uniqueOrigins = [
+  ...new Set(
+    allowedOrigins
+      .map(origin => String(origin).trim())
+      .filter(Boolean)
+  )
+];
+
+console.log(
+  '🌐 Allowed CORS origins:',
+  uniqueOrigins
+);
 
 /* =========================================================
    SECURITY CONFIGURATION
@@ -40,9 +53,12 @@ const RATE_LIMIT_WINDOW = 60 * 1000;
 const RATE_LIMIT_MAX = 120;
 
 function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
+
+  const forwarded =
+    req.headers['x-forwarded-for'];
 
   if (forwarded) {
+
     return String(forwarded)
       .split(',')[0]
       .trim();
@@ -55,17 +71,41 @@ function getClientIp(req) {
   );
 }
 
-function rateLimit(req, res, next) {
-  try {
-    const ip = getClientIp(req);
-    const now = Date.now();
+function rateLimit(
+  req,
+  res,
+  next
+) {
 
-    let record = rateLimitStore.get(ip);
+  try {
+
+    /*
+     * Never rate-limit browser CORS preflight.
+     *
+     * OPTIONS is only asking whether the real
+     * request is allowed.
+     */
+    if (
+      req.method === 'OPTIONS'
+    ) {
+      return next();
+    }
+
+    const ip =
+      getClientIp(req);
+
+    const now =
+      Date.now();
+
+    let record =
+      rateLimitStore.get(ip);
 
     if (
       !record ||
-      now - record.start > RATE_LIMIT_WINDOW
+      now - record.start >
+        RATE_LIMIT_WINDOW
     ) {
+
       record = {
         start: now,
         count: 0
@@ -74,33 +114,53 @@ function rateLimit(req, res, next) {
 
     record.count += 1;
 
-    rateLimitStore.set(ip, record);
+    rateLimitStore.set(
+      ip,
+      record
+    );
 
-    if (rateLimitStore.size > 5000) {
-      for (const [key, value] of rateLimitStore.entries()) {
+    if (
+      rateLimitStore.size > 5000
+    ) {
+
+      for (
+        const [key, value]
+        of rateLimitStore.entries()
+      ) {
+
         if (
           now - value.start >
           RATE_LIMIT_WINDOW
         ) {
-          rateLimitStore.delete(key);
+
+          rateLimitStore.delete(
+            key
+          );
         }
       }
     }
 
-    if (record.count > RATE_LIMIT_MAX) {
+    if (
+      record.count >
+      RATE_LIMIT_MAX
+    ) {
+
       console.warn(
         `🚨 Rate limit exceeded: ${ip}`
       );
 
-      return res.status(429).json({
-        error:
-          'Too many requests. Please try again later.'
-      });
+      return res
+        .status(429)
+        .json({
+          error:
+            'Too many requests. Please try again later.'
+        });
     }
 
     return next();
 
   } catch (err) {
+
     console.error(
       '❌ Rate limiter error:',
       err
@@ -114,67 +174,72 @@ function rateLimit(req, res, next) {
    BASIC SECURITY HEADERS
 ========================================================= */
 
-app.disable('x-powered-by');
+app.disable(
+  'x-powered-by'
+);
 
 app.set(
   'trust proxy',
   1
 );
 
-app.use((req, res, next) => {
+app.use(
+  (req, res, next) => {
 
-  res.setHeader(
-    'X-Content-Type-Options',
-    'nosniff'
-  );
-
-  res.setHeader(
-    'X-Frame-Options',
-    'DENY'
-  );
-
-  res.setHeader(
-    'Referrer-Policy',
-    'strict-origin-when-cross-origin'
-  );
-
-  res.setHeader(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=()'
-  );
-
-  res.setHeader(
-    'X-XSS-Protection',
-    '0'
-  );
-
-  res.setHeader(
-    'Content-Security-Policy',
-    [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https:",
-      "font-src 'self' data: https:",
-      "connect-src 'self' https://gcc-cricket.netlify.app https://cricket1-mvsi.onrender.com wss://cricket1-mvsi.onrender.com",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'"
-    ].join('; ')
-  );
-
-  if (
-    process.env.NODE_ENV ===
-    'production'
-  ) {
     res.setHeader(
-      'Strict-Transport-Security',
-      'max-age=31536000; includeSubDomains'
+      'X-Content-Type-Options',
+      'nosniff'
     );
-  }
 
-  next();
-});
+    res.setHeader(
+      'X-Frame-Options',
+      'DENY'
+    );
+
+    res.setHeader(
+      'Referrer-Policy',
+      'strict-origin-when-cross-origin'
+    );
+
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()'
+    );
+
+    res.setHeader(
+      'X-XSS-Protection',
+      '0'
+    );
+
+    res.setHeader(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: https:",
+        "font-src 'self' data: https:",
+        "connect-src 'self' https://gcc-cricket.netlify.app https://cricket1-mvsi.onrender.com wss://cricket1-mvsi.onrender.com",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'"
+      ].join('; ')
+    );
+
+    if (
+      process.env.NODE_ENV ===
+      'production'
+    ) {
+
+      res.setHeader(
+        'Strict-Transport-Security',
+        'max-age=31536000; includeSubDomains'
+      );
+    }
+
+    next();
+  }
+);
 
 /* =========================================================
    CORS
@@ -187,7 +252,15 @@ const corsOptions = {
     callback
   ) {
 
+    /*
+     * Requests without Origin:
+     *
+     * curl
+     * server-to-server
+     * direct browser navigation
+     */
     if (!origin) {
+
       return callback(
         null,
         true
@@ -199,6 +272,7 @@ const corsOptions = {
         origin
       )
     ) {
+
       return callback(
         null,
         true
@@ -209,6 +283,11 @@ const corsOptions = {
       `🚫 CORS blocked origin: ${origin}`
     );
 
+    /*
+     * Do not throw an error.
+     *
+     * Simply deny the origin.
+     */
     return callback(
       null,
       false
@@ -228,14 +307,102 @@ const corsOptions = {
 
   allowedHeaders: [
     'Content-Type',
-    'Authorization'
+    'Authorization',
+    'Accept',
+    'Origin',
+    'X-Requested-With'
   ],
 
   optionsSuccessStatus: 204
 };
 
+/*
+ * Main CORS middleware.
+ */
 app.use(
   cors(corsOptions)
+);
+
+/*
+ * Explicit OPTIONS preflight handler.
+ *
+ * Axios POST requests such as:
+ *
+ * POST /api/innings/:id/ball
+ *
+ * can trigger an OPTIONS request first.
+ *
+ * This must be handled before:
+ *
+ * - rate limiting
+ * - body parsing
+ * - API routes
+ */
+app.options(
+  '*',
+  cors(corsOptions)
+);
+
+/*
+ * Explicit CORS headers for allowed origins.
+ *
+ * This provides an additional layer of protection
+ * and makes sure normal API responses contain the
+ * correct CORS headers.
+ */
+app.use(
+  (req, res, next) => {
+
+    const origin =
+      req.headers.origin;
+
+    if (
+      origin &&
+      uniqueOrigins.includes(
+        origin
+      )
+    ) {
+
+      res.setHeader(
+        'Access-Control-Allow-Origin',
+        origin
+      );
+
+      res.setHeader(
+        'Access-Control-Allow-Credentials',
+        'true'
+      );
+
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+      );
+
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+      );
+
+      res.setHeader(
+        'Vary',
+        'Origin'
+      );
+    }
+
+    /*
+     * Finish OPTIONS immediately.
+     */
+    if (
+      req.method === 'OPTIONS'
+    ) {
+
+      return res.sendStatus(
+        204
+      );
+    }
+
+    next();
+  }
 );
 
 /* =========================================================
@@ -305,17 +472,23 @@ app.get(
 
     try {
 
-      return res.status(200).json({
-        status: 'ok',
-        time:
-          new Date().toISOString(),
-        uptime:
-          Math.round(
-            process.uptime()
-          ),
-        server: 'running',
-        database: 'turso'
-      });
+      return res
+        .status(200)
+        .json({
+          status: 'ok',
+
+          time:
+            new Date().toISOString(),
+
+          uptime:
+            Math.round(
+              process.uptime()
+            ),
+
+          server: 'running',
+
+          database: 'turso'
+        });
 
     } catch (err) {
 
@@ -324,10 +497,12 @@ app.get(
         err
       );
 
-      return res.status(503).json({
-        status: 'error',
-        server: 'unhealthy'
-      });
+      return res
+        .status(503)
+        .json({
+          status: 'error',
+          server: 'unhealthy'
+        });
     }
   }
 );
@@ -370,76 +545,80 @@ app.use(
    SOCKET.IO
 ========================================================= */
 
-const io = new Server(
-  server,
-  {
-    cors: {
+const io =
+  new Server(
+    server,
+    {
+      cors: {
 
-      origin:
-        function (
-          origin,
-          callback
-        ) {
-
-          if (!origin) {
-            return callback(
-              null,
-              true
-            );
-          }
-
-          if (
-            uniqueOrigins.includes(
-              origin
-            )
+        origin:
+          function (
+            origin,
+            callback
           ) {
-            return callback(
-              null,
-              true
+
+            if (!origin) {
+
+              return callback(
+                null,
+                true
+              );
+            }
+
+            if (
+              uniqueOrigins.includes(
+                origin
+              )
+            ) {
+
+              return callback(
+                null,
+                true
+              );
+            }
+
+            console.warn(
+              `🚫 Socket.IO CORS blocked: ${origin}`
             );
-          }
 
-          console.warn(
-            `🚫 Socket.IO CORS blocked: ${origin}`
-          );
+            return callback(
+              new Error(
+                'Origin not allowed'
+              )
+            );
+          },
 
-          return callback(
-            new Error(
-              'Origin not allowed'
-            )
-          );
-        },
+        credentials: true,
 
-      credentials: true,
+        methods: [
+          'GET',
+          'POST'
+        ]
+      },
 
-      methods: [
-        'GET',
-        'POST'
-      ]
-    },
+      transports: [
+        'polling',
+        'websocket'
+      ],
 
-    transports: [
-      'polling',
-      'websocket'
-    ],
+      connectionStateRecovery: {
+        maxDisconnectionDuration:
+          2 * 60 * 1000,
 
-    connectionStateRecovery: {
-      maxDisconnectionDuration:
-        2 * 60 * 1000,
+        skipMiddlewares:
+          true
+      },
 
-      skipMiddlewares: true
-    },
+      maxHttpBufferSize:
+        256 * 1024,
 
-    maxHttpBufferSize:
-      256 * 1024,
+      pingInterval:
+        25000,
 
-    pingInterval:
-      25000,
-
-    pingTimeout:
-      20000
-  }
-);
+      pingTimeout:
+        20000
+    }
+  );
 
 app.set(
   'io',
@@ -502,15 +681,13 @@ io.on(
           /*
            * Each registered user gets a
            * private Socket.IO room.
-           *
-           * Example:
-           *
-           * notification-user-abc123
            */
           const room =
             `notification-user-${cleanedUserId}`;
 
-          socket.join(room);
+          socket.join(
+            room
+          );
 
           console.log(
             `🔔 ${socket.id} joined notification room ${room}`
@@ -523,6 +700,7 @@ io.on(
             'notification-user-registered',
             {
               success: true,
+
               userId:
                 cleanedUserId
             }
@@ -580,7 +758,9 @@ io.on(
           const room =
             `match-${cleanedId}`;
 
-          socket.join(room);
+          socket.join(
+            room
+          );
 
           console.log(
             `🏏 ${socket.id} joined ${room}`
@@ -612,6 +792,7 @@ io.on(
             typeof matchId !==
               'number'
           ) {
+
             return;
           }
 
@@ -622,13 +803,16 @@ io.on(
             !cleanedId ||
             cleanedId.length > 100
           ) {
+
             return;
           }
 
           const room =
             `match-${cleanedId}`;
 
-          socket.leave(room);
+          socket.leave(
+            room
+          );
 
           console.log(
             `🚪 ${socket.id} left ${room}`
@@ -827,6 +1011,7 @@ app.use(
     if (
       res.headersSent
     ) {
+
       return next(err);
     }
 
@@ -990,7 +1175,9 @@ process.on(
 
     setTimeout(
       () => {
+
         process.exit(1);
+
       },
       100
     );
@@ -1029,7 +1216,9 @@ process.on(
 
     setTimeout(
       () => {
+
         process.exit(1);
+
       },
       100
     );
@@ -1169,6 +1358,10 @@ async function startServer() {
 
         console.log(
           `📦 JSON limit: ${JSON_LIMIT}`
+        );
+
+        console.log(
+          '🌐 CORS preflight: enabled'
         );
 
         console.log(
