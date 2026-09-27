@@ -16,14 +16,12 @@ export default function TeamManager() {
   ======================================================= */
 
   const [teams, setTeams] = useState([]);
-  const [selectedTeam, setSelectedTeam] = useState(null);
 
   const [search, setSearch] = useState('');
   const [showOwnOnly, setShowOwnOnly] = useState(false);
 
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [loadingTeam, setLoadingTeam] = useState(false);
-
   const [refreshing, setRefreshing] = useState(false);
 
   /* =======================================================
@@ -40,7 +38,7 @@ export default function TeamManager() {
   const [creatingTeam, setCreatingTeam] = useState(false);
 
   /* =======================================================
-     EDIT TEAM
+     EDIT TEAM MODAL
   ======================================================= */
 
   const [editingTeam, setEditingTeam] = useState(null);
@@ -55,26 +53,36 @@ export default function TeamManager() {
   const [savingTeam, setSavingTeam] = useState(false);
 
   /* =======================================================
-     PLAYER
+     SQUAD MODAL
   ======================================================= */
+
+  const [selectedTeam, setSelectedTeam] = useState(null);
+  const [showSquadModal, setShowSquadModal] = useState(false);
+
+  const [playerSearch, setPlayerSearch] = useState('');
+  const [playerRoleFilter, setPlayerRoleFilter] =
+    useState('all');
+
+  /* =======================================================
+     ADD PLAYER MODAL
+  ======================================================= */
+
+  const [showAddPlayerModal, setShowAddPlayerModal] =
+    useState(false);
 
   const [newPlayer, setNewPlayer] = useState({
     name: '',
     role: 'batsman',
-    jersey_no: '',
   });
 
   const [addingPlayer, setAddingPlayer] = useState(false);
-  const [deletingPlayer, setDeletingPlayer] = useState(null);
-
-  const [playerSearch, setPlayerSearch] = useState('');
-  const [playerRoleFilter, setPlayerRoleFilter] = useState('all');
 
   /* =======================================================
      DELETE
   ======================================================= */
 
   const [deletingTeam, setDeletingTeam] = useState(null);
+  const [deletingPlayer, setDeletingPlayer] = useState(null);
 
   /* =======================================================
      HELPERS
@@ -139,9 +147,7 @@ export default function TeamManager() {
      LOAD TEAMS
   ======================================================= */
 
-  const refresh = async (
-    showLoader = true
-  ) => {
+  const refresh = async (showLoader = true) => {
 
     if (showLoader) {
       setLoadingTeams(true);
@@ -149,8 +155,7 @@ export default function TeamManager() {
 
     try {
 
-      const data =
-        await Teams.list();
+      const data = await Teams.list();
 
       setTeams(
         Array.isArray(data)
@@ -181,13 +186,11 @@ export default function TeamManager() {
   };
 
   useEffect(() => {
-
     refresh();
-
   }, []);
 
   /* =======================================================
-     REFRESH BUTTON
+     REFRESH
   ======================================================= */
 
   const handleRefresh = async () => {
@@ -197,15 +200,24 @@ export default function TeamManager() {
     setRefreshing(true);
 
     try {
-
       await refresh(false);
 
       if (selectedTeam?.id) {
-        await openTeam(
-          selectedTeam.id,
-          false
-        );
+
+        const data =
+          await Teams.get(
+            selectedTeam.id
+          );
+
+        setSelectedTeam(data);
       }
+
+    } catch (error) {
+
+      console.error(
+        'Refresh error:',
+        error
+      );
 
     } finally {
 
@@ -214,17 +226,13 @@ export default function TeamManager() {
   };
 
   /* =======================================================
-     OPEN TEAM
+     OPEN SQUAD
   ======================================================= */
 
-  const openTeam = async (
-    id,
-    showLoading = true
-  ) => {
+  const openSquad = async (id) => {
 
-    if (showLoading) {
-      setLoadingTeam(true);
-    }
+    setLoadingTeam(true);
+    setShowSquadModal(true);
 
     try {
 
@@ -243,23 +251,38 @@ export default function TeamManager() {
         error
       );
 
+      setShowSquadModal(false);
+
       alert(
         getErrorMessage(
           error,
-          'Failed to load team'
+          'Failed to load squad'
         )
       );
 
     } finally {
 
-      if (showLoading) {
-        setLoadingTeam(false);
-      }
+      setLoadingTeam(false);
     }
   };
 
   /* =======================================================
-     TEAM FILTER
+     CLOSE SQUAD
+  ======================================================= */
+
+  const closeSquad = () => {
+
+    if (addingPlayer) return;
+
+    setShowSquadModal(false);
+    setShowAddPlayerModal(false);
+    setSelectedTeam(null);
+    setPlayerSearch('');
+    setPlayerRoleFilter('all');
+  };
+
+  /* =======================================================
+     FILTER TEAMS
   ======================================================= */
 
   const filteredTeams = useMemo(() => {
@@ -297,7 +320,7 @@ export default function TeamManager() {
   ]);
 
   /* =======================================================
-     TEAM STATISTICS
+     STATISTICS
   ======================================================= */
 
   const totalPlayers = useMemo(() => {
@@ -390,9 +413,9 @@ export default function TeamManager() {
       await refresh(false);
 
       if (created?.id) {
-        await openTeam(
-          created.id,
-          false
+
+        await openSquad(
+          created.id
         );
       }
 
@@ -417,7 +440,7 @@ export default function TeamManager() {
   };
 
   /* =======================================================
-     START EDIT
+     OPEN EDIT MODAL
   ======================================================= */
 
   const startEditTeam = (
@@ -446,7 +469,7 @@ export default function TeamManager() {
   };
 
   /* =======================================================
-     CANCEL EDIT
+     CLOSE EDIT
   ======================================================= */
 
   const cancelEdit = () => {
@@ -499,6 +522,15 @@ export default function TeamManager() {
       return;
     }
 
+    if (shortName.length > 10) {
+
+      alert(
+        'Short code must be 10 characters or less'
+      );
+
+      return;
+    }
+
     setSavingTeam(true);
 
     try {
@@ -515,14 +547,30 @@ export default function TeamManager() {
         }
       );
 
+      const editedId =
+        editingTeam.id;
+
       setEditingTeam(null);
 
       await refresh(false);
 
-      await openTeam(
-        editingTeam.id,
-        false
-      );
+      /*
+       * If the squad modal is open
+       * for this team, refresh it.
+       */
+
+      if (
+        selectedTeam?.id ===
+        editedId
+      ) {
+
+        const updated =
+          await Teams.get(
+            editedId
+          );
+
+        setSelectedTeam(updated);
+      }
 
     } catch (error) {
 
@@ -568,13 +616,16 @@ export default function TeamManager() {
       await refresh(false);
 
       if (
-        selectedTeam?.id === team.id
+        selectedTeam?.id ===
+        team.id
       ) {
 
-        await openTeam(
-          team.id,
-          false
-        );
+        const updated =
+          await Teams.get(
+            team.id
+          );
+
+        setSelectedTeam(updated);
       }
 
     } catch (error) {
@@ -591,6 +642,31 @@ export default function TeamManager() {
         )
       );
     }
+  };
+
+  /* =======================================================
+     OPEN ADD PLAYER
+  ======================================================= */
+
+  const openAddPlayer = () => {
+
+    setNewPlayer({
+      name: '',
+      role: 'batsman',
+    });
+
+    setShowAddPlayerModal(true);
+  };
+
+  /* =======================================================
+     CLOSE ADD PLAYER
+  ======================================================= */
+
+  const closeAddPlayer = () => {
+
+    if (addingPlayer) return;
+
+    setShowAddPlayerModal(false);
   };
 
   /* =======================================================
@@ -626,31 +702,35 @@ export default function TeamManager() {
 
     try {
 
-      await Players.create({
-        ...newPlayer,
+      /*
+       * Jersey number has been
+       * completely removed.
+       */
 
+      await Players.create({
         name:
           playerName,
 
+        role:
+          newPlayer.role,
+
         team_id:
           selectedTeam.id,
-
-        jersey_no:
-          newPlayer.jersey_no === ''
-            ? null
-            : newPlayer.jersey_no,
       });
 
       setNewPlayer({
         name: '',
         role: 'batsman',
-        jersey_no: '',
       });
 
-      await openTeam(
-        selectedTeam.id,
-        false
-      );
+      setShowAddPlayerModal(false);
+
+      const updated =
+        await Teams.get(
+          selectedTeam.id
+        );
+
+      setSelectedTeam(updated);
 
       await refresh(false);
 
@@ -708,10 +788,12 @@ export default function TeamManager() {
 
       await Players.remove(id);
 
-      await openTeam(
-        selectedTeam.id,
-        false
-      );
+      const updated =
+        await Teams.get(
+          selectedTeam.id
+        );
+
+      setSelectedTeam(updated);
 
       await refresh(false);
 
@@ -777,6 +859,7 @@ export default function TeamManager() {
       ) {
 
         setSelectedTeam(null);
+        setShowSquadModal(false);
       }
 
       await refresh(false);
@@ -797,11 +880,6 @@ export default function TeamManager() {
           'Failed to delete team'
         );
 
-      /*
-       * More useful message for
-       * historical teams.
-       */
-
       if (
         response?.protected &&
         response?.reason ===
@@ -815,7 +893,8 @@ export default function TeamManager() {
           }\n` +
           `Innings: ${
             response.innings_count || 0
-          }`;
+          }\n\n` +
+          `The historical score data is protected.`;
       }
 
       alert(message);
@@ -847,10 +926,7 @@ export default function TeamManager() {
           !query ||
           player.name
             ?.toLowerCase()
-            .includes(query) ||
-          String(
-            player.jersey_no ?? ''
-          ).includes(query);
+            .includes(query);
 
         const matchesRole =
           playerRoleFilter === 'all' ||
@@ -911,6 +987,44 @@ export default function TeamManager() {
   }, [selectedTeam]);
 
   /* =======================================================
+     ROLE BUTTON
+  ======================================================= */
+
+  const roleButton = (
+    key,
+    label
+  ) => {
+
+    return (
+      <button
+        type="button"
+        onClick={() =>
+          setPlayerRoleFilter(key)
+        }
+        className={`
+          rounded-xl p-2 text-center border
+          transition active:scale-95
+          ${
+            playerRoleFilter === key
+              ? 'border-emerald-500/40 bg-emerald-500/10'
+              : 'border-slate-800 bg-slate-900'
+          }
+        `}
+      >
+
+        <p className="text-sm font-bold text-white">
+          {roleCounts[key]}
+        </p>
+
+        <p className="text-[9px] text-slate-500">
+          {label}
+        </p>
+
+      </button>
+    );
+  };
+
+  /* =======================================================
      RENDER
   ======================================================= */
 
@@ -936,8 +1050,7 @@ export default function TeamManager() {
             </h1>
 
             <p className="text-xs sm:text-sm text-slate-400 mt-2 max-w-2xl">
-              Create teams, manage squads, and organize your
-              cricket scoreboard.
+              Create teams and manage your cricket squads easily.
             </p>
 
           </div>
@@ -1007,14 +1120,12 @@ export default function TeamManager() {
       <div className="grid lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5">
 
         {/* =================================================
-            LEFT
+            LEFT SIDE
         ================================================== */}
 
         <div className="space-y-4">
 
-          {/* =================================================
-              CREATE TEAM
-          ================================================== */}
+          {/* CREATE TEAM */}
 
           <form
             onSubmit={createTeam}
@@ -1030,7 +1141,7 @@ export default function TeamManager() {
                 </h2>
 
                 <p className="text-xs text-slate-500 mt-1">
-                  Add a new team to your scoreboard
+                  Add a new team
                 </p>
 
               </div>
@@ -1042,8 +1153,6 @@ export default function TeamManager() {
             </div>
 
             <div className="space-y-3">
-
-              {/* NAME */}
 
               <div>
 
@@ -1065,8 +1174,6 @@ export default function TeamManager() {
                 />
 
               </div>
-
-              {/* SHORT CODE */}
 
               <div>
 
@@ -1158,7 +1265,7 @@ export default function TeamManager() {
 
               {/* MY TEAM */}
 
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/50 p-3 cursor-pointer hover:border-emerald-500/40 transition">
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/50 p-3 cursor-pointer">
 
                 <input
                   type="checkbox"
@@ -1182,7 +1289,7 @@ export default function TeamManager() {
                   </p>
 
                   <p className="text-[11px] text-slate-500">
-                    Include this team in your personal statistics
+                    Mark this as your team
                   </p>
 
                 </div>
@@ -1209,8 +1316,6 @@ export default function TeamManager() {
 
           <div className="card !p-0 overflow-hidden border border-slate-700/60">
 
-            {/* HEADER */}
-
             <div className="p-4 border-b border-slate-700/60">
 
               <div className="flex items-center justify-between gap-3 mb-3">
@@ -1223,8 +1328,6 @@ export default function TeamManager() {
 
                   <p className="text-xs text-slate-500 mt-0.5">
                     {filteredTeams.length} shown
-                    {teams.length !== filteredTeams.length &&
-                      ` · ${teams.length} total`}
                   </p>
 
                 </div>
@@ -1250,8 +1353,6 @@ export default function TeamManager() {
 
               </div>
 
-              {/* SEARCH */}
-
               {teams.length > 0 && (
 
                 <div className="relative">
@@ -1262,7 +1363,7 @@ export default function TeamManager() {
 
                   <input
                     className="input w-full pl-10 pr-10"
-                    placeholder="Search team name or code..."
+                    placeholder="Search team..."
                     value={search}
                     onChange={(e) =>
                       setSearch(
@@ -1291,8 +1392,6 @@ export default function TeamManager() {
 
             </div>
 
-            {/* TEAM LIST */}
-
             <div className="p-3 space-y-2">
 
               {loadingTeams ? (
@@ -1314,10 +1413,6 @@ export default function TeamManager() {
                 filteredTeams.map(
                   (team) => {
 
-                    const isSelected =
-                      selectedTeam?.id ===
-                      team.id;
-
                     const playerCount =
                       Number(
                         team.player_count ??
@@ -1329,21 +1424,7 @@ export default function TeamManager() {
 
                       <div
                         key={team.id}
-                        onClick={() =>
-                          openTeam(
-                            team.id
-                          )
-                        }
-                        className={`
-                          group rounded-2xl border p-3
-                          cursor-pointer transition-all
-                          active:scale-[0.99]
-                          ${
-                            isSelected
-                              ? 'border-emerald-500/70 bg-emerald-500/5'
-                              : 'border-slate-700/70 bg-slate-900/30 hover:border-slate-600 hover:bg-slate-800/40'
-                          }
-                        `}
+                        className="rounded-2xl border border-slate-700/70 bg-slate-900/30 p-3 transition hover:border-slate-600"
                       >
 
                         <div className="flex items-center gap-3">
@@ -1400,29 +1481,20 @@ export default function TeamManager() {
 
                           </div>
 
-                          <div className="text-slate-600 group-hover:text-emerald-400 transition text-xl">
-                            ›
-                          </div>
-
                         </div>
 
-                        {/* ACTIONS */}
+                        {/* ACTION BUTTONS */}
 
-                        <div
-                          className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-800"
-                          onClick={(e) =>
-                            e.stopPropagation()
-                          }
-                        >
+                        <div className="grid grid-cols-3 gap-2 mt-3">
 
                           <button
                             type="button"
                             onClick={() =>
-                              openTeam(
+                              openSquad(
                                 team.id
                               )
                             }
-                            className="min-h-[42px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold hover:text-white transition"
+                            className="min-h-[44px] rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold active:scale-95 transition"
                           >
                             👥 Squad
                           </button>
@@ -1435,7 +1507,7 @@ export default function TeamManager() {
                                 e
                               )
                             }
-                            className="min-h-[42px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold hover:text-emerald-400 transition"
+                            className="min-h-[44px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold active:scale-95 transition"
                           >
                             ✏️ Edit
                           </button>
@@ -1451,7 +1523,7 @@ export default function TeamManager() {
                                 team.id
                               )
                             }
-                            className="min-h-[42px] rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/10 transition disabled:opacity-50"
+                            className="min-h-[44px] rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 text-xs font-semibold active:scale-95 transition disabled:opacity-50"
                           >
                             {deletingTeam ===
                             team.id
@@ -1461,7 +1533,7 @@ export default function TeamManager() {
 
                         </div>
 
-                        {/* OWN SWITCH */}
+                        {/* MY TEAM */}
 
                         <button
                           type="button"
@@ -1472,11 +1544,11 @@ export default function TeamManager() {
                             )
                           }
                           className={`
-                            w-full mt-2 min-h-[38px] rounded-xl text-xs font-medium transition
+                            w-full mt-2 min-h-[40px] rounded-xl text-xs font-medium transition
                             ${
                               team.is_own
                                 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                : 'bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400'
+                                : 'bg-slate-900 border border-slate-800 text-slate-500'
                             }
                           `}
                         >
@@ -1508,9 +1580,9 @@ export default function TeamManager() {
 
                     <p className="text-xs text-slate-500 mt-1">
                       {search
-                        ? 'Try another team name or short code.'
+                        ? 'Try another search.'
                         : showOwnOnly
-                        ? 'No team is marked as your team.'
+                        ? 'No team is marked as yours.'
                         : 'Create your first team above.'}
                     </p>
 
@@ -1524,433 +1596,398 @@ export default function TeamManager() {
         </div>
 
         {/* =================================================
-            RIGHT — SELECTED TEAM
+            RIGHT SIDE — DESKTOP INFO
         ================================================== */}
 
-        <div className="space-y-4">
+        <div className="hidden lg:block">
 
-          {!selectedTeam ? (
+          <div className="card min-h-[500px] flex flex-col items-center justify-center text-center border border-slate-700/60 p-8">
 
-            <div className="card min-h-[360px] lg:min-h-[520px] flex flex-col items-center justify-center text-center border border-slate-700/60 p-6">
+            <div className="w-24 h-24 rounded-3xl bg-slate-800 border border-slate-700 flex items-center justify-center text-5xl mb-6">
+              👥
+            </div>
 
-              <div className="w-20 h-20 rounded-3xl bg-slate-800 border border-slate-700 flex items-center justify-center text-4xl mb-5">
-                👥
+            <h2 className="text-2xl font-bold text-white">
+              Manage Your Teams
+            </h2>
+
+            <p className="text-sm text-slate-500 max-w-md mt-3 leading-6">
+              Use the Squad button to view players or
+              Edit to update team details. Everything opens
+              in a popup so the main page stays clean.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 mt-7 w-full max-w-md">
+
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4">
+
+                <div className="text-2xl mb-2">
+                  👥
+                </div>
+
+                <p className="text-sm font-semibold text-white">
+                  Squad
+                </p>
+
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Manage players
+                </p>
+
               </div>
 
-              <h2 className="text-xl font-bold text-white">
-                Select a Team
-              </h2>
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4">
 
-              <p className="text-sm text-slate-500 max-w-sm mt-2">
-                Select a team to manage its squad and
-                players.
-              </p>
+                <div className="text-2xl mb-2">
+                  ✏️
+                </div>
+
+                <p className="text-sm font-semibold text-white">
+                  Edit
+                </p>
+
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Update team
+                </p>
+
+              </div>
 
             </div>
 
-          ) : (
+          </div>
 
-            <>
+        </div>
 
-              {/* =================================================
-                  TEAM PROFILE
-              ================================================== */}
+      </div>
 
-              <div
-                className="rounded-3xl p-4 sm:p-6 border border-slate-700/60 overflow-hidden relative"
-                style={{
-                  background:
-                    `linear-gradient(135deg, ${
-                      selectedTeam.logo_color ||
-                      '#1e3a8a'
-                    }22, rgba(15,23,42,0.96))`,
-                }}
+      {/* =====================================================
+          EDIT TEAM MODAL
+      ====================================================== */}
+
+      {editingTeam && (
+
+        <div
+          className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onMouseDown={(e) => {
+
+            if (
+              e.target === e.currentTarget &&
+              !savingTeam
+            ) {
+              cancelEdit();
+            }
+
+          }}
+        >
+
+          <form
+            onSubmit={saveTeam}
+            className="w-full sm:max-w-md bg-slate-950 border border-slate-700 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden"
+          >
+
+            {/* MODAL HEADER */}
+
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+
+              <div>
+
+                <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold">
+                  Team Settings
+                </p>
+
+                <h2 className="text-xl font-bold text-white mt-1">
+                  Edit Team
+                </h2>
+
+              </div>
+
+              <button
+                type="button"
+                onClick={cancelEdit}
+                disabled={savingTeam}
+                className="w-10 h-10 rounded-xl bg-slate-800 text-slate-400 hover:text-white text-xl"
               >
+                ×
+              </button>
 
-                <div
-                  className="absolute right-0 top-0 w-40 h-40 rounded-full blur-3xl opacity-20"
-                  style={{
-                    background:
-                      selectedTeam.logo_color ||
-                      '#1e3a8a',
-                  }}
+            </div>
+
+            {/* MODAL BODY */}
+
+            <div className="p-4 sm:p-5 space-y-4">
+
+              <div>
+
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                  Team name
+                </label>
+
+                <input
+                  autoFocus
+                  className="input w-full"
+                  placeholder="Team name"
+                  value={editTeam.name}
+                  onChange={(e) =>
+                    setEditTeam({
+                      ...editTeam,
+                      name:
+                        e.target.value,
+                    })
+                  }
                 />
 
-                <div className="relative">
+              </div>
 
-                  <div className="flex items-center gap-4">
+              <div>
 
-                    <div
-                      className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl flex items-center justify-center text-white font-black text-xs sm:text-base shadow-xl flex-shrink-0"
-                      style={{
-                        background:
-                          selectedTeam.logo_color ||
-                          '#1e3a8a',
-                      }}
-                    >
-                      {selectedTeam.short_name}
-                    </div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                  Short code
+                </label>
 
-                    <div className="min-w-0 flex-1">
+                <input
+                  className="input w-full uppercase"
+                  placeholder="GCC"
+                  maxLength={10}
+                  value={
+                    editTeam.short_name
+                  }
+                  onChange={(e) =>
+                    setEditTeam({
+                      ...editTeam,
+                      short_name:
+                        e.target.value
+                          .toUpperCase()
+                          .replace(
+                            /\s/g,
+                            ''
+                          ),
+                    })
+                  }
+                />
 
-                      <div className="flex items-center gap-2 flex-wrap">
+              </div>
 
-                        <h2 className="text-xl sm:text-2xl font-bold text-white truncate">
-                          {selectedTeam.name}
-                        </h2>
+              {/* COLOR */}
 
-                        {selectedTeam.is_own && (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
 
-                          <span className="px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-semibold">
-                            ⭐ MY TEAM
-                          </span>
+                <label className="block text-xs font-medium text-slate-400 mb-2">
+                  Team color
+                </label>
 
-                        )}
+                <div className="flex items-center gap-3">
 
-                      </div>
+                  <input
+                    type="color"
+                    value={
+                      editTeam.logo_color
+                    }
+                    onChange={(e) =>
+                      setEditTeam({
+                        ...editTeam,
+                        logo_color:
+                          e.target.value,
+                      })
+                    }
+                    className="w-12 h-12 rounded-xl bg-transparent border-0 cursor-pointer"
+                  />
 
-                      <p className="text-sm text-slate-400 mt-1">
-                        {selectedTeam.short_name}
-                        {' · '}
-                        {selectedTeam.players?.length || 0}
-                        {' '}
-                        players
-                      </p>
+                  <div
+                    className="w-10 h-10 rounded-xl"
+                    style={{
+                      background:
+                        editTeam.logo_color,
+                    }}
+                  />
 
-                    </div>
-
-                  </div>
-
-                  {/* TEAM ACTIONS */}
-
-                  <div className="grid grid-cols-2 gap-2 mt-4">
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        startEditTeam(
-                          selectedTeam
-                        )
-                      }
-                      className="min-h-[42px] rounded-xl bg-slate-900/70 border border-slate-700 text-slate-300 text-xs font-semibold hover:text-emerald-400 transition"
-                    >
-                      ✏️ Edit Team
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={
-                        deletingTeam ===
-                        selectedTeam.id
-                      }
-                      onClick={() =>
-                        removeTeam(
-                          selectedTeam.id
-                        )
-                      }
-                      className="min-h-[42px] rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/10 transition disabled:opacity-50"
-                    >
-                      {deletingTeam ===
-                      selectedTeam.id
-                        ? 'Deleting…'
-                        : '🗑 Delete Team'}
-                    </button>
-
-                  </div>
+                  <span className="text-sm text-slate-400">
+                    Team badge color
+                  </span>
 
                 </div>
 
               </div>
 
-              {/* =================================================
-                  EDIT TEAM
-              ================================================== */}
+              {/* MY TEAM */}
 
-              {editingTeam && (
-                <form
-                  onSubmit={saveTeam}
-                  className="card !p-4 sm:!p-5 border border-emerald-500/20"
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-3 cursor-pointer">
+
+                <input
+                  type="checkbox"
+                  checked={
+                    editTeam.is_own
+                  }
+                  onChange={(e) =>
+                    setEditTeam({
+                      ...editTeam,
+                      is_own:
+                        e.target.checked,
+                    })
+                  }
+                  className="w-5 h-5 accent-emerald-500"
+                />
+
+                <div>
+
+                  <p className="text-sm font-semibold text-white">
+                    ⭐ My team
+                  </p>
+
+                  <p className="text-[11px] text-slate-500">
+                    Mark this as your team
+                  </p>
+
+                </div>
+
+              </label>
+
+            </div>
+
+            {/* MODAL FOOTER */}
+
+            <div className="p-4 sm:p-5 border-t border-slate-800 grid grid-cols-2 gap-2">
+
+              <button
+                type="button"
+                onClick={cancelEdit}
+                disabled={savingTeam}
+                className="min-h-[48px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 font-semibold"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={savingTeam}
+                className="btn btn-primary !py-3 font-semibold"
+              >
+                {savingTeam
+                  ? 'Saving…'
+                  : 'Save Changes'}
+              </button>
+
+            </div>
+
+          </form>
+
+        </div>
+
+      )}
+
+      {/* =====================================================
+          SQUAD MODAL
+      ====================================================== */}
+
+      {showSquadModal && (
+
+        <div className="fixed inset-0 z-[90] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+
+          <div className="w-full sm:max-w-2xl max-h-[94vh] bg-slate-950 border border-slate-700 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+
+            {/* =================================================
+                SQUAD HEADER
+            ================================================== */}
+
+            <div className="flex-shrink-0 p-4 sm:p-5 border-b border-slate-800">
+
+              <div className="flex items-center gap-3">
+
+                {selectedTeam && (
+
+                  <div
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-xs flex-shrink-0"
+                    style={{
+                      background:
+                        selectedTeam.logo_color ||
+                        '#1e3a8a',
+                    }}
+                  >
+                    {selectedTeam.short_name}
+                  </div>
+
+                )}
+
+                <div className="min-w-0 flex-1">
+
+                  <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold">
+                    Team Squad
+                  </p>
+
+                  <h2 className="text-xl font-bold text-white truncate">
+                    {selectedTeam?.name ||
+                      'Loading...'}
+                  </h2>
+
+                  {selectedTeam && (
+
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {selectedTeam.players?.length || 0}
+                      {' '}
+                      players
+                    </p>
+
+                  )}
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeSquad}
+                  className="w-10 h-10 rounded-xl bg-slate-800 text-slate-400 hover:text-white text-xl flex-shrink-0"
                 >
+                  ×
+                </button>
 
-                  <div className="flex items-center justify-between gap-3 mb-4">
-
-                    <div>
-
-                      <h2 className="font-bold text-white">
-                        Edit Team
-                      </h2>
-
-                      <p className="text-xs text-slate-500 mt-1">
-                        Update team information
-                      </p>
-
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={cancelEdit}
-                      className="w-9 h-9 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
-                    >
-                      ×
-                    </button>
-
-                  </div>
-
-                  <div className="space-y-3">
-
-                    <input
-                      className="input w-full"
-                      placeholder="Team name"
-                      value={
-                        editTeam.name
-                      }
-                      onChange={(e) =>
-                        setEditTeam({
-                          ...editTeam,
-                          name:
-                            e.target.value,
-                        })
-                      }
-                    />
-
-                    <input
-                      className="input w-full uppercase"
-                      placeholder="Short code"
-                      maxLength={10}
-                      value={
-                        editTeam.short_name
-                      }
-                      onChange={(e) =>
-                        setEditTeam({
-                          ...editTeam,
-                          short_name:
-                            e.target.value
-                              .toUpperCase()
-                              .replace(
-                                /\s/g,
-                                ''
-                              ),
-                        })
-                      }
-                    />
-
-                    <div className="flex items-center gap-3">
-
-                      <input
-                        type="color"
-                        value={
-                          editTeam.logo_color
-                        }
-                        onChange={(e) =>
-                          setEditTeam({
-                            ...editTeam,
-                            logo_color:
-                              e.target.value,
-                          })
-                        }
-                        className="w-11 h-11 rounded-xl bg-transparent border-0"
-                      />
-
-                      <span className="text-xs text-slate-400">
-                        Team color
-                      </span>
-
-                    </div>
-
-                    <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800">
-
-                      <input
-                        type="checkbox"
-                        checked={
-                          editTeam.is_own
-                        }
-                        onChange={(e) =>
-                          setEditTeam({
-                            ...editTeam,
-                            is_own:
-                              e.target.checked,
-                          })
-                        }
-                        className="w-5 h-5 accent-emerald-500"
-                      />
-
-                      <span className="text-sm text-white">
-                        ⭐ My team
-                      </span>
-
-                    </label>
-
-                    <div className="grid grid-cols-2 gap-2">
-
-                      <button
-                        type="button"
-                        onClick={
-                          cancelEdit
-                        }
-                        disabled={
-                          savingTeam
-                        }
-                        className="min-h-[44px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-sm font-semibold"
-                      >
-                        Cancel
-                      </button>
-
-                      <button
-                        type="submit"
-                        disabled={
-                          savingTeam
-                        }
-                        className="btn btn-primary !py-3"
-                      >
-                        {savingTeam
-                          ? 'Saving…'
-                          : 'Save Changes'}
-                      </button>
-
-                    </div>
-
-                  </div>
-
-                </form>
-              )}
+              </div>
 
               {/* =================================================
-                  SQUAD
+                  LOADING
               ================================================== */}
 
-              <div className="card !p-0 overflow-hidden border border-slate-700/60">
+              {loadingTeam ? (
 
-                <div className="p-4 sm:p-5 border-b border-slate-700/60">
+                <div className="py-12 text-center">
 
-                  <div className="flex items-center justify-between gap-3">
-
-                    <div>
-
-                      <h2 className="font-bold text-white">
-                        Squad
-                      </h2>
-
-                      <p className="text-xs text-slate-500 mt-1">
-                        {selectedTeam.players?.length || 0}
-                        {' '}
-                        registered
-                      </p>
-
-                    </div>
-
-                    <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-lg">
-                      👥
-                    </div>
-
+                  <div className="text-3xl mb-3">
+                    ⏳
                   </div>
 
-                  {/* ROLE SUMMARY */}
+                  <p className="text-sm text-slate-500">
+                    Loading squad…
+                  </p>
+
+                </div>
+
+              ) : selectedTeam ? (
+
+                <>
+
+                  {/* ROLE FILTERS */}
 
                   <div className="grid grid-cols-4 gap-1.5 mt-4">
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPlayerRoleFilter(
-                          'all'
-                        )
-                      }
-                      className={`
-                        rounded-xl p-2 text-center border
-                        ${
-                          playerRoleFilter ===
-                          'all'
-                            ? 'border-emerald-500/30 bg-emerald-500/10'
-                            : 'border-slate-800 bg-slate-900'
-                        }
-                      `}
-                    >
-                      <p className="text-sm font-bold text-white">
-                        {roleCounts.all}
-                      </p>
-                      <p className="text-[9px] text-slate-500">
-                        All
-                      </p>
-                    </button>
+                    {roleButton(
+                      'all',
+                      'All'
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPlayerRoleFilter(
-                          'batsman'
-                        )
-                      }
-                      className={`
-                        rounded-xl p-2 text-center border
-                        ${
-                          playerRoleFilter ===
-                          'batsman'
-                            ? 'border-emerald-500/30 bg-emerald-500/10'
-                            : 'border-slate-800 bg-slate-900'
-                        }
-                      `}
-                    >
-                      <p className="text-sm font-bold text-white">
-                        {roleCounts.batsman}
-                      </p>
-                      <p className="text-[9px] text-slate-500">
-                        Bat
-                      </p>
-                    </button>
+                    {roleButton(
+                      'batsman',
+                      'Bat'
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPlayerRoleFilter(
-                          'bowler'
-                        )
-                      }
-                      className={`
-                        rounded-xl p-2 text-center border
-                        ${
-                          playerRoleFilter ===
-                          'bowler'
-                            ? 'border-emerald-500/30 bg-emerald-500/10'
-                            : 'border-slate-800 bg-slate-900'
-                        }
-                      `}
-                    >
-                      <p className="text-sm font-bold text-white">
-                        {roleCounts.bowler}
-                      </p>
-                      <p className="text-[9px] text-slate-500">
-                        Bowl
-                      </p>
-                    </button>
+                    {roleButton(
+                      'bowler',
+                      'Bowl'
+                    )}
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setPlayerRoleFilter(
-                          'all-rounder'
-                        )
-                      }
-                      className={`
-                        rounded-xl p-2 text-center border
-                        ${
-                          playerRoleFilter ===
-                          'all-rounder'
-                            ? 'border-emerald-500/30 bg-emerald-500/10'
-                            : 'border-slate-800 bg-slate-900'
-                        }
-                      `}
-                    >
-                      <p className="text-sm font-bold text-white">
-                        {roleCounts['all-rounder']}
-                      </p>
-                      <p className="text-[9px] text-slate-500">
-                        AR
-                      </p>
-                    </button>
+                    {roleButton(
+                      'all-rounder',
+                      'AR'
+                    )}
 
                   </div>
 
-                  {/* PLAYER SEARCH */}
+                  {/* SEARCH */}
 
                   {selectedTeam.players?.length > 0 && (
 
@@ -1962,7 +1999,7 @@ export default function TeamManager() {
 
                       <input
                         className="input w-full pl-10 pr-10"
-                        placeholder="Search players..."
+                        placeholder="Search player..."
                         value={
                           playerSearch
                         }
@@ -1982,7 +2019,7 @@ export default function TeamManager() {
                               ''
                             )
                           }
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
                         >
                           ×
                         </button>
@@ -1993,171 +2030,228 @@ export default function TeamManager() {
 
                   )}
 
-                </div>
+                </>
 
-                {/* PLAYERS */}
+              ) : null}
 
-                {loadingTeam ? (
+            </div>
 
-                  <div className="p-10 text-center">
+            {/* =================================================
+                SQUAD CONTENT
+            ================================================== */}
 
-                    <div className="text-2xl mb-3">
-                      ⏳
-                    </div>
+            {!loadingTeam &&
+              selectedTeam && (
 
-                    <p className="text-sm text-slate-500">
-                      Loading squad…
-                    </p>
+                <div className="flex-1 overflow-y-auto p-3 sm:p-4">
 
-                  </div>
+                  {filteredPlayers.length > 0 ? (
 
-                ) : (
+                    <div className="space-y-2">
 
-                  <div className="p-3 space-y-2">
-
-                    {filteredPlayers.map(
-                      (player) => (
-
-                        <div
-                          key={player.id}
-                          className="flex items-center gap-3 p-3 rounded-2xl bg-slate-900/50 border border-slate-800 hover:border-slate-700 transition"
-                        >
-
-                          {/* JERSEY */}
+                      {filteredPlayers.map(
+                        (player) => (
 
                           <div
-                            className="w-11 h-11 rounded-xl border border-slate-700 flex items-center justify-center flex-shrink-0"
-                            style={{
-                              background:
-                                `${selectedTeam.logo_color || '#1e3a8a'}18`,
-                            }}
+                            key={player.id}
+                            className="flex items-center gap-3 p-3 rounded-2xl bg-slate-900/70 border border-slate-800"
                           >
 
-                            <span className="text-sm font-bold text-white">
-                              #
-                              {player.jersey_no ??
-                                '-'}
-                            </span>
+                            {/* PLAYER ICON */}
 
-                          </div>
-
-                          {/* PLAYER */}
-
-                          <div className="min-w-0 flex-1">
-
-                            <p className="font-semibold text-sm text-white truncate">
-                              {player.name}
-                            </p>
-
-                            <div className="flex items-center gap-1.5 mt-0.5">
-
-                              <span className="text-xs">
+                            <div
+                              className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                              style={{
+                                background:
+                                  `${selectedTeam.logo_color || '#1e3a8a'}18`,
+                              }}
+                            >
+                              <span className="text-lg">
                                 {getRoleIcon(
                                   player.role
                                 )}
                               </span>
+                            </div>
 
-                              <span className="text-xs text-slate-500">
+                            {/* PLAYER INFO */}
+
+                            <div className="min-w-0 flex-1">
+
+                              <p className="font-semibold text-sm text-white truncate">
+                                {player.name}
+                              </p>
+
+                              <p className="text-xs text-slate-500 mt-0.5">
                                 {getRoleLabel(
                                   player.role
                                 )}
-                              </span>
+                              </p>
 
                             </div>
 
+                            {/* REMOVE */}
+
+                            <button
+                              type="button"
+                              disabled={
+                                deletingPlayer ===
+                                player.id
+                              }
+                              onClick={() =>
+                                removePlayer(
+                                  player.id
+                                )
+                              }
+                              className="min-h-[40px] px-3 rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 text-xs font-semibold active:scale-95 transition disabled:opacity-50"
+                            >
+                              {deletingPlayer ===
+                              player.id
+                                ? '…'
+                                : 'Remove'}
+                            </button>
+
                           </div>
 
-                          {/* REMOVE */}
+                        )
+                      )}
 
-                          <button
-                            type="button"
-                            disabled={
-                              deletingPlayer ===
-                              player.id
-                            }
-                            onClick={() =>
-                              removePlayer(
-                                player.id
-                              )
-                            }
-                            className="min-h-[40px] px-3 rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/10 transition disabled:opacity-50"
-                          >
-                            {deletingPlayer ===
-                            player.id
-                              ? '…'
-                              : 'Remove'}
-                          </button>
+                    </div>
 
-                        </div>
+                  ) : (
 
-                      )
-                    )}
+                    <div className="py-10 text-center">
 
-                    {filteredPlayers.length ===
-                      0 && (
-
-                      <div className="py-8 text-center">
-
-                        <div className="text-3xl mb-2">
-                          👤
-                        </div>
-
-                        <p className="text-sm font-medium text-slate-300">
-                          {selectedTeam.players?.length
-                            ? 'No matching players'
-                            : 'No players yet'}
-                        </p>
-
-                        <p className="text-xs text-slate-500 mt-1">
-                          {selectedTeam.players?.length
-                            ? 'Try another search or role.'
-                            : 'Add your first player below.'}
-                        </p>
-
+                      <div className="w-16 h-16 mx-auto rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-3xl mb-4">
+                        👤
                       </div>
-                    )}
 
-                  </div>
+                      <p className="text-sm font-semibold text-slate-300">
+                        {selectedTeam.players?.length
+                          ? 'No matching players'
+                          : 'No players yet'}
+                      </p>
 
-                )}
+                      <p className="text-xs text-slate-500 mt-1">
+                        {selectedTeam.players?.length
+                          ? 'Try another search or filter.'
+                          : 'Add a player to this squad.'}
+                      </p>
 
-              </div>
+                    </div>
 
-              {/* =================================================
-                  ADD PLAYER
-              ================================================== */}
+                  )}
 
-              <form
-                onSubmit={addPlayer}
-                className="card !p-4 sm:!p-5 border border-slate-700/60"
-              >
+                </div>
 
-                <div className="flex items-center gap-3 mb-4">
+              )}
 
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                    👤
-                  </div>
+            {/* =================================================
+                SQUAD FOOTER
+            ================================================== */}
 
-                  <div>
+            {!loadingTeam &&
+              selectedTeam && (
 
-                    <h2 className="font-bold text-white">
-                      Add Player
-                    </h2>
+                <div className="flex-shrink-0 p-3 sm:p-4 border-t border-slate-800 bg-slate-950">
 
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Add a player to{' '}
-                      {selectedTeam.name}
-                    </p>
+                  <div className="grid grid-cols-2 gap-2">
+
+                    <button
+                      type="button"
+                      onClick={closeSquad}
+                      className="min-h-[48px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-sm font-semibold"
+                    >
+                      Close
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={openAddPlayer}
+                      className="btn btn-primary !py-3 font-semibold"
+                    >
+                      ＋ Add Player
+                    </button>
 
                   </div>
 
                 </div>
 
-                <div className="space-y-3">
+              )}
+
+          </div>
+
+        </div>
+
+      )}
+
+      {/* =====================================================
+          ADD PLAYER MODAL
+      ====================================================== */}
+
+      {showAddPlayerModal &&
+        selectedTeam && (
+
+          <div
+            className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onMouseDown={(e) => {
+
+              if (
+                e.target ===
+                  e.currentTarget &&
+                !addingPlayer
+              ) {
+                closeAddPlayer();
+              }
+
+            }}
+          >
+
+            <form
+              onSubmit={addPlayer}
+              className="w-full sm:max-w-md bg-slate-950 border border-slate-700 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden"
+            >
+
+              {/* HEADER */}
+
+              <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+
+                <div>
+
+                  <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold">
+                    {selectedTeam.short_name}
+                  </p>
+
+                  <h2 className="text-xl font-bold text-white mt-1">
+                    Add Player
+                  </h2>
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeAddPlayer}
+                  disabled={addingPlayer}
+                  className="w-10 h-10 rounded-xl bg-slate-800 text-slate-400 hover:text-white text-xl"
+                >
+                  ×
+                </button>
+
+              </div>
+
+              {/* BODY */}
+
+              <div className="p-4 sm:p-5 space-y-4">
+
+                <div>
+
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    Player name
+                  </label>
 
                   <input
+                    autoFocus
                     className="input w-full"
-                    placeholder="Player name"
+                    placeholder="Enter player name"
                     value={
                       newPlayer.name
                     }
@@ -2170,82 +2264,107 @@ export default function TeamManager() {
                     }
                   />
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                </div>
 
-                    <select
-                      className="input w-full"
-                      value={
-                        newPlayer.role
-                      }
-                      onChange={(e) =>
-                        setNewPlayer({
-                          ...newPlayer,
-                          role:
-                            e.target.value,
-                        })
-                      }
-                    >
+                <div>
 
-                      <option value="batsman">
-                        🏏 Batsman
-                      </option>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    Player role
+                  </label>
 
-                      <option value="bowler">
-                        ⚡ Bowler
-                      </option>
-
-                      <option value="all-rounder">
-                        ⭐ All-rounder
-                      </option>
-
-                      <option value="wicketkeeper">
-                        🧤 Wicketkeeper
-                      </option>
-
-                    </select>
-
-                    <input
-                      className="input w-full"
-                      type="number"
-                      min="0"
-                      max="999"
-                      placeholder="Jersey number"
-                      value={
-                        newPlayer.jersey_no
-                      }
-                      onChange={(e) =>
-                        setNewPlayer({
-                          ...newPlayer,
-                          jersey_no:
-                            e.target.value,
-                        })
-                      }
-                    />
-
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={
-                      addingPlayer
+                  <select
+                    className="input w-full"
+                    value={
+                      newPlayer.role
                     }
-                    className="btn btn-primary w-full !py-3.5 font-semibold"
+                    onChange={(e) =>
+                      setNewPlayer({
+                        ...newPlayer,
+                        role:
+                          e.target.value,
+                      })
+                    }
                   >
-                    {addingPlayer
-                      ? 'Adding player…'
-                      : '＋ Add Player'}
-                  </button>
+
+                    <option value="batsman">
+                      🏏 Batsman
+                    </option>
+
+                    <option value="bowler">
+                      ⚡ Bowler
+                    </option>
+
+                    <option value="all-rounder">
+                      ⭐ All-rounder
+                    </option>
+
+                    <option value="wicketkeeper">
+                      🧤 Wicketkeeper
+                    </option>
+
+                  </select>
 
                 </div>
 
-              </form>
+                <div className="rounded-2xl bg-slate-900 border border-slate-800 p-3">
 
-            </>
-          )}
+                  <p className="text-xs text-slate-400">
+                    Team
+                  </p>
 
-        </div>
+                  <div className="flex items-center gap-2 mt-2">
 
-      </div>
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[9px] font-bold text-white"
+                      style={{
+                        background:
+                          selectedTeam.logo_color ||
+                          '#1e3a8a',
+                      }}
+                    >
+                      {selectedTeam.short_name}
+                    </div>
+
+                    <span className="text-sm font-semibold text-white">
+                      {selectedTeam.name}
+                    </span>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+              {/* FOOTER */}
+
+              <div className="p-4 sm:p-5 border-t border-slate-800 grid grid-cols-2 gap-2">
+
+                <button
+                  type="button"
+                  onClick={closeAddPlayer}
+                  disabled={addingPlayer}
+                  className="min-h-[48px] rounded-xl bg-slate-800 border border-slate-700 text-slate-300 font-semibold"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={addingPlayer}
+                  className="btn btn-primary !py-3 font-semibold"
+                >
+                  {addingPlayer
+                    ? 'Adding…'
+                    : '＋ Add Player'}
+                </button>
+
+              </div>
+
+            </form>
+
+          </div>
+
+        )}
 
     </div>
   );
