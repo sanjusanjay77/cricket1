@@ -85,6 +85,29 @@ export default function Scorer() {
 
   /*
    * ====================================================
+   * BOWLER ID HELPER
+   *
+   * Different backend responses may expose the current
+   * bowler using different property names.
+   * ====================================================
+   */
+
+  const getBowlerId = useCallback((inn) => {
+    if (!inn || typeof inn !== 'object') {
+      return null;
+    }
+
+    return (
+      inn.current_bowler_id ??
+      inn.bowler_id ??
+      inn.currentBowlerId ??
+      inn.current_bowler ??
+      null
+    );
+  }, []);
+
+  /*
+   * ====================================================
    * BOWLER BALL CALCULATOR
    * ====================================================
    */
@@ -189,7 +212,7 @@ export default function Scorer() {
 
         if (
           preserved.bowlerId &&
-          !patchedInn.current_bowler_id
+          !getBowlerId(patchedInn)
         ) {
           patchedInn.current_bowler_id =
             preserved.bowlerId;
@@ -226,7 +249,7 @@ export default function Scorer() {
 
     optimisticRef.current = null;
     setOptimistic(null);
-  }, []);
+  }, [getBowlerId]);
 
   /*
    * ====================================================
@@ -360,7 +383,7 @@ export default function Scorer() {
 
           if (
             preserved.bowlerId &&
-            !patchedInn.current_bowler_id
+            !getBowlerId(patchedInn)
           ) {
             patchedInn.current_bowler_id =
               preserved.bowlerId;
@@ -422,7 +445,10 @@ export default function Scorer() {
         onUpdate
       );
     };
-  }, [matchId]);
+  }, [
+    matchId,
+    getBowlerId
+  ]);
 
   /*
    * ====================================================
@@ -481,7 +507,138 @@ export default function Scorer() {
 
   /*
    * ====================================================
-   * NEXT BOWLER EFFECT
+   * SAFE DISPLAY DATA
+   *
+   * IMPORTANT:
+   * These values are calculated before any return so
+   * React hook ordering never changes.
+   * ====================================================
+   */
+
+  const safeInnings =
+    Array.isArray(innings)
+      ? innings
+      : [];
+
+  const safePlayers =
+    Array.isArray(players)
+      ? players
+      : [];
+
+  const currentInnings =
+    safeInnings[
+      safeInnings.length - 1
+    ];
+
+  const earlyInn =
+    currentInnings?.innings &&
+    typeof currentInnings.innings === 'object'
+      ? currentInnings.innings
+      : null;
+
+  const earlyStrikerId =
+    optimistic?.strikerId ??
+    earlyInn?.striker_id ??
+    undoPreservedRef.current?.strikerId ??
+    null;
+
+  const earlyNonStrikerId =
+    optimistic?.nonStrikerId ??
+    earlyInn?.non_striker_id ??
+    undoPreservedRef.current?.nonStrikerId ??
+    null;
+
+  /*
+   * FIX:
+   * Check ALL supported bowler fields.
+   */
+  const earlyServerBowlerId =
+    getBowlerId(earlyInn);
+
+  const earlyBowlerId =
+    optimistic?.activeBowlerId ??
+    earlyServerBowlerId ??
+    undoPreservedRef.current?.bowlerId ??
+    null;
+
+  const earlyTotalBalls =
+    optimistic?.total_balls ??
+    Number(
+      earlyInn?.total_balls || 0
+    );
+
+  /*
+   * ====================================================
+   * INITIAL BOWLER / NEXT BOWLER LOGIC
+   * ====================================================
+   */
+
+  const hasEarlyBatsmen =
+    !!earlyStrikerId &&
+    !!earlyNonStrikerId;
+
+  const noEarlyBowler =
+    !earlyBowlerId;
+
+  const earlyBalls =
+    Number(
+      earlyTotalBalls || 0
+    );
+
+  const isFirstBall =
+    earlyBalls === 0;
+
+  const isCompletedOver =
+    earlyBalls > 0 &&
+    earlyBalls % 6 === 0;
+
+  const shouldSelectInitialBowler =
+    hasEarlyBatsmen &&
+    noEarlyBowler &&
+    isFirstBall &&
+    !undoPreservedRef.current?.active;
+
+  const shouldSelectNextBowler =
+    hasEarlyBatsmen &&
+    noEarlyBowler &&
+    isCompletedOver &&
+    !undoPreservedRef.current?.active;
+
+  useEffect(() => {
+    if (
+      shouldSelectInitialBowler &&
+      !showInitialBowler &&
+      !showNextBowler &&
+      !undoPreservedRef.current?.active
+    ) {
+      setShowNextBowler(false);
+      setShowInitialBowler(true);
+    }
+  }, [
+    shouldSelectInitialBowler,
+    showInitialBowler,
+    showNextBowler
+  ]);
+
+  useEffect(() => {
+    if (
+      shouldSelectNextBowler &&
+      !showNextBowler &&
+      !showInitialBowler &&
+      !undoPreservedRef.current?.active
+    ) {
+      setShowInitialBowler(false);
+      setShowNextBowler(true);
+    }
+  }, [
+    shouldSelectNextBowler,
+    showNextBowler,
+    showInitialBowler
+  ]);
+
+  /*
+   * ====================================================
+   * NEXT BOWLER EFFECT FOR OPTIMISTIC STATE
    * ====================================================
    */
 
@@ -493,8 +650,10 @@ export default function Scorer() {
       ) > 0 &&
       Number(
         optimistic?.total_balls || 0
-      ) % 6 === 0
+      ) % 6 === 0 &&
+      !undoPreservedRef.current?.active
     ) {
+      setShowInitialBowler(false);
       setShowNextBowler(true);
     }
   }, [
@@ -548,7 +707,7 @@ export default function Scorer() {
 
       const scoringBowlerId =
         previousOptimistic?.activeBowlerId ??
-        current.current_bowler_id;
+        getBowlerId(current);
 
       const currentTotalRuns =
         Number(
@@ -735,6 +894,9 @@ export default function Scorer() {
       /*
        * ==================================================
        * BOWLER
+       *
+       * IMPORTANT:
+       * Existing bowling statistics are preserved.
        * ==================================================
        */
 
@@ -1110,7 +1272,8 @@ export default function Scorer() {
       };
     }, [
       safeArray,
-      getBowlerBallsFromStats
+      getBowlerBallsFromStats,
+      getBowlerId
     ]);
 
   /*
@@ -1244,7 +1407,7 @@ export default function Scorer() {
 
         const effectiveBowlerId =
           optimisticRef.current?.activeBowlerId ??
-          currentInn.current_bowler_id;
+          getBowlerId(currentInn);
 
         if (
           optimisticRef.current
@@ -1263,7 +1426,20 @@ export default function Scorer() {
             effectiveNonStrikerId &&
             !effectiveBowlerId
           ) {
-            setShowInitialBowler(true);
+            setShowInitialBowler(
+              Number(
+                currentInn.total_balls || 0
+              ) === 0
+            );
+
+            setShowNextBowler(
+              Number(
+                currentInn.total_balls || 0
+              ) > 0 &&
+              Number(
+                currentInn.total_balls || 0
+              ) % 6 === 0
+            );
           }
 
           return;
@@ -1299,6 +1475,12 @@ export default function Scorer() {
           nextOptimistic
         );
 
+        if (
+          nextOptimistic.needsNextBowler
+        ) {
+          setShowInitialBowler(false);
+        }
+
         scoreQueueRef.current.push({
           inningsId:
             currentInn.id,
@@ -1318,7 +1500,8 @@ export default function Scorer() {
         popBoundary,
         buildOptimisticBall,
         processScoreQueue,
-        clearUndoPreservation
+        clearUndoPreservation,
+        getBowlerId
       ]
     );
 
@@ -1357,7 +1540,7 @@ export default function Scorer() {
 
       const bowlerBeforeUndo =
         optimisticRef.current?.activeBowlerId ??
-        undoInn.current_bowler_id ??
+        getBowlerId(undoInn) ??
         null;
 
       const strikerBeforeUndo =
@@ -1445,7 +1628,7 @@ export default function Scorer() {
               );
 
         const restoredBowlerId =
-          resultInn?.current_bowler_id ??
+          getBowlerId(resultInn) ??
           bowlerBeforeUndo ??
           null;
 
@@ -1656,8 +1839,7 @@ export default function Scorer() {
         }
 
         const backendBowlerId =
-          resultInn?.current_bowler_id ??
-          null;
+          getBowlerId(resultInn);
 
         if (
           !backendBowlerId &&
@@ -1706,79 +1888,9 @@ export default function Scorer() {
       innings,
       loadFull,
       safeArray,
-      clearUndoPreservation
+      clearUndoPreservation,
+      getBowlerId
     ]);
-
-  /*
-   * ====================================================
-   * SAFE DISPLAY DATA
-   * ====================================================
-   */
-
-  const safeInnings =
-    Array.isArray(innings)
-      ? innings
-      : [];
-
-  const safePlayers =
-    Array.isArray(players)
-      ? players
-      : [];
-
-  const currentInnings =
-    safeInnings[
-      safeInnings.length - 1
-    ];
-
-  const earlyInn =
-    currentInnings?.innings &&
-    typeof currentInnings.innings === 'object'
-      ? currentInnings.innings
-      : null;
-
-  const earlyStrikerId =
-    optimistic?.strikerId ??
-    earlyInn?.striker_id ??
-    undoPreservedRef.current?.strikerId ??
-    null;
-
-  const earlyNonStrikerId =
-    optimistic?.nonStrikerId ??
-    earlyInn?.non_striker_id ??
-    undoPreservedRef.current?.nonStrikerId ??
-    null;
-
-  const earlyBowlerId =
-    optimistic?.activeBowlerId ??
-    earlyInn?.current_bowler_id ??
-    undoPreservedRef.current?.bowlerId ??
-    null;
-
-  const earlyTotalBalls =
-    optimistic?.total_balls ??
-    Number(
-      earlyInn?.total_balls || 0
-    );
-
-  const needsInitialBowler =
-    !!earlyStrikerId &&
-    !!earlyNonStrikerId &&
-    !earlyBowlerId &&
-    Number(earlyTotalBalls) === 0 &&
-    !undoPreservedRef.current?.active;
-
-  useEffect(() => {
-    if (
-      needsInitialBowler &&
-      !showInitialBowler &&
-      !undoPreservedRef.current?.active
-    ) {
-      setShowInitialBowler(true);
-    }
-  }, [
-    needsInitialBowler,
-    showInitialBowler
-  ]);
 
   /*
    * ====================================================
@@ -1847,9 +1959,14 @@ export default function Scorer() {
     undoPreservedRef.current?.nonStrikerId ??
     null;
 
+  /*
+   * FIX:
+   * Use current_bowler_id, bowler_id and other
+   * possible backend fields.
+   */
   const effectiveBowlerId =
     optimistic?.activeBowlerId ??
-    inn?.current_bowler_id ??
+    getBowlerId(inn) ??
     undoPreservedRef.current?.bowlerId ??
     null;
 
@@ -1942,22 +2059,22 @@ export default function Scorer() {
   const striker =
     safePlayers.find(
       p =>
-        p?.id ===
-        effectiveStrikerId
+        String(p?.id) ===
+        String(effectiveStrikerId)
     );
 
   const nonStriker =
     safePlayers.find(
       p =>
-        p?.id ===
-        effectiveNonStrikerId
+        String(p?.id) ===
+        String(effectiveNonStrikerId)
     );
 
   const bowler =
     safePlayers.find(
       p =>
-        p?.id ===
-        effectiveBowlerId
+        String(p?.id) ===
+        String(effectiveBowlerId)
     );
 
   /*
@@ -2127,8 +2244,8 @@ export default function Scorer() {
   const serverStrikerStats =
     battingCard.find(
       b =>
-        b?.player_id ===
-        effectiveStrikerId
+        String(b?.player_id) ===
+        String(effectiveStrikerId)
     ) || {
       player_id:
         effectiveStrikerId,
@@ -2142,8 +2259,8 @@ export default function Scorer() {
   const serverNonStrikerStats =
     battingCard.find(
       b =>
-        b?.player_id ===
-        effectiveNonStrikerId
+        String(b?.player_id) ===
+        String(effectiveNonStrikerId)
     ) || {
       player_id:
         effectiveNonStrikerId,
@@ -2251,17 +2368,10 @@ export default function Scorer() {
    */
 
   const needsNextBowler =
-    !effectiveBowlerId
-      ? (
-          optimistic?.needsNextBowler ||
-          (
-            !inn.current_bowler_id &&
-            displayTotalBalls > 0 &&
-            displayTotalBalls % 6 === 0 &&
-            !undoPreservedRef.current?.active
-          )
-        )
-      : false;
+    !effectiveBowlerId &&
+    displayTotalBalls > 0 &&
+    displayTotalBalls % 6 === 0 &&
+    !undoPreservedRef.current?.active;
 
   /*
    * ====================================================
@@ -2392,7 +2502,9 @@ export default function Scorer() {
                 <div className="text-xs text-slate-500 mt-1">
                   {effectiveBowlerId
                     ? 'CURRENT BOWLER'
-                    : 'SELECT BOWLER TO START'}
+                    : displayTotalBalls === 0
+                      ? 'SELECT BOWLER TO START'
+                      : 'SELECT NEXT BOWLER'}
                 </div>
 
               </div>
@@ -2813,6 +2925,22 @@ export default function Scorer() {
 
         )}
 
+      {needsNextBowler && (
+        <div className="card">
+
+          <button
+            className="btn btn-primary w-full h-12 text-base font-bold"
+            onClick={() => {
+              setShowInitialBowler(false);
+              setShowNextBowler(true);
+            }}
+          >
+            🎯 Select Next Bowler
+          </button>
+
+        </div>
+      )}
+
       <div className="mt-2 bg-slate-900/70 rounded-xl p-2 border border-slate-700">
 
         <div className="flex justify-between items-center">
@@ -2946,8 +3074,7 @@ export default function Scorer() {
                 };
 
               const nextState = {
-                ...(optimisticRef.current ||
-                  {}),
+                ...(optimisticRef.current || {}),
 
                 activeBowlerId:
                   bowlerId,
@@ -3476,8 +3603,8 @@ function FallOfWickets({
             const player =
               safePlayers.find(
                 p =>
-                  p?.id ===
-                  item?.player_id
+                  String(p?.id) ===
+                  String(item?.player_id)
               );
 
             return (
