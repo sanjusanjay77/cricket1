@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 
 const express = require('express');
@@ -14,7 +15,8 @@ const server = http.createServer(app);
    CONFIGURATION
 ========================================================= */
 
-const PORT = process.env.PORT || 4000;
+const PORT =
+  process.env.PORT || 4000;
 
 const allowedOrigins = [
   'https://gcc-cricket.netlify.app',
@@ -22,7 +24,9 @@ const allowedOrigins = [
   'http://127.0.0.1:5173'
 ];
 
-if (process.env.CORS_ORIGIN) {
+if (
+  process.env.CORS_ORIGIN
+) {
   allowedOrigins.push(
     process.env.CORS_ORIGIN
   );
@@ -31,7 +35,9 @@ if (process.env.CORS_ORIGIN) {
 const uniqueOrigins = [
   ...new Set(
     allowedOrigins
-      .map(origin => String(origin).trim())
+      .map(origin =>
+        String(origin).trim()
+      )
       .filter(Boolean)
   )
 ];
@@ -45,21 +51,30 @@ console.log(
    SECURITY CONFIGURATION
 ========================================================= */
 
-const JSON_LIMIT = '256kb';
+const JSON_LIMIT =
+  '256kb';
 
-const rateLimitStore = new Map();
+const rateLimitStore =
+  new Map();
 
-const RATE_LIMIT_WINDOW = 60 * 1000;
-const RATE_LIMIT_MAX = 120;
+const RATE_LIMIT_WINDOW =
+  60 * 1000;
+
+const RATE_LIMIT_MAX =
+  120;
 
 function getClientIp(req) {
 
   const forwarded =
-    req.headers['x-forwarded-for'];
+    req.headers[
+      'x-forwarded-for'
+    ];
 
   if (forwarded) {
 
-    return String(forwarded)
+    return String(
+      forwarded
+    )
       .split(',')[0]
       .trim();
   }
@@ -80,13 +95,12 @@ function rateLimit(
   try {
 
     /*
-     * Never rate-limit browser CORS preflight.
-     *
-     * OPTIONS is only asking whether the real
-     * request is allowed.
+     * Never rate-limit browser
+     * CORS preflight.
      */
     if (
-      req.method === 'OPTIONS'
+      req.method ===
+      'OPTIONS'
     ) {
       return next();
     }
@@ -119,8 +133,13 @@ function rateLimit(
       record
     );
 
+    /*
+     * Prevent unlimited growth
+     * of the in-memory store.
+     */
     if (
-      rateLimitStore.size > 5000
+      rateLimitStore.size >
+      5000
     ) {
 
       for (
@@ -284,9 +303,8 @@ const corsOptions = {
     );
 
     /*
-     * Do not throw an error.
-     *
-     * Simply deny the origin.
+     * Deny the origin without
+     * throwing an application error.
      */
     return callback(
       null,
@@ -313,30 +331,19 @@ const corsOptions = {
     'X-Requested-With'
   ],
 
-  optionsSuccessStatus: 204
+  optionsSuccessStatus:
+    204
 };
 
 /*
- * Main CORS middleware.
+ * Main Express CORS middleware.
  */
 app.use(
   cors(corsOptions)
 );
 
 /*
- * Explicit OPTIONS preflight handler.
- *
- * Axios POST requests such as:
- *
- * POST /api/innings/:id/ball
- *
- * can trigger an OPTIONS request first.
- *
- * This must be handled before:
- *
- * - rate limiting
- * - body parsing
- * - API routes
+ * Explicit OPTIONS handling.
  */
 app.options(
   '*',
@@ -344,11 +351,8 @@ app.options(
 );
 
 /*
- * Explicit CORS headers for allowed origins.
- *
- * This provides an additional layer of protection
- * and makes sure normal API responses contain the
- * correct CORS headers.
+ * Explicit CORS headers for
+ * allowed origins.
  */
 app.use(
   (req, res, next) => {
@@ -393,7 +397,8 @@ app.use(
      * Finish OPTIONS immediately.
      */
     if (
-      req.method === 'OPTIONS'
+      req.method ===
+      'OPTIONS'
     ) {
 
       return res.sendStatus(
@@ -419,7 +424,8 @@ app.use(
 
 app.use(
   express.json({
-    limit: JSON_LIMIT,
+    limit:
+      JSON_LIMIT,
     strict: true
   })
 );
@@ -475,7 +481,8 @@ app.get(
       return res
         .status(200)
         .json({
-          status: 'ok',
+          status:
+            'ok',
 
           time:
             new Date().toISOString(),
@@ -485,9 +492,11 @@ app.get(
               process.uptime()
             ),
 
-          server: 'running',
+          server:
+            'running',
 
-          database: 'turso'
+          database:
+            'turso'
         });
 
     } catch (err) {
@@ -500,8 +509,11 @@ app.get(
       return res
         .status(503)
         .json({
-          status: 'error',
-          server: 'unhealthy'
+          status:
+            'error',
+
+          server:
+            'unhealthy'
         });
     }
   }
@@ -545,6 +557,15 @@ app.use(
    SOCKET.IO
 ========================================================= */
 
+/*
+ * Socket.IO has its own CORS handling.
+ *
+ * We use the already validated list of origins
+ * instead of duplicating the origin callback.
+ *
+ * This keeps Socket.IO CORS handling simple and
+ * predictable.
+ */
 const io =
   new Server(
     server,
@@ -552,43 +573,10 @@ const io =
       cors: {
 
         origin:
-          function (
-            origin,
-            callback
-          ) {
+          uniqueOrigins,
 
-            if (!origin) {
-
-              return callback(
-                null,
-                true
-              );
-            }
-
-            if (
-              uniqueOrigins.includes(
-                origin
-              )
-            ) {
-
-              return callback(
-                null,
-                true
-              );
-            }
-
-            console.warn(
-              `🚫 Socket.IO CORS blocked: ${origin}`
-            );
-
-            return callback(
-              new Error(
-                'Origin not allowed'
-              )
-            );
-          },
-
-        credentials: true,
+        credentials:
+          true,
 
         methods: [
           'GET',
@@ -596,12 +584,22 @@ const io =
         ]
       },
 
+      /*
+       * Allow both transports.
+       *
+       * The browser can start with polling and
+       * upgrade to WebSocket.
+       */
       transports: [
         'polling',
         'websocket'
       ],
 
+      /*
+       * Recover short disconnects where possible.
+       */
       connectionStateRecovery: {
+
         maxDisconnectionDuration:
           2 * 60 * 1000,
 
@@ -609,14 +607,39 @@ const io =
           true
       },
 
+      /*
+       * Scoreboard events are very small.
+       */
       maxHttpBufferSize:
         256 * 1024,
 
+      /*
+       * Heartbeat.
+       *
+       * A slightly longer timeout helps prevent
+       * unnecessary disconnects when Render/proxy
+       * connections temporarily slow down.
+       */
       pingInterval:
         25000,
 
       pingTimeout:
-        20000
+        30000,
+
+      /*
+       * Score updates are tiny, so compression
+       * is unnecessary overhead.
+       */
+      httpCompression:
+        false,
+
+      /*
+       * Socket.IO client files are not needed
+       * because your React frontend has its own
+       * socket.io-client package.
+       */
+      serveClient:
+        false
     }
   );
 
@@ -648,8 +671,10 @@ io.on(
         try {
 
           if (
-            userId === undefined ||
-            userId === null ||
+            userId ===
+              undefined ||
+            userId ===
+              null ||
             userId === ''
           ) {
 
@@ -661,14 +686,17 @@ io.on(
           }
 
           const cleanedUserId =
-            String(userId).trim();
+            String(
+              userId
+            ).trim();
 
           /*
            * UUIDs should not be excessively long.
            */
           if (
             !cleanedUserId ||
-            cleanedUserId.length > 100
+            cleanedUserId.length >
+              100
           ) {
 
             console.warn(
@@ -679,8 +707,8 @@ io.on(
           }
 
           /*
-           * Each registered user gets a
-           * private Socket.IO room.
+           * Each registered user gets
+           * a private Socket.IO room.
            */
           const room =
             `notification-user-${cleanedUserId}`;
@@ -699,7 +727,8 @@ io.on(
           socket.emit(
             'notification-user-registered',
             {
-              success: true,
+              success:
+                true,
 
               userId:
                 cleanedUserId
@@ -741,11 +770,14 @@ io.on(
           }
 
           const cleanedId =
-            String(matchId).trim();
+            String(
+              matchId
+            ).trim();
 
           if (
             !cleanedId ||
-            cleanedId.length > 100
+            cleanedId.length >
+              100
           ) {
 
             console.warn(
@@ -797,11 +829,14 @@ io.on(
           }
 
           const cleanedId =
-            String(matchId).trim();
+            String(
+              matchId
+            ).trim();
 
           if (
             !cleanedId ||
-            cleanedId.length > 100
+            cleanedId.length >
+              100
           ) {
 
             return;
@@ -886,11 +921,14 @@ if (
     express.static(
       frontendDist,
       {
-        maxAge: '1d',
+        maxAge:
+          '1d',
 
-        dotfiles: 'deny',
+        dotfiles:
+          'deny',
 
-        index: false
+        index:
+          false
       }
     )
   );
@@ -1180,7 +1218,7 @@ process.on(
 
       },
       100
-    );
+    ).unref();
   }
 );
 
@@ -1221,7 +1259,7 @@ process.on(
 
       },
       100
-    );
+    ).unref();
   }
 );
 
@@ -1267,7 +1305,9 @@ async function startServer() {
     }
 
     const db =
-      require('./db/database');
+      require(
+        './db/database'
+      );
 
     /* -----------------------------------------------------
        CHECK SCHEMA
@@ -1365,6 +1405,14 @@ async function startServer() {
         );
 
         console.log(
+          '🔄 Socket transports: polling + websocket'
+        );
+
+        console.log(
+          '❤️ Socket heartbeat: 25s / 30s'
+        );
+
+        console.log(
           '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
         );
       }
@@ -1419,3 +1467,4 @@ async function startServer() {
 ========================================================= */
 
 startServer();
+
