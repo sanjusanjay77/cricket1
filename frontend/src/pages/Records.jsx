@@ -7,7 +7,7 @@ import {
 
 import {
   Records as RecordsApi,
-  Players,
+  CachedPlayers,
 } from '../api/api.js';
 
 
@@ -16,57 +16,77 @@ import {
 ========================================================= */
 
 const RECORDS_CACHE_KEY =
-  'gcc_records_cache_v1';
+  'gcc_records_cache_v2';
 
+
+/* =========================================================
+   LOCAL STORAGE READ
+========================================================= */
 
 function readRecordsCache() {
+
   try {
+
     const cached =
       localStorage.getItem(
         RECORDS_CACHE_KEY
       );
 
+
     if (!cached) {
       return null;
     }
 
+
     const parsed =
       JSON.parse(cached);
 
-    return parsed &&
+
+    return (
+      parsed &&
       typeof parsed === 'object'
+    )
       ? parsed
       : null;
 
-  } catch (error) {
-    console.warn(
-      'Failed to read records cache:',
-      error
-    );
+  } catch {
 
     return null;
+
   }
+
 }
 
 
-function writeRecordsCache(records) {
+/* =========================================================
+   LOCAL STORAGE WRITE
+========================================================= */
+
+function writeRecordsCache(
+  records
+) {
+
   try {
+
     localStorage.setItem(
       RECORDS_CACHE_KEY,
       JSON.stringify(records)
     );
 
-  } catch (error) {
-    console.warn(
-      'Failed to save records cache:',
-      error
-    );
+  } catch {
+
+    /*
+     * Cache failure must never
+     * affect the Records page.
+     */
+
   }
+
 }
 
 
 /* =========================================================
-   TOP FIVE HELPER
+   TOP FIVE
 ========================================================= */
 
 function getTopFive(
@@ -78,6 +98,7 @@ function getTopFive(
   if (!Array.isArray(list)) {
     return [];
   }
+
 
   return [...list]
     .sort(
@@ -91,14 +112,17 @@ function getTopFive(
           ))
     )
     .slice(0, 5);
+
 }
 
 
 /* =========================================================
-   SAFE PLAYER NAME
+   PLAYER NAME
 ========================================================= */
 
-function getPlayerName(player) {
+function getPlayerName(
+  player
+) {
 
   return (
     player?.player_name ||
@@ -114,7 +138,9 @@ function getPlayerName(player) {
    PLAYER ID
 ========================================================= */
 
-function getPlayerId(player) {
+function getPlayerId(
+  player
+) {
 
   return (
     player?.player_id ??
@@ -137,7 +163,7 @@ function LeaderboardCard({
   valueKey,
   unit = '',
   minLabel,
-  sortFn
+  sortFn,
 }) {
 
   const topFive =
@@ -151,19 +177,15 @@ function LeaderboardCard({
   if (
     topFive.length === 0
   ) {
+
     return null;
+
   }
 
 
   return (
 
-    <div
-      className="
-        card
-        overflow-hidden
-        w-full
-      "
-    >
+    <div className="card overflow-hidden w-full">
 
       <div className="flex items-center justify-between gap-2 mb-3">
 
@@ -211,7 +233,12 @@ function LeaderboardCard({
             return (
 
               <div
-                key={`${getPlayerId(entry) || playerName}-${index}`}
+                key={
+                  `${
+                    getPlayerId(entry) ||
+                    playerName
+                  }-${index}`
+                }
                 className="
                   flex items-center
                   justify-between
@@ -231,10 +258,8 @@ function LeaderboardCard({
 
                   <span
                     className="
-                      w-7
-                      h-7
-                      flex
-                      items-center
+                      w-7 h-7
+                      flex items-center
                       justify-center
                       shrink-0
                       text-sm
@@ -253,14 +278,12 @@ function LeaderboardCard({
 
                   <div
                     className="
-                      w-8
-                      h-8
+                      w-8 h-8
                       rounded-full
                       bg-emerald-500/15
                       border
                       border-emerald-500/20
-                      flex
-                      items-center
+                      flex items-center
                       justify-center
                       text-xs
                       font-black
@@ -321,7 +344,7 @@ function PremiumRecordCard({
   entry,
   mainValue,
   subtitle,
-  details
+  details,
 }) {
 
   if (!entry) {
@@ -330,14 +353,11 @@ function PremiumRecordCard({
 
       <div
         className="
-          relative
-          overflow-hidden
+          relative overflow-hidden
           rounded-2xl
-          border
-          border-slate-700
+          border border-slate-700
           bg-slate-900
-          p-5
-          sm:p-7
+          p-5 sm:p-7
           shadow-lg
         "
       >
@@ -374,17 +394,14 @@ function PremiumRecordCard({
 
     <div
       className="
-        relative
-        overflow-hidden
+        relative overflow-hidden
         rounded-2xl
-        border
-        border-slate-700
+        border border-slate-700
         bg-gradient-to-br
         from-slate-900
         via-slate-900
         to-slate-800
-        p-5
-        sm:p-7
+        p-5 sm:p-7
         shadow-xl
       "
     >
@@ -420,14 +437,11 @@ function PremiumRecordCard({
 
         <div
           className="
-            w-10
-            h-10
+            w-10 h-10
             rounded-full
             bg-emerald-500/15
-            border
-            border-emerald-500/20
-            flex
-            items-center
+            border border-emerald-500/20
+            flex items-center
             justify-center
             font-black
             text-emerald-400
@@ -470,10 +484,8 @@ function PremiumRecordCard({
           mt-5
           rounded-xl
           bg-slate-800/70
-          border
-          border-slate-700/60
-          px-4
-          py-3
+          border border-slate-700/60
+          px-4 py-3
         "
       >
 
@@ -493,14 +505,12 @@ function PremiumRecordCard({
                 {
                   day: '2-digit',
                   month: 'short',
-                  year: 'numeric'
+                  year: 'numeric',
                 }
               )
 
             : entry.match_id
-
             ? `Match ${entry.match_id}`
-
             : 'Match information unavailable'}
 
         </div>
@@ -529,10 +539,8 @@ function PremiumRecordCard({
                   className="
                     rounded-xl
                     bg-slate-800/80
-                    border
-                    border-slate-700/60
-                    px-3
-                    py-3
+                    border border-slate-700/60
+                    px-3 py-3
                     min-w-0
                   "
                 >
@@ -579,7 +587,7 @@ function ComparisonStat({
   valueOne,
   valueTwo,
   decimals = 0,
-  lowerIsBetter = false
+  lowerIsBetter = false,
 }) {
 
   const one =
@@ -589,9 +597,7 @@ function ComparisonStat({
     Number(valueTwo || 0);
 
   const difference =
-    Math.abs(
-      one - two
-    );
+    Math.abs(one - two);
 
 
   let leader = null;
@@ -619,7 +625,7 @@ function ComparisonStat({
 
 
   const formatValue =
-    (value) =>
+    value =>
       decimals > 0
         ? value.toFixed(decimals)
         : Math.round(value);
@@ -630,11 +636,9 @@ function ComparisonStat({
     <div
       className="
         rounded-2xl
-        border
-        border-slate-700
+        border border-slate-700
         bg-slate-900/80
-        p-4
-        sm:p-5
+        p-4 sm:p-5
       "
     >
 
@@ -655,10 +659,7 @@ function ComparisonStat({
 
         <div
           className={`
-            rounded-xl
-            p-3
-            text-center
-            border
+            rounded-xl p-3 text-center border
             ${
               leader === 'one'
                 ? 'border-emerald-500/40 bg-emerald-500/10'
@@ -674,10 +675,8 @@ function ComparisonStat({
 
           <div
             className={`
-              text-2xl
-              sm:text-3xl
-              font-black
-              mt-1
+              text-2xl sm:text-3xl
+              font-black mt-1
               ${
                 leader === 'one'
                   ? 'text-emerald-400'
@@ -702,10 +701,7 @@ function ComparisonStat({
 
         <div
           className={`
-            rounded-xl
-            p-3
-            text-center
-            border
+            rounded-xl p-3 text-center border
             ${
               leader === 'two'
                 ? 'border-emerald-500/40 bg-emerald-500/10'
@@ -721,10 +717,8 @@ function ComparisonStat({
 
           <div
             className={`
-              text-2xl
-              sm:text-3xl
-              font-black
-              mt-1
+              text-2xl sm:text-3xl
+              font-black mt-1
               ${
                 leader === 'two'
                   ? 'text-emerald-400'
@@ -774,12 +768,8 @@ function ComparisonStat({
             <span className="font-bold text-emerald-400">
 
               {decimals > 0
-                ? difference.toFixed(
-                    decimals
-                  )
-                : Math.round(
-                    difference
-                  )}
+                ? difference.toFixed(decimals)
+                : Math.round(difference)}
 
             </span>
 
@@ -820,9 +810,9 @@ function buildGccRecords(
   ) {
 
     const teamName =
-      player.team_name ||
-      player.team?.name ||
-      player.team ||
+      player?.team_name ||
+      player?.team?.name ||
+      player?.team ||
       '';
 
 
@@ -832,12 +822,14 @@ function buildGccRecords(
         .toLowerCase() !==
       'gcc'
     ) {
+
       continue;
+
     }
 
 
     if (
-      player.id != null
+      player?.id != null
     ) {
 
       gccPlayerIds.add(
@@ -848,13 +840,11 @@ function buildGccRecords(
 
 
     if (
-      player.player_id != null
+      player?.player_id != null
     ) {
 
       gccPlayerIds.add(
-        String(
-          player.player_id
-        )
+        String(player.player_id)
       );
 
     }
@@ -862,7 +852,9 @@ function buildGccRecords(
   }
 
 
-  function isGccPlayer(entry) {
+  function isGccPlayer(
+    entry
+  ) {
 
     if (!entry) {
       return false;
@@ -885,11 +877,14 @@ function buildGccRecords(
   }
 
 
-  function filterList(list) {
+  function filterList(
+    list
+  ) {
 
     if (!Array.isArray(list)) {
       return [];
     }
+
 
     return list.filter(
       isGccPlayer
@@ -898,14 +893,19 @@ function buildGccRecords(
   }
 
 
-  function filterSingle(entry) {
+  function filterSingle(
+    entry
+  ) {
 
     if (
       !entry ||
       !isGccPlayer(entry)
     ) {
+
       return null;
+
     }
+
 
     return entry;
 
@@ -967,7 +967,7 @@ function buildGccRecords(
     bestEconomy:
       filterList(
         recordsData?.bestEconomy
-      )
+      ),
 
   };
 
@@ -981,13 +981,24 @@ function buildGccRecords(
 export default function Records() {
 
   /*
-   * Read cache only once when component starts.
+   * FIRST SOURCE:
+   *
+   * Memory cache is fastest.
+   */
+
+  const memoryRecords =
+    RecordsApi.getMemoryCache();
+
+
+  /*
+   * SECOND SOURCE:
+   *
+   * LocalStorage cache.
    */
 
   const initialRecords =
-    useState(
-      () => readRecordsCache()
-    )[0];
+    memoryRecords ||
+    readRecordsCache();
 
 
   const [records, setRecords] =
@@ -995,15 +1006,14 @@ export default function Records() {
 
 
   /*
-   * If cache exists, do NOT show
-   * loading screen.
-   *
-   * The page appears immediately.
+   * Only show skeleton when absolutely
+   * nothing is available.
    */
 
   const [loading, setLoading] =
     useState(
-      initialRecords === null
+      initialRecords === null ||
+      initialRecords === undefined
     );
 
 
@@ -1012,7 +1022,7 @@ export default function Records() {
 
 
   /* =======================================================
-     COMPARISON STATE
+     COMPARISON
   ======================================================= */
 
   const [compareOne, setCompareOne] =
@@ -1023,7 +1033,7 @@ export default function Records() {
 
 
   /* =======================================================
-     LOAD RECORDS
+     LOAD
   ======================================================= */
 
   const loadRecords =
@@ -1036,20 +1046,34 @@ export default function Records() {
 
 
           /*
-           * Fetch both APIs simultaneously.
+           * Start both requests immediately.
+           *
+           * They run in parallel.
+           */
+
+          const recordsPromise =
+            RecordsApi.get();
+
+
+          const playersPromise =
+            CachedPlayers.listAll();
+
+
+          /*
+           * Wait for both.
            */
 
           const [
             recordsData,
-            allPlayers
+            allPlayers,
           ] = await Promise.all([
-            RecordsApi.get(),
-            Players.listAll()
+            recordsPromise,
+            playersPromise,
           ]);
 
 
           /*
-           * Build GCC records.
+           * Build GCC-only records.
            */
 
           const gccRecords =
@@ -1060,7 +1084,7 @@ export default function Records() {
 
 
           /*
-           * Update UI.
+           * Update screen.
            */
 
           setRecords(
@@ -1069,7 +1093,10 @@ export default function Records() {
 
 
           /*
-           * Save for instant next visit.
+           * Save processed data.
+           *
+           * Next visit can display it
+           * without filtering again.
            */
 
           writeRecordsCache(
@@ -1086,13 +1113,17 @@ export default function Records() {
 
 
           /*
-           * Only show error when there
-           * is no usable cached data.
+           * Do not replace working cached
+           * records with an error.
            */
 
-          setError(
-            'Failed to load GCC records.'
-          );
+          if (!records) {
+
+            setError(
+              'Failed to load GCC records.'
+            );
+
+          }
 
         } finally {
 
@@ -1101,15 +1132,23 @@ export default function Records() {
         }
 
       },
-      []
+      [records]
     );
 
 
   /* =======================================================
-     LOAD ON PAGE OPEN
+     LOAD PAGE
   ======================================================= */
 
   useEffect(() => {
+
+    /*
+     * If records already exist,
+     * refresh silently.
+     *
+     * If there is no cache,
+     * normal loading is used.
+     */
 
     loadRecords();
 
@@ -1117,7 +1156,7 @@ export default function Records() {
 
 
   /* =======================================================
-     BUILD COMPARISON PLAYER LIST
+     COMPARISON PLAYERS
   ======================================================= */
 
   const comparisonPlayers =
@@ -1148,7 +1187,7 @@ export default function Records() {
 
         records.mostBallsBowled,
 
-        records.bestEconomy
+        records.bestEconomy,
 
       ];
 
@@ -1205,7 +1244,7 @@ export default function Records() {
 
               ballsBowled: 0,
 
-              economy: 0
+              economy: 0,
 
             };
 
@@ -1224,7 +1263,8 @@ export default function Records() {
             );
 
           if (
-            runs > player.runs
+            runs >
+            player.runs
           ) {
 
             player.runs =
@@ -1381,13 +1421,13 @@ export default function Records() {
     useMemo(
       () =>
         comparisonPlayers.find(
-          (player) =>
+          player =>
             player.id ===
             compareOne
         ),
       [
         comparisonPlayers,
-        compareOne
+        compareOne,
       ]
     );
 
@@ -1396,19 +1436,19 @@ export default function Records() {
     useMemo(
       () =>
         comparisonPlayers.find(
-          (player) =>
+          player =>
             player.id ===
             compareTwo
         ),
       [
         comparisonPlayers,
-        compareTwo
+        compareTwo,
       ]
     );
 
 
   /* =======================================================
-     LOADING
+     FIRST LOAD
   ======================================================= */
 
   if (
@@ -1441,7 +1481,7 @@ export default function Records() {
 
   /* =======================================================
      ERROR
-========================================================= */
+  ======================================================= */
 
   if (
     error &&
@@ -1461,7 +1501,7 @@ export default function Records() {
 
   /* =======================================================
      EMPTY
-========================================================= */
+  ======================================================= */
 
   if (!records) {
 
@@ -1478,7 +1518,7 @@ export default function Records() {
 
   /* =======================================================
      PAGE
-========================================================= */
+  ======================================================= */
 
   return (
 
@@ -1509,14 +1549,11 @@ export default function Records() {
 
           <div
             className="
-              w-11
-              h-11
+              w-11 h-11
               rounded-2xl
               bg-emerald-500/10
-              border
-              border-emerald-500/20
-              flex
-              items-center
+              border border-emerald-500/20
+              flex items-center
               justify-center
               text-2xl
               shrink-0
@@ -1563,11 +1600,9 @@ export default function Records() {
 
         <div
           className="
-            grid
-            grid-cols-1
+            grid grid-cols-1
             lg:grid-cols-2
-            gap-4
-            sm:gap-5
+            gap-4 sm:gap-5
           "
         >
 
@@ -1584,13 +1619,9 @@ export default function Records() {
             mainValue={
               records.bestBowling
                 ? `${Number(
-                    records
-                      .bestBowling
-                      .wickets || 0
+                    records.bestBowling.wickets || 0
                   )}/${Number(
-                    records
-                      .bestBowling
-                      .runs || 0
+                    records.bestBowling.runs || 0
                   )}`
                 : '—'
             }
@@ -1601,35 +1632,27 @@ export default function Records() {
               {
                 label: 'Overs',
                 value:
-                  records
-                    .bestBowling
-                    ?.overs ||
-                  '0.0'
+                  records.bestBowling?.overs ||
+                  '0.0',
               },
               {
                 label: 'Wickets',
                 value:
-                  records
-                    .bestBowling
-                    ?.wickets ||
-                  0
+                  records.bestBowling?.wickets ||
+                  0,
               },
               {
                 label: 'Runs',
                 value:
-                  records
-                    .bestBowling
-                    ?.runs ||
-                  0
+                  records.bestBowling?.runs ||
+                  0,
               },
               {
                 label: 'Economy',
                 value:
-                  records
-                    .bestBowling
-                    ?.economy ||
-                  0
-              }
+                  records.bestBowling?.economy ||
+                  0,
+              },
             ]}
 
           />
@@ -1648,13 +1671,9 @@ export default function Records() {
             mainValue={
               records.bestBattingFigure
                 ? `${Number(
-                    records
-                      .bestBattingFigure
-                      .runs || 0
+                    records.bestBattingFigure.runs || 0
                   )} (${Number(
-                    records
-                      .bestBattingFigure
-                      .balls || 0
+                    records.bestBattingFigure.balls || 0
                   )})`
                 : '—'
             }
@@ -1665,35 +1684,27 @@ export default function Records() {
               {
                 label: 'Strike Rate',
                 value:
-                  records
-                    .bestBattingFigure
-                    ?.strike_rate ??
-                  0
+                  records.bestBattingFigure?.strike_rate ??
+                  0,
               },
               {
                 label: 'Fours',
                 value:
-                  records
-                    .bestBattingFigure
-                    ?.fours ??
-                  0
+                  records.bestBattingFigure?.fours ??
+                  0,
               },
               {
                 label: 'Sixes',
                 value:
-                  records
-                    .bestBattingFigure
-                    ?.sixes ??
-                  0
+                  records.bestBattingFigure?.sixes ??
+                  0,
               },
               {
                 label: 'Balls',
                 value:
-                  records
-                    .bestBattingFigure
-                    ?.balls ??
-                  0
-              }
+                  records.bestBattingFigure?.balls ??
+                  0,
+              },
             ]}
 
           />
@@ -1714,8 +1725,7 @@ export default function Records() {
 
         <div
           className="
-            grid
-            grid-cols-1
+            grid grid-cols-1
             md:grid-cols-2
             gap-4
           "
@@ -1724,18 +1734,12 @@ export default function Records() {
           <LeaderboardCard
             title="Most Runs"
             icon="🏆"
-            list={
-              records.mostRuns
-            }
+            list={records.mostRuns}
             valueKey="runs"
             unit=" runs"
             sortFn={(a, b) =>
-              Number(
-                b.runs || 0
-              ) -
-              Number(
-                a.runs || 0
-              )
+              Number(b.runs || 0) -
+              Number(a.runs || 0)
             }
           />
 
@@ -1743,18 +1747,12 @@ export default function Records() {
           <LeaderboardCard
             title="Most Fours"
             icon="🔥"
-            list={
-              records.mostFours
-            }
+            list={records.mostFours}
             valueKey="fours"
             unit=" fours"
             sortFn={(a, b) =>
-              Number(
-                b.fours || 0
-              ) -
-              Number(
-                a.fours || 0
-              )
+              Number(b.fours || 0) -
+              Number(a.fours || 0)
             }
           />
 
@@ -1762,18 +1760,12 @@ export default function Records() {
           <LeaderboardCard
             title="Most Sixes"
             icon="🚀"
-            list={
-              records.mostSixes
-            }
+            list={records.mostSixes}
             valueKey="sixes"
             unit=" sixes"
             sortFn={(a, b) =>
-              Number(
-                b.sixes || 0
-              ) -
-              Number(
-                a.sixes || 0
-              )
+              Number(b.sixes || 0) -
+              Number(a.sixes || 0)
             }
           />
 
@@ -1781,19 +1773,13 @@ export default function Records() {
           <LeaderboardCard
             title="Best Strike Rate"
             icon="⚡"
-            list={
-              records.bestStrikeRate
-            }
+            list={records.bestStrikeRate}
             valueKey="strike_rate"
             unit=" SR"
             minLabel="Minimum 10 balls faced"
             sortFn={(a, b) =>
-              Number(
-                b.strike_rate || 0
-              ) -
-              Number(
-                a.strike_rate || 0
-              )
+              Number(b.strike_rate || 0) -
+              Number(a.strike_rate || 0)
             }
           />
 
@@ -1813,8 +1799,7 @@ export default function Records() {
 
         <div
           className="
-            grid
-            grid-cols-1
+            grid grid-cols-1
             md:grid-cols-2
             gap-4
           "
@@ -1823,18 +1808,12 @@ export default function Records() {
           <LeaderboardCard
             title="Most Wickets"
             icon="🏆"
-            list={
-              records.mostWickets
-            }
+            list={records.mostWickets}
             valueKey="wickets"
             unit=" wickets"
             sortFn={(a, b) =>
-              Number(
-                b.wickets || 0
-              ) -
-              Number(
-                a.wickets || 0
-              )
+              Number(b.wickets || 0) -
+              Number(a.wickets || 0)
             }
           />
 
@@ -1842,19 +1821,13 @@ export default function Records() {
           <LeaderboardCard
             title="Best Economy"
             icon="🛡️"
-            list={
-              records.bestEconomy
-            }
+            list={records.bestEconomy}
             valueKey="economy"
             unit=" Econ"
             minLabel="Minimum 2 overs bowled"
             sortFn={(a, b) =>
-              Number(
-                a.economy || 0
-              ) -
-              Number(
-                b.economy || 0
-              )
+              Number(a.economy || 0) -
+              Number(b.economy || 0)
             }
           />
 
@@ -1863,20 +1836,16 @@ export default function Records() {
       </section>
 
 
-      {/* =================================================
-          COMPARE PLAYERS
-      ================================================= */}
+      {/* COMPARE PLAYERS */}
 
       <section
         className="
           rounded-2xl
-          border
-          border-slate-700
+          border border-slate-700
           bg-gradient-to-br
           from-slate-900
           to-slate-800
-          p-4
-          sm:p-6
+          p-4 sm:p-6
         "
       >
 
@@ -1884,14 +1853,11 @@ export default function Records() {
 
           <div
             className="
-              w-11
-              h-11
+              w-11 h-11
               rounded-xl
               bg-emerald-500/10
-              border
-              border-emerald-500/20
-              flex
-              items-center
+              border border-emerald-500/20
+              flex items-center
               justify-center
               text-2xl
             "
@@ -1919,11 +1885,9 @@ export default function Records() {
 
         <div
           className="
-            grid
-            grid-cols-1
+            grid grid-cols-1
             md:grid-cols-2
-            gap-4
-            mt-5
+            gap-4 mt-5
           "
         >
 
@@ -1936,18 +1900,16 @@ export default function Records() {
 
             <select
               value={compareOne}
-              onChange={(e) =>
+              onChange={e =>
                 setCompareOne(
                   e.target.value
                 )
               }
               className="
-                w-full
-                min-h-[48px]
+                w-full min-h-[48px]
                 rounded-xl
                 bg-slate-950
-                border
-                border-slate-700
+                border border-slate-700
                 px-4
                 text-sm
                 font-semibold
@@ -1963,7 +1925,7 @@ export default function Records() {
 
 
               {comparisonPlayers.map(
-                (player) => (
+                player => (
 
                   <option
                     key={player.id}
@@ -1989,18 +1951,16 @@ export default function Records() {
 
             <select
               value={compareTwo}
-              onChange={(e) =>
+              onChange={e =>
                 setCompareTwo(
                   e.target.value
                 )
               }
               className="
-                w-full
-                min-h-[48px]
+                w-full min-h-[48px]
                 rounded-xl
                 bg-slate-950
-                border
-                border-slate-700
+                border border-slate-700
                 px-4
                 text-sm
                 font-semibold
@@ -2016,7 +1976,7 @@ export default function Records() {
 
 
               {comparisonPlayers.map(
-                (player) => (
+                player => (
 
                   <option
                     key={player.id}
@@ -2044,8 +2004,7 @@ export default function Records() {
             className="
               mt-5
               rounded-xl
-              border
-              border-dashed
+              border border-dashed
               border-slate-700
               p-5
               text-center
@@ -2070,8 +2029,7 @@ export default function Records() {
             className="
               mt-5
               rounded-xl
-              border
-              border-amber-500/20
+              border border-amber-500/20
               bg-amber-500/5
               p-4
               text-center
@@ -2096,10 +2054,8 @@ export default function Records() {
 
             <div
               className="
-                grid
-                grid-cols-2
-                gap-3
-                mb-5
+                grid grid-cols-2
+                gap-3 mb-5
               "
             >
 
@@ -2107,8 +2063,7 @@ export default function Records() {
                 className="
                   rounded-2xl
                   bg-slate-950
-                  border
-                  border-slate-700
+                  border border-slate-700
                   p-4
                   text-center
                 "
@@ -2117,14 +2072,11 @@ export default function Records() {
                 <div
                   className="
                     mx-auto
-                    w-12
-                    h-12
+                    w-12 h-12
                     rounded-full
                     bg-emerald-500/10
-                    border
-                    border-emerald-500/20
-                    flex
-                    items-center
+                    border border-emerald-500/20
+                    flex items-center
                     justify-center
                     text-lg
                     font-black
@@ -2148,8 +2100,7 @@ export default function Records() {
                 className="
                   rounded-2xl
                   bg-slate-950
-                  border
-                  border-slate-700
+                  border border-slate-700
                   p-4
                   text-center
                 "
@@ -2158,14 +2109,11 @@ export default function Records() {
                 <div
                   className="
                     mx-auto
-                    w-12
-                    h-12
+                    w-12 h-12
                     rounded-full
                     bg-purple-500/10
-                    border
-                    border-purple-500/20
-                    flex
-                    items-center
+                    border border-purple-500/20
+                    flex items-center
                     justify-center
                     text-lg
                     font-black
@@ -2192,90 +2140,50 @@ export default function Records() {
               <ComparisonStat
                 label="Runs"
                 icon="🏏"
-                playerOne={
-                  playerOne.name
-                }
-                playerTwo={
-                  playerTwo.name
-                }
-                valueOne={
-                  playerOne.runs
-                }
-                valueTwo={
-                  playerTwo.runs
-                }
+                playerOne={playerOne.name}
+                playerTwo={playerTwo.name}
+                valueOne={playerOne.runs}
+                valueTwo={playerTwo.runs}
               />
 
 
               <ComparisonStat
                 label="Wickets"
                 icon="🎯"
-                playerOne={
-                  playerOne.name
-                }
-                playerTwo={
-                  playerTwo.name
-                }
-                valueOne={
-                  playerOne.wickets
-                }
-                valueTwo={
-                  playerTwo.wickets
-                }
+                playerOne={playerOne.name}
+                playerTwo={playerTwo.name}
+                valueOne={playerOne.wickets}
+                valueTwo={playerTwo.wickets}
               />
 
 
               <ComparisonStat
                 label="Fours"
                 icon="🔥"
-                playerOne={
-                  playerOne.name
-                }
-                playerTwo={
-                  playerTwo.name
-                }
-                valueOne={
-                  playerOne.fours
-                }
-                valueTwo={
-                  playerTwo.fours
-                }
+                playerOne={playerOne.name}
+                playerTwo={playerTwo.name}
+                valueOne={playerOne.fours}
+                valueTwo={playerTwo.fours}
               />
 
 
               <ComparisonStat
                 label="Sixes"
                 icon="🚀"
-                playerOne={
-                  playerOne.name
-                }
-                playerTwo={
-                  playerTwo.name
-                }
-                valueOne={
-                  playerOne.sixes
-                }
-                valueTwo={
-                  playerTwo.sixes
-                }
+                playerOne={playerOne.name}
+                playerTwo={playerTwo.name}
+                valueOne={playerOne.sixes}
+                valueTwo={playerTwo.sixes}
               />
 
 
               <ComparisonStat
                 label="Strike Rate"
                 icon="⚡"
-                playerOne={
-                  playerOne.name
-                }
-                playerTwo={
-                  playerTwo.name
-                }
-                valueOne={
-                  playerOne.strike_rate
-                }
-                valueTwo={
-                  playerTwo.strike_rate
-                }
+                playerOne={playerOne.name}
+                playerTwo={playerTwo.name}
+                valueOne={playerOne.strike_rate}
+                valueTwo={playerTwo.strike_rate}
                 decimals={2}
               />
 
@@ -2283,18 +2191,10 @@ export default function Records() {
               <ComparisonStat
                 label="Economy"
                 icon="🛡️"
-                playerOne={
-                  playerOne.name
-                }
-                playerTwo={
-                  playerTwo.name
-                }
-                valueOne={
-                  playerOne.economy
-                }
-                valueTwo={
-                  playerTwo.economy
-                }
+                playerOne={playerOne.name}
+                playerTwo={playerTwo.name}
+                valueOne={playerOne.economy}
+                valueTwo={playerTwo.economy}
                 decimals={2}
                 lowerIsBetter
               />
@@ -2309,8 +2209,7 @@ export default function Records() {
                 mt-5
                 rounded-2xl
                 bg-emerald-500/5
-                border
-                border-emerald-500/20
+                border border-emerald-500/20
                 p-4
                 text-center
               "
@@ -2323,12 +2222,8 @@ export default function Records() {
 
               <div className="text-sm sm:text-base font-bold">
 
-                {Number(
-                  playerOne.runs || 0
-                ) >
-                Number(
-                  playerTwo.runs || 0
-                ) ? (
+                {Number(playerOne.runs || 0) >
+                Number(playerTwo.runs || 0) ? (
 
                   <>
                     🏏 {playerOne.name} leads by{' '}
@@ -2336,26 +2231,16 @@ export default function Records() {
                     <span className="text-emerald-400">
 
                       {Math.abs(
-                        Number(
-                          playerOne.runs ||
-                            0
-                        ) -
-                        Number(
-                          playerTwo.runs ||
-                            0
-                        )
+                        Number(playerOne.runs || 0) -
+                        Number(playerTwo.runs || 0)
                       )}{' '}
                       runs
 
                     </span>
                   </>
 
-                ) : Number(
-                    playerTwo.runs || 0
-                  ) >
-                  Number(
-                    playerOne.runs || 0
-                  ) ? (
+                ) : Number(playerTwo.runs || 0) >
+                  Number(playerOne.runs || 0) ? (
 
                   <>
                     🏏 {playerTwo.name} leads by{' '}
@@ -2363,14 +2248,8 @@ export default function Records() {
                     <span className="text-emerald-400">
 
                       {Math.abs(
-                        Number(
-                          playerTwo.runs ||
-                            0
-                        ) -
-                        Number(
-                          playerOne.runs ||
-                            0
-                        )
+                        Number(playerTwo.runs || 0) -
+                        Number(playerOne.runs || 0)
                       )}{' '}
                       runs
 
@@ -2390,12 +2269,8 @@ export default function Records() {
 
               <div className="text-sm sm:text-base font-bold mt-2">
 
-                {Number(
-                  playerOne.wickets || 0
-                ) >
-                Number(
-                  playerTwo.wickets || 0
-                ) ? (
+                {Number(playerOne.wickets || 0) >
+                Number(playerTwo.wickets || 0) ? (
 
                   <>
                     🎯 {playerOne.name} leads by{' '}
@@ -2403,26 +2278,16 @@ export default function Records() {
                     <span className="text-emerald-400">
 
                       {Math.abs(
-                        Number(
-                          playerOne.wickets ||
-                            0
-                        ) -
-                        Number(
-                          playerTwo.wickets ||
-                            0
-                        )
+                        Number(playerOne.wickets || 0) -
+                        Number(playerTwo.wickets || 0)
                       )}{' '}
                       wickets
 
                     </span>
                   </>
 
-                ) : Number(
-                    playerTwo.wickets || 0
-                  ) >
-                  Number(
-                    playerOne.wickets || 0
-                  ) ? (
+                ) : Number(playerTwo.wickets || 0) >
+                  Number(playerOne.wickets || 0) ? (
 
                   <>
                     🎯 {playerTwo.name} leads by{' '}
@@ -2430,14 +2295,8 @@ export default function Records() {
                     <span className="text-emerald-400">
 
                       {Math.abs(
-                        Number(
-                          playerTwo.wickets ||
-                            0
-                        ) -
-                        Number(
-                          playerOne.wickets ||
-                            0
-                        )
+                        Number(playerTwo.wickets || 0) -
+                        Number(playerOne.wickets || 0)
                       )}{' '}
                       wickets
 
