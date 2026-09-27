@@ -1,82 +1,257 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Teams, Matches } from '../api/api.js';
 import TeamAutocomplete from '../components/TeamAutocomplete.jsx';
 
-export default function CreateMatch() {
-  const [teams, setTeams] = useState([]);
-  const [team1Id, setTeam1Id] = useState(null);
-  const [team2Id, setTeam2Id] = useState(null);
-  const [oversLimit, setOversLimit] = useState('20');
-  const [creating, setCreating] = useState(false);
+const TEAMS_CACHE_KEY = 'gcc_teams_cache_v1';
 
+function readTeamsCache() {
+  try {
+    const raw = localStorage.getItem(TEAMS_CACHE_KEY);
+
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('Failed to read teams cache:', error);
+    return [];
+  }
+}
+
+function writeTeamsCache(teams) {
+  try {
+    localStorage.setItem(
+      TEAMS_CACHE_KEY,
+      JSON.stringify(Array.isArray(teams) ? teams : [])
+    );
+  } catch (error) {
+    console.warn('Failed to write teams cache:', error);
+  }
+}
+
+export default function CreateMatch() {
   const navigate = useNavigate();
 
+  /*
+   * ----------------------------------------------------
+   * TEAMS
+   * ----------------------------------------------------
+   *
+   * Read cached teams immediately.
+   *
+   * This means the team selector can appear instantly
+   * instead of waiting for the backend.
+   */
+  const [teams, setTeams] = useState(() => readTeamsCache());
+
+  const [team1Id, setTeam1Id] = useState(null);
+  const [team2Id, setTeam2Id] = useState(null);
+
+  const [oversLimit, setOversLimit] = useState('20');
+
+  const [creating, setCreating] = useState(false);
+
+  /*
+   * ----------------------------------------------------
+   * LOAD TEAMS
+   * ----------------------------------------------------
+   *
+   * Cache is shown immediately.
+   *
+   * Backend refresh happens in the background.
+   */
   useEffect(() => {
+    let cancelled = false;
+
     Teams.list()
-      .then(setTeams)
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+
+        const freshTeams = Array.isArray(data) ? data : [];
+
+        setTeams((current) => {
+          /*
+           * Avoid unnecessary state updates when the
+           * backend returned exactly the same teams.
+           */
+          if (
+            current.length === freshTeams.length &&
+            current.every((team, index) => {
+              const fresh = freshTeams[index];
+
+              return (
+                team?.id === fresh?.id &&
+                team?.name === fresh?.name
+              );
+            })
+          ) {
+            return current;
+          }
+
+          return freshTeams;
+        });
+
+        writeTeamsCache(freshTeams);
+      })
       .catch((error) => {
         console.error('Failed to load teams:', error);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handleCreated = (team, which) => {
-    setTeams((current) => [team, ...current]);
+  /*
+   * ----------------------------------------------------
+   * TEAM CREATION
+   * ----------------------------------------------------
+   */
+  const handleCreated = useCallback((team, which) => {
+    setTeams((current) => {
+      const exists = current.some(
+        (existing) => existing.id === team.id
+      );
 
+      if (exists) {
+        return current;
+      }
+
+      const updated = [team, ...current];
+
+      writeTeamsCache(updated);
+
+      return updated;
+    });
+
+    /*
+     * Update selected team immediately.
+     */
     if (which === 1) {
       setTeam1Id(team.id);
     } else {
       setTeam2Id(team.id);
     }
-  };
+  }, []);
 
-  const submit = async (e) => {
-    e.preventDefault();
-
-    if (!team1Id || !team2Id) {
-      alert('Please select both teams.');
-      return;
+  /*
+   * ----------------------------------------------------
+   * SELECTED TEAM NAMES
+   * ----------------------------------------------------
+   *
+   * Avoid running .find() repeatedly during renders.
+   */
+  const team1Name = useMemo(() => {
+    if (!team1Id) {
+      return 'Not selected';
     }
 
-    if (team1Id === team2Id) {
-      alert('Please select two different teams.');
-      return;
+    return (
+      teams.find((team) => team.id === team1Id)?.name ||
+      'Not selected'
+    );
+  }, [teams, team1Id]);
+
+  const team2Name = useMemo(() => {
+    if (!team2Id) {
+      return 'Not selected';
     }
 
-    const overs = Number(oversLimit);
+    return (
+      teams.find((team) => team.id === team2Id)?.name ||
+      'Not selected'
+    );
+  }, [teams, team2Id]);
 
-    if (
-      !Number.isFinite(overs) ||
-      overs <= 0 ||
-      !Number.isInteger(overs)
-    ) {
-      alert('Please enter a valid number of overs.');
-      return;
-    }
+  /*
+   * ----------------------------------------------------
+   * SUBMIT
+   * ----------------------------------------------------
+   */
+  const submit = useCallback(
+    async (e) => {
+      e.preventDefault();
 
-    setCreating(true);
+      /*
+       * Prevent double-click / duplicate matches.
+       */
+      if (creating) {
+        return;
+      }
 
-    try {
-      const match = await Matches.create({
-        team1_id: team1Id,
-        team2_id: team2Id,
-        overs_limit: overs,
-      });
+      if (!team1Id || !team2Id) {
+        alert('Please select both teams.');
+        return;
+      }
 
-      navigate(`/match/${match.id}/setup`);
-    } catch (error) {
-      console.error('Create match error:', error);
+      if (team1Id === team2Id) {
+        alert('Please select two different teams.');
+        return;
+      }
 
-      alert(
-        error?.response?.data?.error ||
-        error?.message ||
-        'Failed to create scoreboard.'
-      );
-    } finally {
-      setCreating(false);
-    }
-  };
+      const overs = Number(oversLimit);
 
+      if (
+        !Number.isFinite(overs) ||
+        overs <= 0 ||
+        !Number.isInteger(overs)
+      ) {
+        alert('Please enter a valid number of overs.');
+        return;
+      }
+
+      setCreating(true);
+
+      try {
+        /*
+         * This request MUST be awaited because the newly
+         * created match ID is required for MatchSetup.
+         */
+        const match = await Matches.create({
+          team1_id: team1Id,
+          team2_id: team2Id,
+          overs_limit: overs,
+        });
+
+        /*
+         * Navigate immediately after receiving the match ID.
+         */
+        navigate(`/match/${match.id}/setup`, {
+          replace: true,
+        });
+      } catch (error) {
+        console.error('Create match error:', error);
+
+        alert(
+          error?.response?.data?.error ||
+          error?.response?.data?.message ||
+          error?.message ||
+          'Failed to create scoreboard.'
+        );
+      } finally {
+        setCreating(false);
+      }
+    },
+    [
+      creating,
+      team1Id,
+      team2Id,
+      oversLimit,
+      navigate,
+    ]
+  );
+
+  /*
+   * ----------------------------------------------------
+   * RENDER
+   * ----------------------------------------------------
+   */
   return (
     <div className="min-h-screen pb-6">
       <div className="max-w-xl mx-auto px-3 sm:px-0">
@@ -124,7 +299,9 @@ export default function CreateMatch() {
                 </p>
               </div>
 
-              <span className="text-xl">⚔️</span>
+              <span className="text-xl">
+                ⚔️
+              </span>
             </div>
 
             {/* TEAM 1 */}
@@ -138,7 +315,9 @@ export default function CreateMatch() {
                 value={team1Id}
                 excludeId={team2Id}
                 onChange={setTeam1Id}
-                onCreated={(team) => handleCreated(team, 1)}
+                onCreated={(team) =>
+                  handleCreated(team, 1)
+                }
                 placeholder="Search or create Team 1"
               />
             </div>
@@ -165,7 +344,9 @@ export default function CreateMatch() {
                 value={team2Id}
                 excludeId={team1Id}
                 onChange={setTeam2Id}
-                onCreated={(team) => handleCreated(team, 2)}
+                onCreated={(team) =>
+                  handleCreated(team, 2)
+                }
                 placeholder="Search or create Team 2"
               />
             </div>
@@ -186,7 +367,9 @@ export default function CreateMatch() {
                 </p>
               </div>
 
-              <span className="text-xl">⚙️</span>
+              <span className="text-xl">
+                ⚙️
+              </span>
             </div>
 
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">
@@ -199,7 +382,9 @@ export default function CreateMatch() {
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setOversLimit(String(value))}
+                  onClick={() =>
+                    setOversLimit(String(value))
+                  }
                   className={`h-11 rounded-xl border text-sm font-bold transition ${
                     Number(oversLimit) === value
                       ? 'bg-emerald-500 text-slate-950 border-emerald-500'
@@ -217,7 +402,9 @@ export default function CreateMatch() {
               min="1"
               step="1"
               value={oversLimit}
-              onChange={(e) => setOversLimit(e.target.value)}
+              onChange={(e) =>
+                setOversLimit(e.target.value)
+              }
               className="input w-full h-12 text-base"
               placeholder="Enter custom overs"
               required
@@ -245,8 +432,7 @@ export default function CreateMatch() {
                   </div>
 
                   <div className="font-bold truncate">
-                    {teams.find((t) => t.id === team1Id)?.name ||
-                      'Not selected'}
+                    {team1Name}
                   </div>
                 </div>
 
@@ -260,8 +446,7 @@ export default function CreateMatch() {
                   </div>
 
                   <div className="font-bold truncate">
-                    {teams.find((t) => t.id === team2Id)?.name ||
-                      'Not selected'}
+                    {team2Name}
                   </div>
                 </div>
 
@@ -291,6 +476,7 @@ export default function CreateMatch() {
                 <span className="animate-spin">
                   ⟳
                 </span>
+
                 Creating match...
               </span>
             ) : (
