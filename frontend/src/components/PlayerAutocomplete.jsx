@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Teams } from '../api/api.js';
+import { Players } from '../api/api.js';
 
 /**
- * Type a team name. Matching existing teams show above to pick instead of retyping.
- * If nothing matches, an inline "Create team" option appears to add it on the spot.
+ * Type-to-search player picker.
+ *
+ * - If `value` is already set, shows the selected player with "Change".
+ * - Otherwise shows a searchable player input.
+ * - If `teamId` is provided, allows creating a new player.
+ *
+ * IMPORTANT:
+ * `players` may temporarily be undefined while Scorer is loading.
+ * This component therefore always works with a safe array.
  */
-export default function TeamAutocomplete({
-  teams,
+export default function PlayerAutocomplete({
+  players,
   value,
-  onCreated,
   onChange,
-  placeholder = 'Type team name…',
-  excludeId = null,
+  onCreated,
+  teamId,
+  placeholder = 'Type a player name…',
+  excludeIds = [],
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -20,30 +28,58 @@ export default function TeamAutocomplete({
   const boxRef = useRef(null);
 
   /*
-   * IMPORTANT:
-   * Never assume teams is an array.
-   * This prevents .find(), .filter(), and .some() crashes
-   * when data is temporarily undefined during page loading.
+   * Always guarantee an array.
+   *
+   * This prevents:
+   *   players.find(...)
+   *   players.filter(...)
+   *   players.some(...)
+   *
+   * from crashing the entire Scorer page.
    */
-  const safeTeams = useMemo(
-    () => (Array.isArray(teams) ? teams : []),
-    [teams]
-  );
+  const safePlayers = useMemo(() => {
+    return Array.isArray(players) ? players : [];
+  }, [players]);
 
-  const selectedTeam = useMemo(() => {
-    return safeTeams.find(
-      (team) =>
-        team &&
-        String(team.id) === String(value)
+  /*
+   * Always guarantee excludeIds is an array too.
+   */
+  const safeExcludeIds = useMemo(() => {
+    return Array.isArray(excludeIds) ? excludeIds : [];
+  }, [excludeIds]);
+
+  /*
+   * Find the currently selected player safely.
+   */
+  const selectedPlayer = useMemo(() => {
+    if (
+      value === undefined ||
+      value === null ||
+      value === ''
+    ) {
+      return null;
+    }
+
+    return (
+      safePlayers.find(
+        (player) =>
+          player &&
+          String(player.id) === String(value)
+      ) || null
     );
-  }, [safeTeams, value]);
+  }, [safePlayers, value]);
 
+  /*
+   * Build the dropdown list safely.
+   */
   const matches = useMemo(() => {
-    const pool = safeTeams.filter(
-      (team) =>
-        team &&
-        String(team.id) !== String(excludeId)
-    );
+    const pool = safePlayers.filter((player) => {
+      if (!player) return false;
+
+      return !safeExcludeIds.some(
+        (id) => String(id) === String(player.id)
+      );
+    });
 
     const cleanQuery = query.trim();
 
@@ -54,14 +90,17 @@ export default function TeamAutocomplete({
     const q = cleanQuery.toLowerCase();
 
     return pool
-      .filter((team) =>
-        String(team.name || '')
+      .filter((player) =>
+        String(player.name || '')
           .toLowerCase()
           .includes(q)
       )
       .slice(0, 8);
-  }, [safeTeams, query, excludeId]);
+  }, [safePlayers, safeExcludeIds, query]);
 
+  /*
+   * Check for an exact name match safely.
+   */
   const exactMatch = useMemo(() => {
     const cleanQuery = query.trim().toLowerCase();
 
@@ -69,14 +108,17 @@ export default function TeamAutocomplete({
       return false;
     }
 
-    return safeTeams.some(
-      (team) =>
-        String(team?.name || '')
+    return safePlayers.some(
+      (player) =>
+        String(player?.name || '')
           .trim()
           .toLowerCase() === cleanQuery
     );
-  }, [safeTeams, query]);
+  }, [safePlayers, query]);
 
+  /*
+   * Close dropdown when clicking outside.
+   */
   useEffect(() => {
     const onClickOutside = (e) => {
       if (
@@ -87,7 +129,10 @@ export default function TeamAutocomplete({
       }
     };
 
-    document.addEventListener('mousedown', onClickOutside);
+    document.addEventListener(
+      'mousedown',
+      onClickOutside
+    );
 
     return () => {
       document.removeEventListener(
@@ -97,41 +142,55 @@ export default function TeamAutocomplete({
     };
   }, []);
 
-  const createTeam = async () => {
+  /*
+   * Create a new player.
+   */
+  const createPlayer = async () => {
     const cleanName = query.trim();
 
-    if (!cleanName || creating) {
+    if (
+      !cleanName ||
+      creating ||
+      !teamId
+    ) {
       return;
     }
 
     setCreating(true);
 
     try {
-      const shortName = cleanName
-        .slice(0, 4)
-        .toUpperCase();
-
-      const team = await Teams.create({
+      const player = await Players.create({
+        team_id: teamId,
         name: cleanName,
-        short_name: shortName,
       });
 
-      if (team) {
+      if (player) {
+        if (typeof onCreated === 'function') {
+          onCreated(player);
+        }
+
+        if (
+          typeof onChange === 'function' &&
+          player.id !== undefined &&
+          player.id !== null
+        ) {
+          onChange(player.id);
+        }
+
         setQuery('');
         setOpen(false);
-
-        if (typeof onCreated === 'function') {
-          onCreated(team);
-        }
       }
     } catch (error) {
-      console.error('Failed to create team:', error);
+      console.error(
+        'Failed to create player:',
+        error
+      );
 
       alert(
         error?.response?.data?.error ||
         error?.response?.data?.message ||
         error?.message ||
-        'Failed to create team'
+        'Failed to add player'
       );
     } finally {
       setCreating(false);
@@ -139,29 +198,23 @@ export default function TeamAutocomplete({
   };
 
   /*
-   * Existing selected-team display.
+   * Selected player chip.
    */
-  if (selectedTeam) {
+  if (selectedPlayer) {
     return (
-      <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-xl px-3 py-2">
-        <span className="font-medium flex items-center gap-2">
-          <span
-            className="w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold"
-            style={{
-              background:
-                selectedTeam.logo_color || '#334155',
-            }}
-          >
-            {selectedTeam.short_name?.slice(0, 2)}
-          </span>
-
-          {selectedTeam.name}
+      <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-lg px-3 py-2">
+        <span className="font-medium">
+          {selectedPlayer.name}
         </span>
 
         <button
           type="button"
           className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
-          onClick={() => onChange(null)}
+          onClick={() => {
+            if (typeof onChange === 'function') {
+              onChange(null);
+            }
+          }}
         >
           Change
         </button>
@@ -186,57 +239,56 @@ export default function TeamAutocomplete({
       />
 
       {open && (
-        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-slate-800 border border-slate-600 rounded-xl shadow-xl">
-          {matches.map((team) => (
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-slate-800 border border-slate-600 rounded-lg shadow-xl">
+
+          {matches.length === 0 &&
+            !query.trim() && (
+              <div className="px-3 py-2 text-sm text-slate-400">
+                No players yet
+              </div>
+            )}
+
+          {matches.map((player) => (
             <button
               type="button"
-              key={team.id}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex items-center gap-2"
+              key={player.id}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between"
               onClick={() => {
-                onChange(team.id);
+                if (
+                  typeof onChange === 'function'
+                ) {
+                  onChange(player.id);
+                }
+
                 setQuery('');
                 setOpen(false);
               }}
             >
-              <span
-                className="w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-bold shrink-0"
-                style={{
-                  background:
-                    team.logo_color || '#334155',
-                }}
-              >
-                {team.short_name?.slice(0, 2)}
+              <span>
+                {player.name}
               </span>
 
-              {team.name}
+              {player.role && (
+                <span className="text-slate-500 text-xs">
+                  {player.role}
+                </span>
+              )}
             </button>
           ))}
 
-          {query.trim() && !exactMatch && (
-            <button
-              type="button"
-              disabled={creating}
-              className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium disabled:opacity-50"
-              onClick={createTeam}
-            >
-              {creating
-                ? 'Creating…'
-                : `+ Create team "${query.trim()}"`}
-            </button>
-          )}
-
-          {matches.length === 0 && !query.trim() && (
-            <div className="px-3 py-2 text-sm text-slate-400">
-              Start typing a team name…
-            </div>
-          )}
-
-          {matches.length === 0 &&
+          {teamId &&
             query.trim() &&
-            exactMatch && (
-              <div className="px-3 py-2 text-sm text-slate-400">
-                No matching team available.
-              </div>
+            !exactMatch && (
+              <button
+                type="button"
+                disabled={creating}
+                className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium disabled:opacity-50"
+                onClick={createPlayer}
+              >
+                {creating
+                  ? 'Adding…'
+                  : `+ Add new player "${query.trim()}"`}
+              </button>
             )}
         </div>
       )}
