@@ -1,3 +1,4 @@
+
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
@@ -86,25 +87,6 @@ export default function Scorer() {
    * ====================================================
    * BOWLER BALL CALCULATOR
    * ====================================================
-   *
-   * IMPORTANT:
-   *
-   * bowlingCard normally contains overs such as:
-   *
-   * 0.0
-   * 0.1
-   * 0.5
-   * 1.0
-   * 1.2
-   * 2.4
-   *
-   * Cricket notation is NOT decimal notation.
-   *
-   * 1.2 = 8 legal balls, not 1.2 balls.
-   *
-   * This converts the bowling overs into actual legal
-   * balls so returning bowlers keep their previous
-   * figures correctly.
    */
 
   const getBowlerBallsFromStats = useCallback((stats) => {
@@ -112,10 +94,6 @@ export default function Scorer() {
       return 0;
     }
 
-    /*
-     * If the backend ever provides an actual balls
-     * field, use it directly.
-     */
     if (
       stats.balls != null &&
       Number.isFinite(Number(stats.balls))
@@ -124,9 +102,7 @@ export default function Scorer() {
     }
 
     const oversText =
-      String(
-        stats.overs ?? '0.0'
-      );
+      String(stats.overs ?? '0.0');
 
     const parts =
       oversText.split('.');
@@ -137,14 +113,6 @@ export default function Scorer() {
     const ballsInCurrentOver =
       Number(parts[1]) || 0;
 
-    /*
-     * Convert cricket notation to legal balls.
-     *
-     * 1.0 = 6
-     * 1.1 = 7
-     * 1.5 = 11
-     * 2.0 = 12
-     */
     return (
       completedOvers * 6 +
       ballsInCurrentOver
@@ -198,10 +166,6 @@ export default function Scorer() {
         ? data.innings
         : [];
 
-    /*
-     * Keep the selected bowler/batsmen if the server
-     * temporarily sends null immediately after Undo.
-     */
     const preserved =
       undoPreservedRef.current;
 
@@ -275,10 +239,6 @@ export default function Scorer() {
       const data =
         await Matches.get(matchId);
 
-      /*
-       * Do not overwrite optimistic scoring while
-       * balls are still being saved.
-       */
       if (
         pendingCountRef.current > 0
       ) {
@@ -363,10 +323,6 @@ export default function Scorer() {
       match: updatedMatch,
       innings: updatedInnings
     } = {}) => {
-      /*
-       * Never allow a socket update to overwrite the
-       * local optimistic score while saving.
-       */
       if (
         pendingCountRef.current > 0
       ) {
@@ -377,12 +333,6 @@ export default function Scorer() {
         Array.isArray(updatedInnings)
           ? updatedInnings
           : [];
-
-      /*
-       * --------------------------------------------------
-       * PRESERVE STATE AFTER UNDO
-       * --------------------------------------------------
-       */
 
       const preserved =
         undoPreservedRef.current;
@@ -452,10 +402,6 @@ export default function Scorer() {
 
       setInnings(finalInnings);
 
-      /*
-       * IMPORTANT:
-       * Do not clear Undo preservation here.
-       */
       optimisticRef.current = null;
       setOptimistic(null);
     };
@@ -682,8 +628,8 @@ export default function Scorer() {
         previousOptimistic?.strikerStats ||
         currentInnings?.battingCard?.find(
           b =>
-            b?.player_id ===
-            strikerId
+            String(b?.player_id) ===
+            String(strikerId)
         ) || {
           player_id: strikerId,
           runs: 0,
@@ -697,8 +643,8 @@ export default function Scorer() {
         previousOptimistic?.nonStrikerStats ||
         currentInnings?.battingCard?.find(
           b =>
-            b?.player_id ===
-            nonStrikerId
+            String(b?.player_id) ===
+            String(nonStrikerId)
         ) || {
           player_id: nonStrikerId,
           runs: 0,
@@ -790,25 +736,6 @@ export default function Scorer() {
        * ==================================================
        * BOWLER
        * ==================================================
-       *
-       * IMPORTANT FIX:
-       *
-       * Never use innings-level bowler_balls here.
-       *
-       * First find this exact bowler in the bowlingCard.
-       *
-       * Example:
-       *
-       * Sanjay:
-       * 1.0 overs, 8 runs
-       *
-       * New over -> Sanjay selected again
-       *
-       * First ball:
-       * 1.1 overs, 9 runs
-       *
-       * NOT:
-       * 0.1 overs, 1 run
        */
 
       const serverBowlerStats =
@@ -818,12 +745,6 @@ export default function Scorer() {
             String(scoringBowlerId)
         ) || null;
 
-      /*
-       * If the previous optimistic ball belongs to
-       * this same bowler, continue from that state.
-       *
-       * Otherwise use the authoritative bowlingCard.
-       */
       const sameOptimisticBowler =
         previousOptimistic?.activeBowlerId &&
         String(
@@ -850,10 +771,6 @@ export default function Scorer() {
                 0
             };
 
-      /*
-       * Get TOTAL legal balls already bowled by
-       * this particular bowler.
-       */
       const previousBowlerBalls =
         sameOptimisticBowler
           ? Number(
@@ -870,16 +787,6 @@ export default function Scorer() {
         previousBowlerBalls +
         (legal ? 1 : 0);
 
-      /*
-       * Bowler runs:
-       *
-       * Wide       -> charged
-       * No-ball    -> charged
-       * Normal run -> charged
-       * Bye        -> NOT charged
-       * Leg bye    -> NOT charged
-       */
-
       const bowlerRuns =
         Number(
           previousBowlerStats.runs || 0
@@ -891,11 +798,6 @@ export default function Scorer() {
             : teamRuns
         );
 
-      /*
-       * Bowler wickets:
-       *
-       * Run-out is not credited to bowler.
-       */
       const bowlerWickets =
         Number(
           previousBowlerStats.wickets || 0
@@ -908,14 +810,6 @@ export default function Scorer() {
             : 0
         );
 
-      /*
-       * Convert total legal balls back into
-       * cricket overs notation.
-       *
-       * 6 balls  -> 1.0
-       * 7 balls  -> 1.1
-       * 8 balls  -> 1.2
-       */
       const completedOvers =
         Math.floor(
           newBowlerBalls / 6
@@ -924,10 +818,6 @@ export default function Scorer() {
       const ballsInOver =
         newBowlerBalls % 6;
 
-      /*
-       * Economy is based on TOTAL runs and TOTAL
-       * legal balls.
-       */
       const economy =
         newBowlerBalls > 0
           ? Number(
@@ -940,19 +830,14 @@ export default function Scorer() {
 
       const updatedBowlerStats = {
         ...previousBowlerStats,
-
         player_id:
           scoringBowlerId,
-
         overs:
           `${completedOvers}.${ballsInOver}`,
-
         runs:
           bowlerRuns,
-
         wickets:
           bowlerWickets,
-
         economy:
           economy
       };
@@ -1158,7 +1043,6 @@ export default function Scorer() {
                   'Wicket'
               }
             ]
-          ]
           : oldFOW;
 
       /*
@@ -1320,10 +1204,6 @@ export default function Scorer() {
   const playBall =
     useCallback(
       (payload) => {
-        /*
-         * A new ball ends the temporary Undo
-         * preservation period.
-         */
         if (
           undoPreservedRef.current?.active
         ) {
@@ -1475,12 +1355,6 @@ export default function Scorer() {
       const undoInn =
         latestCurrentInnings.innings;
 
-      /*
-       * --------------------------------------------------
-       * CAPTURE STATE BEFORE UNDO
-       * --------------------------------------------------
-       */
-
       const bowlerBeforeUndo =
         optimisticRef.current?.activeBowlerId ??
         undoInn.current_bowler_id ??
@@ -1519,22 +1393,10 @@ export default function Scorer() {
         setShowNextBowler(false);
         setShowInitialBowler(false);
 
-        /*
-         * --------------------------------------------------
-         * UNDO BALL
-         * --------------------------------------------------
-         */
-
         const result =
           await Innings.undo(
             undoInn.id
           );
-
-        /*
-         * --------------------------------------------------
-         * READ RETURNED INNINGS
-         * --------------------------------------------------
-         */
 
         let resultInn = null;
 
@@ -1553,12 +1415,6 @@ export default function Scorer() {
           resultInn =
             result.data.innings;
         }
-
-        /*
-         * --------------------------------------------------
-         * RESTORED SCORE
-         * --------------------------------------------------
-         */
 
         const restoredRuns =
           resultInn?.total_runs != null
@@ -1588,22 +1444,10 @@ export default function Scorer() {
                 ballsBeforeUndo - 1
               );
 
-        /*
-         * --------------------------------------------------
-         * RESTORE BOWLER
-         * --------------------------------------------------
-         */
-
         const restoredBowlerId =
           resultInn?.current_bowler_id ??
           bowlerBeforeUndo ??
           null;
-
-        /*
-         * --------------------------------------------------
-         * RESTORE BATSMEN
-         * --------------------------------------------------
-         */
 
         const restoredStrikerId =
           resultInn?.striker_id ??
@@ -1614,12 +1458,6 @@ export default function Scorer() {
           resultInn?.non_striker_id ??
           nonStrikerBeforeUndo ??
           null;
-
-        /*
-         * --------------------------------------------------
-         * EXISTING CARDS
-         * --------------------------------------------------
-         */
 
         const existingBattingCard =
           Array.isArray(
@@ -1649,12 +1487,6 @@ export default function Scorer() {
             ? result.bowlingCard
             : existingBowlingCard;
 
-        /*
-         * --------------------------------------------------
-         * RECENT BALLS
-         * --------------------------------------------------
-         */
-
         const resultRecentBalls =
           Array.isArray(
             result?.recentBalls
@@ -1664,12 +1496,6 @@ export default function Scorer() {
                 latestCurrentInnings.recentBalls
               ).slice(0, -1);
 
-        /*
-         * --------------------------------------------------
-         * PARTNERSHIP
-         * --------------------------------------------------
-         */
-
         const restoredPartnership =
           result?.partnership &&
           typeof result.partnership === 'object'
@@ -1678,12 +1504,6 @@ export default function Scorer() {
                 runs: 0,
                 balls: 0
               };
-
-        /*
-         * --------------------------------------------------
-         * EXTRAS
-         * --------------------------------------------------
-         */
 
         const restoredExtras =
           result?.extras &&
@@ -1702,12 +1522,6 @@ export default function Scorer() {
                     }
               );
 
-        /*
-         * --------------------------------------------------
-         * FALL OF WICKETS
-         * --------------------------------------------------
-         */
-
         const restoredFOW =
           Array.isArray(
             result?.fallOfWickets
@@ -1717,23 +1531,11 @@ export default function Scorer() {
                 latestCurrentInnings.fallOfWickets
               );
 
-        /*
-         * --------------------------------------------------
-         * OVERS
-         * --------------------------------------------------
-         */
-
         const restoredOvers =
           result?.overs ??
           `${Math.floor(
             restoredBalls / 6
           )}.${restoredBalls % 6}`;
-
-        /*
-         * --------------------------------------------------
-         * UPDATE UI IMMEDIATELY
-         * --------------------------------------------------
-         */
 
         setInnings(prev => {
           const safePrev =
@@ -1825,7 +1627,8 @@ export default function Scorer() {
         setShowInitialBowler(false);
 
         /*
-         * Keep your existing Undo preservation behavior.
+         * Keep batsmen restoration for compatibility
+         * with the current backend behavior.
          */
         if (
           restoredStrikerId &&
@@ -2354,16 +2157,20 @@ export default function Scorer() {
   const strikerStats =
     optimistic &&
     optimistic.strikerStats &&
-    optimistic.strikerStats.player_id ===
-      effectiveStrikerId
+    String(
+      optimistic.strikerStats.player_id
+    ) ===
+      String(effectiveStrikerId)
       ? optimistic.strikerStats
       : serverStrikerStats;
 
   const nonStrikerStats =
     optimistic &&
     optimistic.nonStrikerStats &&
-    optimistic.nonStrikerStats.player_id ===
-      effectiveNonStrikerId
+    String(
+      optimistic.nonStrikerStats.player_id
+    ) ===
+      String(effectiveNonStrikerId)
       ? optimistic.nonStrikerStats
       : serverNonStrikerStats;
 
@@ -2371,14 +2178,6 @@ export default function Scorer() {
    * ====================================================
    * BOWLER STATS
    * ====================================================
-   *
-   * IMPORTANT:
-   *
-   * optimistic.bowlerStats contains the complete
-   * previous figures for the current bowler.
-   *
-   * It is merged over the server card so the first
-   * instant after clicking a ball is already correct.
    */
 
   const bowlingCard =
@@ -2509,8 +2308,6 @@ export default function Scorer() {
         }`}
       >
 
-        {/* SCORE HEADER */}
-
         <div className="flex justify-between items-center flex-wrap gap-3">
 
           <div>
@@ -2565,8 +2362,6 @@ export default function Scorer() {
 
         </div>
 
-        {/* BATSMEN */}
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
 
           <BatsmanCard
@@ -2581,8 +2376,6 @@ export default function Scorer() {
           />
 
         </div>
-
-        {/* CURRENT BOWLER */}
 
         <div className="mt-2">
 
@@ -2651,8 +2444,6 @@ export default function Scorer() {
 
         </div>
 
-        {/* CURRENT OVER */}
-
         <div className="mt-2 bg-slate-900/70 rounded-xl p-2">
 
           <div className="flex justify-between items-center mb-2">
@@ -2702,10 +2493,6 @@ export default function Scorer() {
           {error}
         </div>
       )}
-
-      {/* ==================================================
-          SCORING CONTROLS
-          ================================================== */}
 
       {!needsNextBowler &&
         effectiveBowlerId && (
@@ -2795,8 +2582,6 @@ export default function Scorer() {
               </div>
 
             </div>
-
-            {/* EXTRAS */}
 
             <div className="card">
 
@@ -2970,8 +2755,6 @@ export default function Scorer() {
 
             </div>
 
-            {/* ACTIONS */}
-
             <div className="grid grid-cols-2 gap-2">
 
               <button
@@ -3007,10 +2790,6 @@ export default function Scorer() {
           </>
         )}
 
-      {/* ==================================================
-          SELECT BOWLER BUTTON
-          ================================================== */}
-
       {!effectiveBowlerId &&
         effectiveStrikerId &&
         effectiveNonStrikerId &&
@@ -3033,10 +2812,6 @@ export default function Scorer() {
           </div>
 
         )}
-
-      {/* ==================================================
-          CURRENT PARTNERSHIP
-          ================================================== */}
 
       <div className="mt-2 bg-slate-900/70 rounded-xl p-2 border border-slate-700">
 
@@ -3078,10 +2853,6 @@ export default function Scorer() {
 
       </div>
 
-      {/* ==================================================
-          FALL OF WICKETS
-          ================================================== */}
-
       <FallOfWickets
         wickets={
           safeArray(
@@ -3094,10 +2865,6 @@ export default function Scorer() {
         }
       />
 
-      {/* ==================================================
-          SCOREBOARD
-          ================================================== */}
-
       <button
         className="btn btn-secondary w-full"
         onClick={() =>
@@ -3108,10 +2875,6 @@ export default function Scorer() {
       >
         View Full Scoreboard
       </button>
-
-      {/* ==================================================
-          INITIAL BOWLER MODAL
-          ================================================== */}
 
       {showInitialBowler && (
         <InitialBowlerModal
@@ -3149,14 +2912,6 @@ export default function Scorer() {
                 }
               );
 
-              /*
-               * Find any existing figures for this
-               * bowler in the current innings.
-               *
-               * Normally the first bowler has none,
-               * but this also makes the selection safe
-               * if the scorer re-enters this state.
-               */
               const currentEntry =
                 getCurrentInningsEntry();
 
@@ -3178,19 +2933,14 @@ export default function Scorer() {
                 existingBowlerStats || {
                   player_id:
                     bowlerId,
-
                   overs:
                     '0.0',
-
                   maidens:
                     0,
-
                   runs:
                     0,
-
                   wickets:
                     0,
-
                   economy:
                     0
                 };
@@ -3205,10 +2955,6 @@ export default function Scorer() {
                 needsNextBowler:
                   false,
 
-                /*
-                 * IMPORTANT:
-                 * Do NOT blindly reset to 0.
-                 */
                 bowlerBalls:
                   existingBowlerBalls,
 
@@ -3241,10 +2987,6 @@ export default function Scorer() {
           }}
         />
       )}
-
-      {/* ==================================================
-          NEXT BOWLER MODAL
-          ================================================== */}
 
       {showNextBowler &&
         needsNextBowler && (
@@ -3285,29 +3027,6 @@ export default function Scorer() {
                   }
                 );
 
-                /*
-                 * ==================================================
-                 * IMPORTANT BOWLER FIX
-                 * ==================================================
-                 *
-                 * Find this bowler's previous figures
-                 * BEFORE creating the optimistic state.
-                 *
-                 * If the bowler previously bowled:
-                 *
-                 * 1.0 overs / 8 runs
-                 *
-                 * we keep:
-                 *
-                 * 1.0 / 8
-                 *
-                 * Then the next ball becomes:
-                 *
-                 * 1.1 / 9
-                 *
-                 * immediately.
-                 */
-
                 const currentEntry =
                   getCurrentInningsEntry();
 
@@ -3329,19 +3048,14 @@ export default function Scorer() {
                   existingBowlerStats || {
                     player_id:
                       bowlerId,
-
                     overs:
                       '0.0',
-
                     maidens:
                       0,
-
                     runs:
                       0,
-
                     wickets:
                       0,
-
                     economy:
                       0
                   };
@@ -3356,11 +3070,6 @@ export default function Scorer() {
                   needsNextBowler:
                     false,
 
-                  /*
-                   * DO NOT SET THIS TO ZERO.
-                   *
-                   * Keep previous overs.
-                   */
                   bowlerBalls:
                     existingBowlerBalls,
 
@@ -3396,10 +3105,6 @@ export default function Scorer() {
           />
 
         )}
-
-      {/* ==================================================
-          WICKET MODAL
-          ================================================== */}
 
       {showWicket && (
 
@@ -4392,3 +4097,4 @@ function SelectBatsmen({
     </div>
   );
 }
+
