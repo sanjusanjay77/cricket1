@@ -33,6 +33,7 @@ function sendError(
 
 /* =========================================================
    LIST TEAMS
+   Only ACTIVE teams are shown.
 ========================================================= */
 
 exports.listTeams = async (
@@ -55,6 +56,9 @@ exports.listTeams = async (
           ) AS player_count
 
         FROM teams t
+
+        WHERE
+          COALESCE(t.archived, 0) = 0
 
         ORDER BY
           t.created_at DESC
@@ -187,19 +191,31 @@ exports.createTeam = async (
       });
     }
 
+    /*
+     * Check active teams only.
+     *
+     * An archived team can have the same
+     * name/short name if required.
+     */
     const existing =
       await db.prepare(`
         SELECT id
         FROM teams
 
         WHERE
-          LOWER(TRIM(name)) =
-          LOWER(TRIM(?))
+          COALESCE(archived, 0) = 0
 
-          OR
+          AND
 
-          LOWER(TRIM(short_name)) =
-          LOWER(TRIM(?))
+          (
+            LOWER(TRIM(name)) =
+            LOWER(TRIM(?))
+
+            OR
+
+            LOWER(TRIM(short_name)) =
+            LOWER(TRIM(?))
+          )
 
         LIMIT 1
       `).get(
@@ -235,11 +251,12 @@ exports.createTeam = async (
         name,
         short_name,
         logo_color,
-        is_own
+        is_own,
+        archived
       )
 
       VALUES (
-        ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, 0
       )
     `).run(
       id,
@@ -347,6 +364,10 @@ exports.updateTeam = async (
         FROM teams
 
         WHERE
+          COALESCE(archived, 0) = 0
+
+          AND
+
           (
             LOWER(TRIM(name)) =
             LOWER(TRIM(?))
@@ -370,7 +391,7 @@ exports.updateTeam = async (
 
       return res.status(409).json({
         error:
-          'Another team already uses this name or short name'
+          'Another active team already uses this name or short name'
       });
     }
 
@@ -435,7 +456,7 @@ exports.updateTeam = async (
 };
 
 /* =========================================================
-   DELETE TEAM
+   DELETE / ARCHIVE TEAM
 ========================================================= */
 
 exports.deleteTeam = async (
@@ -478,13 +499,34 @@ exports.deleteTeam = async (
     }
 
     /* -----------------------------------------------------
-       CHECK MATCH HISTORY
-       
-       IMPORTANT:
-       Players alone should NOT prevent deletion.
+       ALREADY ARCHIVED
+    ----------------------------------------------------- */
 
-       Only actual match/innings history protects
-       the team.
+    if (
+      Number(team.archived || 0) === 1
+    ) {
+
+      return res.status(200).json({
+
+        success:
+          true,
+
+        archived:
+          true,
+
+        message:
+          'Team is already archived',
+
+        team_id:
+          teamId,
+
+        team_name:
+          team.name
+      });
+    }
+
+    /* -----------------------------------------------------
+       CHECK MATCH HISTORY
     ----------------------------------------------------- */
 
     const matchCount =
@@ -530,7 +572,21 @@ exports.deleteTeam = async (
       );
 
     /* -----------------------------------------------------
-       PROTECT HISTORICAL TEAM
+       HISTORICAL TEAM
+       
+       DO NOT DELETE.
+       
+       ARCHIVE IT INSTEAD.
+       
+       This keeps:
+       - matches
+       - innings
+       - balls
+       - scores
+       - player statistics
+       - records
+       
+       completely untouched.
     ----------------------------------------------------- */
 
     if (
@@ -538,16 +594,31 @@ exports.deleteTeam = async (
       innings > 0
     ) {
 
-      return res.status(409).json({
+      await db.prepare(`
+        UPDATE teams
 
-        error:
-          'This team has match history and cannot be permanently deleted.',
+        SET
+          archived = 1
+
+        WHERE id = ?
+      `).run(teamId);
+
+      return res.status(200).json({
+
+        success:
+          true,
+
+        archived:
+          true,
 
         protected:
           true,
 
         reason:
           'historical_data',
+
+        message:
+          'Team archived successfully. Historical match data has been preserved.',
 
         team_id:
           teamId,
@@ -564,11 +635,11 @@ exports.deleteTeam = async (
     }
 
     /* -----------------------------------------------------
-       COUNT PLAYERS
+       NO MATCH HISTORY
        
-       Players are NOT historical match data by themselves.
-       They can safely be removed when the team has never
-       been used in a match.
+       This team has never been used in a match.
+       
+       It can be permanently deleted.
     ----------------------------------------------------- */
 
     const playerCount =
@@ -585,9 +656,6 @@ exports.deleteTeam = async (
 
     /* -----------------------------------------------------
        DELETE PLAYERS FIRST
-       
-       This is necessary because players.team_id normally
-       references teams.id.
     ----------------------------------------------------- */
 
     await db.prepare(`
@@ -633,6 +701,12 @@ exports.deleteTeam = async (
       success:
         true,
 
+      archived:
+        false,
+
+      deleted:
+        true,
+
       message:
         'Team deleted successfully',
 
@@ -658,7 +732,7 @@ exports.deleteTeam = async (
     );
 
     console.error(
-      'DELETE TEAM ERROR'
+      'DELETE / ARCHIVE TEAM ERROR'
     );
 
     console.error(
@@ -688,7 +762,7 @@ exports.deleteTeam = async (
       return res.status(409).json({
 
         error:
-          'The team is still connected to other historical records and cannot be deleted.',
+          'The team is still connected to historical records.',
 
         protected:
           true,
@@ -701,7 +775,7 @@ exports.deleteTeam = async (
     return sendError(
       res,
       error,
-      'Failed to delete team'
+      'Failed to delete/archive team'
     );
   }
 };
