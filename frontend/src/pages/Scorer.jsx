@@ -38,13 +38,6 @@ export default function Scorer() {
    * ----------------------------------------------------
    * FIRST-BALL UNDO BOWLER PRESERVATION
    * ----------------------------------------------------
-   *
-   * When Undo removes the very first ball, some backend
-   * responses/socket updates may temporarily contain:
-   *
-   * current_bowler_id = null
-   *
-   * We preserve the bowler selected for that over.
    */
 
   const preservedBowlerRef = useRef(null);
@@ -58,6 +51,12 @@ export default function Scorer() {
   const safeArray = useCallback((value) => {
     return Array.isArray(value) ? value : [];
   }, []);
+
+  /*
+   * ----------------------------------------------------
+   * APPLY SERVER DATA
+   * ----------------------------------------------------
+   */
 
   const applyServerData = useCallback((data) => {
     if (!data || typeof data !== 'object') {
@@ -180,8 +179,8 @@ export default function Scorer() {
       innings: updatedInnings
     } = {}) => {
       /*
-       * Do not allow a socket update to overwrite our
-       * optimistic scoring while balls are waiting.
+       * Do not allow socket state to overwrite
+       * optimistic scoring while balls are pending.
        */
       if (pendingCountRef.current > 0) {
         return;
@@ -246,9 +245,10 @@ export default function Scorer() {
       setInnings(finalInnings);
 
       /*
-       * If the server has now confirmed the preserved
-       * bowler, preservation is no longer needed.
+       * Clear preservation once server confirms
+       * the bowler.
        */
+
       if (
         preservedBowler &&
         finalInnings.length > 0
@@ -369,9 +369,6 @@ export default function Scorer() {
    * ----------------------------------------------------
    * COMMON ACTION
    * ----------------------------------------------------
-   *
-   * IMPORTANT:
-   * No automatic Matches.get() after success.
    */
 
   const act = async (fn) => {
@@ -1395,13 +1392,6 @@ export default function Scorer() {
    * ----------------------------------------------------
    * SAVE QUEUE
    * ----------------------------------------------------
-   *
-   * IMPORTANT:
-   *
-   * Successful balls DO NOT call Matches.get().
-   *
-   * This removes the slow 2-8 second request after
-   * every ball.
    */
 
   const processScoreQueue =
@@ -1414,8 +1404,6 @@ export default function Scorer() {
 
       processingQueueRef.current =
         true;
-
-      let failed = false;
 
       while (
         scoreQueueRef.current.length >
@@ -1445,8 +1433,6 @@ export default function Scorer() {
           );
 
         } catch (err) {
-          failed = true;
-
           setError(
             err?.response?.data?.error ||
             err?.response?.data?.message ||
@@ -1464,9 +1450,9 @@ export default function Scorer() {
           setOptimistic(null);
 
           /*
-           * Only recover from the server when the save
-           * actually failed.
+           * Only reload when save actually fails.
            */
+
           try {
             const data =
               await Matches.get(
@@ -1484,12 +1470,8 @@ export default function Scorer() {
         false;
 
       /*
-       * IMPORTANT:
-       *
-       * There is intentionally NO Matches.get()
-       * here after successful saves.
-       *
-       * Socket.IO will synchronize the final state.
+       * No Matches.get() after successful saves.
+       * Socket.IO synchronizes the server state.
        */
     }, [
       matchId,
@@ -1504,41 +1486,41 @@ export default function Scorer() {
 
   const playBall = useCallback(
     (payload) => {
-      const safeInnings =
+      const safeCurrentInningsList =
         Array.isArray(innings)
           ? innings
           : [];
 
-      const currentInnings =
-        safeInnings[
-          safeInnings.length - 1
+      const current =
+        safeCurrentInningsList[
+          safeCurrentInningsList.length - 1
         ];
 
-      if (!currentInnings) {
+      if (!current) {
         return;
       }
 
-      const current =
-        currentInnings?.innings;
+      const currentInn =
+        current?.innings;
 
       if (
-        !current ||
-        typeof current !== 'object'
+        !currentInn ||
+        typeof currentInn !== 'object'
       ) {
         return;
       }
 
       const effectiveStrikerId =
         optimisticRef.current?.strikerId ??
-        current.striker_id;
+        currentInn.striker_id;
 
       const effectiveNonStrikerId =
         optimisticRef.current?.nonStrikerId ??
-        current.non_striker_id;
+        currentInn.non_striker_id;
 
       const effectiveBowlerId =
         optimisticRef.current?.activeBowlerId ??
-        current.current_bowler_id;
+        currentInn.current_bowler_id;
 
       if (
         optimisticRef.current
@@ -1579,8 +1561,8 @@ export default function Scorer() {
 
       const nextOptimistic =
         buildOptimisticBall({
-          current,
-          currentInnings,
+          current: currentInn,
+          currentInnings: current,
           payload,
           previousOptimistic:
             optimisticRef.current
@@ -1595,7 +1577,7 @@ export default function Scorer() {
 
       scoreQueueRef.current.push({
         inningsId:
-          current.id,
+          currentInn.id,
         payload
       });
 
@@ -1611,358 +1593,386 @@ export default function Scorer() {
       innings,
       popBoundary,
       processScoreQueue
-    ]
-  );
+    ]);
 
   /*
    * ----------------------------------------------------
    * UNDO
    * ----------------------------------------------------
+   *
+   * FIX:
+   *
+   * Do NOT reference currentInnings here because
+   * currentInnings is declared later in the component.
+   *
+   * Instead, get the latest innings directly from the
+   * current innings state inside this callback.
    */
 
-  const handleUndo = useCallback(async () => {
-    if (
-      pendingCountRef.current > 0
-    ) {
-      return;
-    }
-
-    if (!currentInnings?.innings) {
-      return;
-    }
-
-    const undoInn =
-      currentInnings.innings;
-
-    /*
-     * Remember the bowler BEFORE Undo.
-     */
-    const bowlerBeforeUndo =
-      optimisticRef.current?.activeBowlerId ??
-      undoInn.current_bowler_id ??
-      null;
-
-    try {
-      setError('');
-
-      /*
-       * Clear any previous preservation.
-       */
-      preservedBowlerRef.current =
-        null;
-
-      const result =
-        await Innings.undo(
-          undoInn.id
-        );
-
-      /*
-       * ------------------------------------------------
-       * FIRST-BALL UNDO
-       * ------------------------------------------------
-       *
-       * If there are now zero legal balls, keep the
-       * same bowler selected.
-       */
-
-      const resultInn =
-        result?.innings &&
-        typeof result.innings === 'object'
-          ? result.innings
-          : null;
-
-      const resultBalls =
-        Number(
-          resultInn?.total_balls || 0
-        );
-
+  const handleUndo =
+    useCallback(async () => {
       if (
-        resultBalls === 0 &&
-        bowlerBeforeUndo
+        pendingCountRef.current > 0
       ) {
-        preservedBowlerRef.current =
-          bowlerBeforeUndo;
-
-        const currentOptimistic =
-          optimisticRef.current || {};
-
-        const preservedState = {
-          ...currentOptimistic,
-
-          total_runs:
-            Number(
-              resultInn?.total_runs || 0
-            ),
-
-          total_wickets:
-            Number(
-              resultInn?.total_wickets || 0
-            ),
-
-          total_balls:
-            0,
-
-          activeBowlerId:
-            bowlerBeforeUndo,
-
-          needsNextBowler:
-            false,
-
-          strikerId:
-            resultInn?.striker_id ??
-            currentOptimistic.strikerId ??
-            undoInn.striker_id,
-
-          nonStrikerId:
-            resultInn?.non_striker_id ??
-            currentOptimistic.nonStrikerId ??
-            undoInn.non_striker_id,
-
-          bowlerBalls:
-            0,
-
-          bowlerStats: {
-            player_id:
-              bowlerBeforeUndo,
-
-            overs:
-              '0.0',
-
-            maidens:
-              0,
-
-            runs:
-              0,
-
-            wickets:
-              0,
-
-            economy:
-              0
-          },
-
-          recentBalls: [],
-
-          runRate: 0
-        };
-
-        optimisticRef.current =
-          preservedState;
-
-        setOptimistic(
-          preservedState
-        );
-
-        /*
-         * Patch the local innings immediately.
-         */
-        setInnings(prev => {
-          const safePrev =
-            Array.isArray(prev)
-              ? prev
-              : [];
-
-          if (
-            safePrev.length === 0
-          ) {
-            return safePrev;
-          }
-
-          const next = [
-            ...safePrev
-          ];
-
-          const lastIndex =
-            next.length - 1;
-
-          const lastEntry =
-            next[lastIndex];
-
-          if (
-            !lastEntry?.innings
-          ) {
-            return safePrev;
-          }
-
-          next[lastIndex] = {
-            ...lastEntry,
-
-            innings: {
-              ...lastEntry.innings,
-
-              total_runs:
-                Number(
-                  resultInn?.total_runs || 0
-                ),
-
-              total_wickets:
-                Number(
-                  resultInn?.total_wickets || 0
-                ),
-
-              total_balls:
-                0,
-
-              current_bowler_id:
-                bowlerBeforeUndo,
-
-              striker_id:
-                resultInn?.striker_id ??
-                lastEntry.innings.striker_id,
-
-              non_striker_id:
-                resultInn?.non_striker_id ??
-                lastEntry.innings.non_striker_id
-            },
-
-            overs:
-              '0.0',
-
-            battingCard:
-              Array.isArray(
-                result?.battingCard
-              )
-                ? result.battingCard
-                : lastEntry.battingCard,
-
-            bowlingCard:
-              Array.isArray(
-                result?.bowlingCard
-              )
-                ? result.bowlingCard
-                : lastEntry.bowlingCard,
-
-            recentBalls: []
-          };
-
-          return next;
-        });
-
-        /*
-         * Make sure the database also remembers the
-         * bowler. This happens after Undo and does not
-         * block the UI.
-         */
-        Innings.setBowler(
-          undoInn.id,
-          {
-            bowler_id:
-              bowlerBeforeUndo
-          }
-        ).catch(err => {
-          console.warn(
-            'Unable to restore bowler after first-ball Undo:',
-            err
-          );
-        });
-
         return;
       }
 
-      /*
-       * For normal Undo, use the server response if it
-       * contains the updated innings. Otherwise rely on
-       * Socket.IO.
-       */
+      const safeCurrentInningsList =
+        Array.isArray(innings)
+          ? innings
+          : [];
+
+      const latestCurrentInnings =
+        safeCurrentInningsList[
+          safeCurrentInningsList.length - 1
+        ];
+
       if (
-        result &&
-        typeof result === 'object' &&
-        resultInn
+        !latestCurrentInnings?.innings
       ) {
-        setInnings(prev => {
-          const safePrev =
-            Array.isArray(prev)
-              ? prev
-              : [];
-
-          if (
-            safePrev.length === 0
-          ) {
-            return safePrev;
-          }
-
-          const next = [
-            ...safePrev
-          ];
-
-          const lastIndex =
-            next.length - 1;
-
-          const lastEntry =
-            next[lastIndex];
-
-          if (
-            !lastEntry?.innings
-          ) {
-            return safePrev;
-          }
-
-          next[lastIndex] = {
-            ...lastEntry,
-
-            innings: {
-              ...lastEntry.innings,
-              ...resultInn
-            },
-
-            overs:
-              result?.overs ??
-              lastEntry.overs,
-
-            battingCard:
-              Array.isArray(
-                result?.battingCard
-              )
-                ? result.battingCard
-                : lastEntry.battingCard,
-
-            bowlingCard:
-              Array.isArray(
-                result?.bowlingCard
-              )
-                ? result.bowlingCard
-                : lastEntry.bowlingCard,
-
-            recentBalls:
-              Array.isArray(
-                result?.recentBalls
-              )
-                ? result.recentBalls
-                : lastEntry.recentBalls
-          };
-
-          return next;
-        });
-
-        optimisticRef.current =
-          null;
-
-        setOptimistic(
-          null
-        );
+        return;
       }
 
-    } catch (err) {
-      setError(
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
-        err?.message ||
-        'Unable to undo'
-      );
+      const undoInn =
+        latestCurrentInnings.innings;
 
-      await loadFull();
-    }
-  }, [
-    currentInnings,
-    loadFull
-  ]);
+      /*
+       * Remember bowler BEFORE Undo.
+       */
+
+      const bowlerBeforeUndo =
+        optimisticRef.current?.activeBowlerId ??
+        undoInn.current_bowler_id ??
+        null;
+
+      try {
+        setError('');
+
+        preservedBowlerRef.current =
+          null;
+
+        const result =
+          await Innings.undo(
+            undoInn.id
+          );
+
+        const resultInn =
+          result?.innings &&
+          typeof result.innings === 'object'
+            ? result.innings
+            : null;
+
+        const resultBalls =
+          Number(
+            resultInn?.total_balls || 0
+          );
+
+        /*
+         * ------------------------------------------------
+         * FIRST-BALL UNDO
+         * ------------------------------------------------
+         */
+
+        if (
+          resultInn &&
+          resultBalls === 0 &&
+          bowlerBeforeUndo
+        ) {
+          preservedBowlerRef.current =
+            bowlerBeforeUndo;
+
+          const currentOptimistic =
+            optimisticRef.current || {};
+
+          const preservedState = {
+            ...currentOptimistic,
+
+            total_runs:
+              Number(
+                resultInn.total_runs || 0
+              ),
+
+            total_wickets:
+              Number(
+                resultInn.total_wickets || 0
+              ),
+
+            total_balls:
+              0,
+
+            activeBowlerId:
+              bowlerBeforeUndo,
+
+            needsNextBowler:
+              false,
+
+            strikerId:
+              resultInn.striker_id ??
+              currentOptimistic.strikerId ??
+              undoInn.striker_id,
+
+            nonStrikerId:
+              resultInn.non_striker_id ??
+              currentOptimistic.nonStrikerId ??
+              undoInn.non_striker_id,
+
+            bowlerBalls:
+              0,
+
+            bowlerStats: {
+              player_id:
+                bowlerBeforeUndo,
+
+              overs:
+                '0.0',
+
+              maidens:
+                0,
+
+              runs:
+                0,
+
+              wickets:
+                0,
+
+              economy:
+                0
+            },
+
+            recentBalls: [],
+
+            runRate: 0,
+
+            partnership: {
+              runs: 0,
+              balls: 0
+            }
+          };
+
+          optimisticRef.current =
+            preservedState;
+
+          setOptimistic(
+            preservedState
+          );
+
+          /*
+           * Patch local innings immediately.
+           */
+
+          setInnings(prev => {
+            const safePrev =
+              Array.isArray(prev)
+                ? prev
+                : [];
+
+            if (
+              safePrev.length === 0
+            ) {
+              return safePrev;
+            }
+
+            const next = [
+              ...safePrev
+            ];
+
+            const lastIndex =
+              next.length - 1;
+
+            const lastEntry =
+              next[lastIndex];
+
+            if (
+              !lastEntry?.innings
+            ) {
+              return safePrev;
+            }
+
+            next[lastIndex] = {
+              ...lastEntry,
+
+              innings: {
+                ...lastEntry.innings,
+
+                total_runs:
+                  Number(
+                    resultInn.total_runs || 0
+                  ),
+
+                total_wickets:
+                  Number(
+                    resultInn.total_wickets || 0
+                  ),
+
+                total_balls:
+                  0,
+
+                current_bowler_id:
+                  bowlerBeforeUndo,
+
+                striker_id:
+                  resultInn.striker_id ??
+                  lastEntry.innings.striker_id,
+
+                non_striker_id:
+                  resultInn.non_striker_id ??
+                  lastEntry.innings.non_striker_id
+              },
+
+              overs:
+                '0.0',
+
+              battingCard:
+                Array.isArray(
+                  result?.battingCard
+                )
+                  ? result.battingCard
+                  : lastEntry.battingCard,
+
+              bowlingCard:
+                Array.isArray(
+                  result?.bowlingCard
+                )
+                  ? result.bowlingCard
+                  : lastEntry.bowlingCard,
+
+              recentBalls: [],
+
+              partnership: {
+                runs: 0,
+                balls: 0
+              }
+            };
+
+            return next;
+          });
+
+          /*
+           * Restore bowler in DB without blocking UI.
+           */
+
+          Innings.setBowler(
+            undoInn.id,
+            {
+              bowler_id:
+                bowlerBeforeUndo
+            }
+          ).catch(err => {
+            console.warn(
+              'Unable to restore bowler after first-ball Undo:',
+              err
+            );
+          });
+
+          return;
+        }
+
+        /*
+         * ------------------------------------------------
+         * NORMAL UNDO
+         * ------------------------------------------------
+         */
+
+        if (
+          result &&
+          typeof result === 'object' &&
+          resultInn
+        ) {
+          setInnings(prev => {
+            const safePrev =
+              Array.isArray(prev)
+                ? prev
+                : [];
+
+            if (
+              safePrev.length === 0
+            ) {
+              return safePrev;
+            }
+
+            const next = [
+              ...safePrev
+            ];
+
+            const lastIndex =
+              next.length - 1;
+
+            const lastEntry =
+              next[lastIndex];
+
+            if (
+              !lastEntry?.innings
+            ) {
+              return safePrev;
+            }
+
+            next[lastIndex] = {
+              ...lastEntry,
+
+              innings: {
+                ...lastEntry.innings,
+                ...resultInn
+              },
+
+              overs:
+                result?.overs ??
+                lastEntry.overs,
+
+              battingCard:
+                Array.isArray(
+                  result?.battingCard
+                )
+                  ? result.battingCard
+                  : lastEntry.battingCard,
+
+              bowlingCard:
+                Array.isArray(
+                  result?.bowlingCard
+                )
+                  ? result.bowlingCard
+                  : lastEntry.bowlingCard,
+
+              recentBalls:
+                Array.isArray(
+                  result?.recentBalls
+                )
+                  ? result.recentBalls
+                  : lastEntry.recentBalls
+            };
+
+            return next;
+          });
+
+          optimisticRef.current =
+            null;
+
+          setOptimistic(
+            null
+          );
+        }
+
+      } catch (err) {
+        setError(
+          err?.response?.data?.error ||
+          err?.response?.data?.message ||
+          err?.message ||
+          'Unable to undo'
+        );
+
+        await loadFull();
+      }
+    }, [
+      innings,
+      loadFull
+    ]);
 
   /*
    * ----------------------------------------------------
-   * EARLY DATA VALUES
+   * SAFE DISPLAY DATA
    * ----------------------------------------------------
    *
-   * ALL HOOKS ABOVE CONDITIONAL RETURNS.
+   * These values are declared BEFORE any conditional
+   * return and therefore do not affect hook order.
    */
 
   const safeInnings =
@@ -2576,12 +2586,6 @@ export default function Scorer() {
       runs: 0,
       balls: 0
     };
-
-  /*
-   * ----------------------------------------------------
-   * RENDER
-   * ----------------------------------------------------
-   */
 
   return (
     <div className="max-w-2xl mx-auto space-y-4 fade-in">
@@ -3261,7 +3265,7 @@ export default function Scorer() {
                   runs:
                     0,
 
-                    wickets:
+                  wickets:
                     0,
 
                   economy:
@@ -3282,13 +3286,6 @@ export default function Scorer() {
               setShowInitialBowler(
                 false
               );
-
-              /*
-               * No Matches.get() here.
-               *
-               * The UI already knows the selected
-               * bowler and updates immediately.
-               */
 
             } catch (err) {
               setError(
@@ -3391,10 +3388,6 @@ export default function Scorer() {
                 setShowNextBowler(
                   false
                 );
-
-                /*
-                 * No Matches.get().
-                 */
 
               } catch (err) {
 
