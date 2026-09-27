@@ -31,6 +31,17 @@ function sendError(
   });
 }
 
+function toBooleanNumber(value) {
+  return (
+    value === true ||
+    value === 1 ||
+    value === '1' ||
+    value === 'true'
+  )
+    ? 1
+    : 0;
+}
+
 /* =========================================================
    LIST TEAMS
 ========================================================= */
@@ -42,23 +53,48 @@ exports.listTeams = async (
 
   try {
 
+    /*
+     * By default return only active teams.
+     *
+     * Use:
+     * GET /teams?include_archived=true
+     *
+     * to include archived teams.
+     */
+
+    const includeArchived =
+      req.query.include_archived === 'true' ||
+      req.query.include_archived === '1';
+
+    let sql = `
+      SELECT
+        t.*,
+
+        (
+          SELECT COUNT(*)
+          FROM players p
+          WHERE p.team_id = t.id
+            AND p.active = 1
+        ) AS player_count
+
+      FROM teams t
+    `;
+
+    if (!includeArchived) {
+      sql += `
+        WHERE
+          COALESCE(t.archived, 0) = 0
+      `;
+    }
+
+    sql += `
+      ORDER BY
+        COALESCE(t.archived, 0) ASC,
+        t.created_at DESC
+    `;
+
     const teams =
-      await db.prepare(`
-        SELECT
-          t.*,
-
-          (
-            SELECT COUNT(*)
-            FROM players p
-            WHERE p.team_id = t.id
-              AND p.active = 1
-          ) AS player_count
-
-        FROM teams t
-
-        ORDER BY
-          t.created_at DESC
-      `).all();
+      await db.prepare(sql).all();
 
     return res.json(
       teams || []
@@ -89,6 +125,14 @@ exports.getTeam = async (
       cleanId(
         req.params.id
       );
+
+    if (!teamId) {
+
+      return res.status(400).json({
+        error:
+          'Invalid team ID'
+      });
+    }
 
     const team =
       await db.prepare(`
@@ -123,6 +167,11 @@ exports.getTeam = async (
 
     return res.json({
       ...team,
+
+      archived:
+        Number(
+          team.archived || 0
+        ),
 
       players:
         players || []
@@ -225,9 +274,9 @@ exports.createTeam = async (
         : '#1e3a8a';
 
     const own =
-      is_own
-        ? 1
-        : 0;
+      toBooleanNumber(
+        is_own
+      );
 
     await db.prepare(`
       INSERT INTO teams (
@@ -235,11 +284,12 @@ exports.createTeam = async (
         name,
         short_name,
         logo_color,
-        is_own
+        is_own,
+        archived
       )
 
       VALUES (
-        ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, 0
       )
     `).run(
       id,
@@ -285,6 +335,14 @@ exports.updateTeam = async (
       cleanId(
         req.params.id
       );
+
+    if (!teamId) {
+
+      return res.status(400).json({
+        error:
+          'Invalid team ID'
+      });
+    }
 
     const {
       name,
@@ -389,10 +447,8 @@ exports.updateTeam = async (
         ? Number(
             existing.is_own || 0
           )
-        : (
+        : toBooleanNumber(
             is_own
-              ? 1
-              : 0
           );
 
     await db.prepare(`
@@ -433,6 +489,59 @@ exports.updateTeam = async (
     );
   }
 };
+
+/* =========================================================
+   GET TEAM HISTORY COUNTS
+========================================================= */
+
+async function getTeamHistoryCounts(
+  teamId
+) {
+
+  const matchCount =
+    await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM matches
+
+      WHERE
+        team1_id = ?
+
+        OR
+
+        team2_id = ?
+    `).get(
+      teamId,
+      teamId
+    );
+
+  const inningsCount =
+    await db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM innings
+
+      WHERE
+        batting_team_id = ?
+
+        OR
+
+        bowling_team_id = ?
+    `).get(
+      teamId,
+      teamId
+    );
+
+  return {
+    matches:
+      Number(
+        matchCount?.count || 0
+      ),
+
+    innings:
+      Number(
+        inningsCount?.count || 0
+      )
+  };
+}
 
 /* =========================================================
    DELETE TEAM
@@ -478,76 +587,62 @@ exports.deleteTeam = async (
     }
 
     /* -----------------------------------------------------
-       CHECK MATCH HISTORY
-       
-       IMPORTANT:
-       Players alone should NOT prevent deletion.
-
-       Only actual match/innings history protects
-       the team.
+       CHECK HISTORY
     ----------------------------------------------------- */
 
-    const matchCount =
-      await db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM matches
-
-        WHERE
-          team1_id = ?
-
-          OR
-
-          team2_id = ?
-      `).get(
-        teamId,
+    const history =
+      await getTeamHistoryCounts(
         teamId
-      );
-
-    const inningsCount =
-      await db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM innings
-
-        WHERE
-          batting_team_id = ?
-
-          OR
-
-          bowling_team_id = ?
-      `).get(
-        teamId,
-        teamId
-      );
-
-    const matches =
-      Number(
-        matchCount?.count || 0
-      );
-
-    const innings =
-      Number(
-        inningsCount?.count || 0
       );
 
     /* -----------------------------------------------------
-       PROTECT HISTORICAL TEAM
+       HISTORICAL TEAM
+       
+       IMPORTANT:
+       We do NOT delete it.
+       We automatically archive it.
     ----------------------------------------------------- */
 
     if (
-      matches > 0 ||
-      innings > 0
+      history.matches > 0 ||
+      history.innings > 0
     ) {
 
-      return res.status(409).json({
+      await db.prepare(`
+        UPDATE teams
 
-        error:
-          'This team has match history and cannot be permanently deleted.',
+        SET
+          archived = 1
+
+        WHERE id = ?
+      `).run(teamId);
+
+      const archivedTeam =
+        await db.prepare(`
+          SELECT *
+          FROM teams
+          WHERE id = ?
+        `).get(teamId);
+
+      return res.status(200).json({
+
+        success:
+          true,
+
+        archived:
+          true,
 
         protected:
           true,
 
         reason:
           'historical_data',
+
+        message:
+          `${team.name} was archived because it has historical match data.`,
+
+        team:
+          archivedTeam,
 
         team_id:
           teamId,
@@ -556,19 +651,17 @@ exports.deleteTeam = async (
           team.name,
 
         matches_count:
-          matches,
+          history.matches,
 
         innings_count:
-          innings
+          history.innings
       });
     }
 
     /* -----------------------------------------------------
-       COUNT PLAYERS
+       NO HISTORY
        
-       Players are NOT historical match data by themselves.
-       They can safely be removed when the team has never
-       been used in a match.
+       Safe permanent deletion.
     ----------------------------------------------------- */
 
     const playerCount =
@@ -585,9 +678,6 @@ exports.deleteTeam = async (
 
     /* -----------------------------------------------------
        DELETE PLAYERS FIRST
-       
-       This is necessary because players.team_id normally
-       references teams.id.
     ----------------------------------------------------- */
 
     await db.prepare(`
@@ -632,6 +722,12 @@ exports.deleteTeam = async (
 
       success:
         true,
+
+      deleted:
+        true,
+
+      archived:
+        false,
 
       message:
         'Team deleted successfully',
@@ -688,7 +784,7 @@ exports.deleteTeam = async (
       return res.status(409).json({
 
         error:
-          'The team is still connected to other historical records and cannot be deleted.',
+          'The team is still connected to other records and cannot be deleted.',
 
         protected:
           true,
@@ -702,6 +798,166 @@ exports.deleteTeam = async (
       res,
       error,
       'Failed to delete team'
+    );
+  }
+};
+
+/* =========================================================
+   ARCHIVE TEAM
+========================================================= */
+
+exports.archiveTeam = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const teamId =
+      cleanId(
+        req.params.id
+      );
+
+    if (!teamId) {
+
+      return res.status(400).json({
+        error:
+          'Invalid team ID'
+      });
+    }
+
+    const team =
+      await db.prepare(`
+        SELECT *
+        FROM teams
+        WHERE id = ?
+      `).get(teamId);
+
+    if (!team) {
+
+      return res.status(404).json({
+        error:
+          'Team not found'
+      });
+    }
+
+    await db.prepare(`
+      UPDATE teams
+
+      SET
+        archived = 1
+
+      WHERE id = ?
+    `).run(teamId);
+
+    const updated =
+      await db.prepare(`
+        SELECT *
+        FROM teams
+        WHERE id = ?
+      `).get(teamId);
+
+    return res.json({
+
+      success:
+        true,
+
+      archived:
+        true,
+
+      message:
+        `${team.name} archived successfully`,
+
+      team:
+        updated
+    });
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to archive team'
+    );
+  }
+};
+
+/* =========================================================
+   RESTORE TEAM
+========================================================= */
+
+exports.restoreTeam = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const teamId =
+      cleanId(
+        req.params.id
+      );
+
+    if (!teamId) {
+
+      return res.status(400).json({
+        error:
+          'Invalid team ID'
+      });
+    }
+
+    const team =
+      await db.prepare(`
+        SELECT *
+        FROM teams
+        WHERE id = ?
+      `).get(teamId);
+
+    if (!team) {
+
+      return res.status(404).json({
+        error:
+          'Team not found'
+      });
+    }
+
+    await db.prepare(`
+      UPDATE teams
+
+      SET
+        archived = 0
+
+      WHERE id = ?
+    `).run(teamId);
+
+    const restored =
+      await db.prepare(`
+        SELECT *
+        FROM teams
+        WHERE id = ?
+      `).get(teamId);
+
+    return res.json({
+
+      success:
+        true,
+
+      archived:
+        false,
+
+      message:
+        `${team.name} restored successfully`,
+
+      team:
+        restored
+    });
+
+  } catch (error) {
+
+    return sendError(
+      res,
+      error,
+      'Failed to restore team'
     );
   }
 };
