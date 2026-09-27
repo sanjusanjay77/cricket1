@@ -1,11 +1,27 @@
+import {
+  useEffect,
+  useState,
+  useCallback,
+  memo,
+} from 'react';
 
-import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Matches, getApiErrorMessage } from '../api/api.js';
-import socket from '../socket.js';
-import { exportMatchPdf } from '../utils/exportPdf.js';
 
-const MATCHES_CACHE_KEY = 'gcc_matches_cache_v1';
+import {
+  Matches,
+  getApiErrorMessage,
+} from '../api/api.js';
+
+import socket from '../socket.js';
+
+import {
+  exportMatchPdf,
+} from '../utils/exportPdf.js';
+
+
+const MATCHES_CACHE_KEY =
+  'gcc_matches_cache_v1';
+
 
 const statusBadge = {
   upcoming:
@@ -20,6 +36,7 @@ const statusBadge = {
   completed:
     'bg-slate-500/10 text-slate-400 border border-slate-600/30',
 };
+
 
 /* =========================================================
    ERROR HELPER
@@ -41,6 +58,7 @@ function showDeleteError(error) {
     `Delete failed:\n\n${message}`
   );
 }
+
 
 /* =========================================================
    CACHE HELPERS
@@ -74,12 +92,14 @@ function readMatchesCache() {
   }
 }
 
+
 function writeMatchesCache(matches) {
   try {
     localStorage.setItem(
       MATCHES_CACHE_KEY,
       JSON.stringify(matches)
     );
+
   } catch (error) {
     console.warn(
       'Failed to save matches cache:',
@@ -88,108 +108,93 @@ function writeMatchesCache(matches) {
   }
 }
 
+
 /* =========================================================
    LIVE MATCH CARD
 ========================================================= */
 
-function LiveHero({
+const LiveHero = memo(function LiveHero({
   match,
   onDeleted,
 }) {
-  const [data, setData] = useState({
+
+  /*
+   * IMPORTANT PERFORMANCE CHANGE:
+   *
+   * Home already loads detailed live-match data
+   * inside loadMatches().
+   *
+   * Therefore LiveHero does NOT call Matches.get()
+   * again when it mounts.
+   *
+   * This removes one duplicate API request per
+   * live match.
+   */
+
+  const [data, setData] = useState(() => ({
     match,
-    innings: match?.innings || [],
-    players: match?.players || [],
-  });
+    innings:
+      Array.isArray(match?.innings)
+        ? match.innings
+        : [],
+    players:
+      Array.isArray(match?.players)
+        ? match.players
+        : [],
+  }));
+
 
   const [deleting, setDeleting] =
     useState(false);
 
-  /*
-   * Keep Home data immediately available.
-   *
-   * IMPORTANT:
-   * Do not call Matches.get() here.
-   */
+
+  /* =======================================================
+     SYNC PROPS INTO LOCAL STATE
+  ======================================================= */
+
   useEffect(() => {
-  let cancelled = false;
 
-  const loadLiveMatch = async () => {
-    // Show the match immediately.
-    setData((current) => ({
-      ...current,
+    setData({
       match,
-      innings: match?.innings || current.innings || [],
-      players: match?.players || current.players || [],
-    }));
 
-    if (!match?.id) {
-      return;
-    }
+      innings:
+        Array.isArray(match?.innings)
+          ? match.innings
+          : [],
 
-    try {
-      const detailedMatch =
-        await Matches.get(match.id);
+      players:
+        Array.isArray(match?.players)
+          ? match.players
+          : [],
+    });
 
-      if (cancelled) {
-        return;
-      }
+  }, [match]);
 
-      setData((current) => ({
-        ...current,
-
-        match:
-          detailedMatch?.match ||
-          detailedMatch ||
-          current.match,
-
-        innings:
-          detailedMatch?.innings ||
-          detailedMatch?.match?.innings ||
-          current.innings ||
-          [],
-
-        players:
-          detailedMatch?.players ||
-          detailedMatch?.match?.players ||
-          current.players ||
-          [],
-      }));
-
-    } catch (error) {
-      console.error(
-        'Failed to load live match details:',
-        error
-      );
-    }
-  };
-
-  loadLiveMatch();
-
-  return () => {
-    cancelled = true;
-  };
-}, [match]);
 
   /* =======================================================
      REALTIME SOCKET
   ======================================================= */
 
   useEffect(() => {
+
     if (!match?.id) {
-      return;
+      return undefined;
     }
+
 
     socket.emit(
       'join-match',
       match.id
     );
 
+
     const onUpdate = ({
       match: updatedMatch,
       innings,
     }) => {
+
       setData((current) => ({
+
         ...current,
 
         match:
@@ -200,15 +205,20 @@ function LiveHero({
           Array.isArray(innings)
             ? innings
             : current.innings,
+
       }));
+
     };
+
 
     socket.on(
       'score-update',
       onUpdate
     );
 
+
     return () => {
+
       socket.emit(
         'leave-match',
         match.id
@@ -218,55 +228,81 @@ function LiveHero({
         'score-update',
         onUpdate
       );
+
     };
+
   }, [match?.id]);
+
 
   if (!data?.match) {
     return null;
   }
 
+
   const currentMatch =
     data.match;
+
 
   const innings =
     data.innings?.[
       data.innings.length - 1
     ];
 
+
   const battingTeam =
     innings?.innings?.batting_team_id ===
     currentMatch.team1_id
+
       ? currentMatch.team1_name
+
       : innings?.innings?.batting_team_id ===
           currentMatch.team2_id
+
         ? currentMatch.team2_name
+
         : null;
+
 
   const battingShort =
     innings?.innings?.batting_team_id ===
     currentMatch.team1_id
-      ? currentMatch.team1_short ||
-        currentMatch.team1_name ||
-        currentMatch.team1_short
+
+      ? (
+          innings?.innings?.batting_team_short ||
+          currentMatch.team1_short ||
+          currentMatch.team1_name ||
+          ''
+        )
+
       : innings?.innings?.batting_team_id ===
           currentMatch.team2_id
-        ? currentMatch.team2_short ||
-          currentMatch.team2_name ||
-          currentMatch.team2_short
+
+        ? (
+            innings?.innings?.batting_team_short ||
+            currentMatch.team2_short ||
+            currentMatch.team2_name ||
+            ''
+          )
+
         : null;
+
 
   /* =======================================================
      DOWNLOAD PDF
   ======================================================= */
 
   const downloadPdf = async () => {
+
     try {
+
       const detail =
         await Matches.get(
           currentMatch.id
         );
 
+
       await exportMatchPdf({
+
         match:
           detail.match,
 
@@ -275,9 +311,11 @@ function LiveHero({
 
         players:
           detail.players || [],
+
       });
 
     } catch (error) {
+
       console.error(
         'PDF export failed:',
         error
@@ -286,17 +324,22 @@ function LiveHero({
       alert(
         'Unable to create PDF. Please try again.'
       );
+
     }
+
   };
+
 
   /* =======================================================
      DELETE LIVE MATCH
   ======================================================= */
 
   const deleteMatch = async () => {
+
     if (deleting) {
       return;
     }
+
 
     const ok =
       window.confirm(
@@ -305,39 +348,55 @@ function LiveHero({
         'This action cannot be undone.'
       );
 
+
     if (!ok) {
       return;
     }
 
+
     setDeleting(true);
 
+
     try {
+
       console.log(
         '🗑️ Deleting live match:',
         currentMatch.id
       );
 
+
       await Matches.remove(
         currentMatch.id
       );
+
 
       console.log(
         '✅ Live match deleted:',
         currentMatch.id
       );
 
+
       if (onDeleted) {
+
         onDeleted(
           currentMatch.id
         );
+
       }
 
+
     } catch (error) {
-      showDeleteError(error);
+
+      showDeleteError(
+        error
+      );
 
       setDeleting(false);
+
     }
+
   };
+
 
   return (
     <div className="mb-4 overflow-hidden rounded-xl border border-red-500/25 bg-slate-900 shadow-md shadow-black/10">
@@ -353,6 +412,7 @@ function LiveHero({
         }}
         className="block"
       >
+
         <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
 
           <div className="flex items-center gap-1.5">
@@ -365,17 +425,20 @@ function LiveHero({
 
             </span>
 
+
             <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">
               Live
             </span>
 
           </div>
 
+
           <div className="text-[10px] text-slate-600">
             {currentMatch.overs_limit} overs
           </div>
 
         </div>
+
 
         {/* =================================================
             TEAMS
@@ -393,9 +456,11 @@ function LiveHero({
 
             </div>
 
+
             <div className="shrink-0 text-[9px] font-bold text-slate-600">
               VS
             </div>
+
 
             <div className="min-w-0 flex-1 text-left">
 
@@ -409,6 +474,7 @@ function LiveHero({
 
         </div>
 
+
         {/* =================================================
             SCORE
         ================================================= */}
@@ -416,10 +482,13 @@ function LiveHero({
         <div className="px-3 pb-3 pt-2 text-center">
 
           {innings ? (
+
             <>
+
               <div className="mb-0.5 text-[9px] uppercase tracking-wider text-slate-600">
                 {battingShort} batting
               </div>
+
 
               <div className="text-[38px] font-black leading-none tracking-tight text-white">
 
@@ -431,6 +500,7 @@ function LiveHero({
 
               </div>
 
+
               <div className="mt-1 text-[11px] text-slate-500">
 
                 {innings.overs}
@@ -441,31 +511,42 @@ function LiveHero({
 
                 RR {innings.runRate}
 
+
                 {innings.innings.target && (
+
                   <>
+
                     <span className="mx-1.5 text-slate-700">
                       •
                     </span>
 
                     Target {innings.innings.target}
+
                   </>
+
                 )}
 
               </div>
+
             </>
+
           ) : (
+
             <div className="py-3 text-[11px] text-slate-500">
               Live match
             </div>
+
           )}
 
         </div>
+
 
         {/* =================================================
             BATTING TEAM
         ================================================= */}
 
         {battingTeam && (
+
           <div className="px-3 pb-3 text-center">
 
             <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-medium text-slate-500">
@@ -473,9 +554,11 @@ function LiveHero({
             </span>
 
           </div>
+
         )}
 
       </Link>
+
 
       {/* =================================================
           ACTION BAR
@@ -493,6 +576,7 @@ function LiveHero({
           View
         </Link>
 
+
         <button
           type="button"
           className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-700"
@@ -501,6 +585,7 @@ function LiveHero({
         >
           PDF
         </button>
+
 
         <button
           type="button"
@@ -517,25 +602,29 @@ function LiveHero({
 
     </div>
   );
-}
+});
+
 
 /* =========================================================
    NORMAL MATCH CARD
 ========================================================= */
 
-function MatchCard({
+const MatchCard = memo(function MatchCard({
   match,
   onDelete,
   onDownload,
   deletingId,
 }) {
+
   const statusText =
     match.status === 'innings-break'
       ? 'Innings Break'
       : match.status;
 
+
   const isDeleting =
     deletingId === match.id;
+
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
@@ -554,15 +643,18 @@ function MatchCard({
               {match.team1_short}
             </span>
 
+
             <span className="text-[9px] font-bold text-slate-600">
               VS
             </span>
+
 
             <span className="text-sm font-bold text-white">
               {match.team2_short}
             </span>
 
           </div>
+
 
           <span
             className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${
@@ -575,6 +667,7 @@ function MatchCard({
 
         </div>
 
+
         {/* =================================================
             MATCH INFO
         ================================================= */}
@@ -583,25 +676,30 @@ function MatchCard({
           {match.overs_limit} overs
         </div>
 
+
         {/* =================================================
             RESULT
         ================================================= */}
 
         {match.result_text && (
+
           <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-emerald-500/5 px-2 py-1.5">
 
             <span className="text-xs">
               🏆
             </span>
 
+
             <span className="truncate text-[11px] font-medium text-emerald-400">
               {match.result_text}
             </span>
 
           </div>
+
         )}
 
       </div>
+
 
       {/* =================================================
           BUTTONS
@@ -610,22 +708,28 @@ function MatchCard({
       <div className="grid grid-cols-2 gap-1.5 border-t border-slate-800 p-2">
 
         {match.status === 'upcoming' && (
+
           <Link
             to={`/match/${match.id}/setup`}
             className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
           >
             🏏 Start Toss
           </Link>
+
         )}
 
+
         {match.status === 'innings-break' && (
+
           <Link
             to={`/match/${match.id}/score`}
             className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
           >
             ▶ Continue
           </Link>
+
         )}
+
 
         <Link
           to={`/match/${match.id}/live`}
@@ -637,6 +741,7 @@ function MatchCard({
           View
         </Link>
 
+
         <button
           type="button"
           className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 disabled:opacity-50"
@@ -647,6 +752,7 @@ function MatchCard({
         >
           PDF
         </button>
+
 
         <button
           type="button"
@@ -665,7 +771,8 @@ function MatchCard({
 
     </div>
   );
-}
+});
+
 
 /* =========================================================
    HOME
@@ -674,36 +781,45 @@ function MatchCard({
 export default function Home() {
 
   /*
-   * IMPORTANT:
+   * IMPORTANT PERFORMANCE CHANGE:
    *
-   * Read cached matches immediately.
+   * The cache is now read lazily only during
+   * the initial state creation.
    *
-   * This allows Home to render without waiting
-   * for the remote Render/Turso request.
+   * It is not parsed again on every render.
    */
-  const initialCachedMatches =
-    readMatchesCache();
 
   const [matches, setMatches] =
-    useState(initialCachedMatches);
+    useState(() =>
+      readMatchesCache()
+    );
+
 
   /*
-   * Only show the full loading screen when
-   * there is absolutely no cached data.
+   * Show the loading screen only when
+   * there is no cached match data.
    */
+
   const [loading, setLoading] =
-    useState(
-      initialCachedMatches.length === 0
-    );
+    useState(() => {
+
+      const cached =
+        readMatchesCache();
+
+      return cached.length === 0;
+
+    });
+
 
   const [deletingId, setDeletingId] =
     useState(null);
+
 
   /* =======================================================
      LOAD MATCHES
   ======================================================= */
 
-    const loadMatches =
+  const loadMatches =
     useCallback(async () => {
 
       try {
@@ -711,140 +827,195 @@ export default function Home() {
         /*
          * First load the normal match list.
          */
+
         const data =
           await Matches.list();
+
 
         const matchList =
           Array.isArray(data)
             ? data
             : [];
 
+
         /*
-         * Load detailed score information
-         * for live matches.
+         * Only live matches need detailed
+         * scoreboard information.
          *
-         * Matches.list() gives the match/card data,
-         * while Matches.get(id) gives the detailed
-         * innings and player information.
+         * These requests happen in parallel.
          */
-        const enrichedMatches =
-          await Promise.all(
-            matchList.map(
-              async (match) => {
 
-                /*
-                 * Only live matches need
-                 * detailed scoreboard data.
-                 */
-                if (
-                  match?.status !== 'live'
-                ) {
-                  return match;
-                }
+        const liveMatches =
+          matchList.filter(
+            (match) =>
+              match?.status === 'live'
+          );
 
-                try {
 
-                  const detail =
-                    await Matches.get(
-                      match.id
+        let enrichedMatches;
+
+
+        if (liveMatches.length === 0) {
+
+          /*
+           * No live matches.
+           *
+           * No additional API requests needed.
+           */
+
+          enrichedMatches =
+            matchList;
+
+        } else {
+
+          /*
+           * Fetch all live match details
+           * simultaneously.
+           */
+
+          const liveDetails =
+            await Promise.all(
+              liveMatches.map(
+                async (match) => {
+
+                  try {
+
+                    const detail =
+                      await Matches.get(
+                        match.id
+                      );
+
+
+                    const detailedMatch =
+                      detail?.match ||
+                      detail ||
+                      {};
+
+
+                    const detailedInnings =
+                      Array.isArray(
+                        detail?.innings
+                      )
+
+                        ? detail.innings
+
+                        : Array.isArray(
+                            detailedMatch?.innings
+                          )
+
+                          ? detailedMatch.innings
+
+                          : [];
+
+
+                    const detailedPlayers =
+                      Array.isArray(
+                        detail?.players
+                      )
+
+                        ? detail.players
+
+                        : Array.isArray(
+                            detailedMatch?.players
+                          )
+
+                          ? detailedMatch.players
+
+                          : [];
+
+
+                    return {
+                      ...match,
+
+                      ...detailedMatch,
+
+                      /*
+                       * Always preserve ID/status
+                       * from the main match list.
+                       */
+
+                      id:
+                        match.id,
+
+                      status:
+                        match.status,
+
+                      innings:
+                        detailedInnings,
+
+                      players:
+                        detailedPlayers,
+
+                    };
+
+                  } catch (error) {
+
+                    console.error(
+                      `Failed to load live match details for ${match.id}:`,
+                      error
                     );
 
-                  /*
-                   * Some endpoints return:
-                   *
-                   * {
-                   *   match: {...},
-                   *   innings: [...]
-                   * }
-                   *
-                   * Others may return the match
-                   * object directly.
-                   */
-                  const detailedMatch =
-                    detail?.match ||
-                    detail ||
-                    {};
+                    return match;
 
-                  const detailedInnings =
-                    Array.isArray(
-                      detail?.innings
-                    )
-                      ? detail.innings
-                      : Array.isArray(
-                          detailedMatch?.innings
-                        )
-                        ? detailedMatch.innings
-                        : [];
+                  }
 
-                  const detailedPlayers =
-                    Array.isArray(
-                      detail?.players
-                    )
-                      ? detail.players
-                      : Array.isArray(
-                          detailedMatch?.players
-                        )
-                        ? detailedMatch.players
-                        : [];
-
-                  return {
-                    ...match,
-
-                    /*
-                     * Keep the latest detailed
-                     * match information.
-                     */
-                    ...detailedMatch,
-
-                    /*
-                     * IMPORTANT:
-                     * Preserve the original ID/status
-                     * from the match list.
-                     */
-                    id: match.id,
-
-                    status:
-                      match.status,
-
-                    innings:
-                      detailedInnings,
-
-                    players:
-                      detailedPlayers,
-                  };
-
-                } catch (error) {
-
-                  console.error(
-                    `Failed to load live match details for ${match.id}:`,
-                    error
-                  );
-
-                  /*
-                   * If detailed loading fails,
-                   * keep the normal match card.
-                   */
-                  return match;
                 }
-              }
-            )
-          );
+              )
+            );
+
+
+          /*
+           * Create a lookup table so we don't
+           * repeatedly search the live details array.
+           */
+
+          const liveDetailMap =
+            new Map(
+              liveDetails.map(
+                (match) => [
+                  match.id,
+                  match,
+                ]
+              )
+            );
+
+
+          /*
+           * Rebuild the original match order.
+           */
+
+          enrichedMatches =
+            matchList.map(
+              (match) =>
+                match?.status === 'live'
+                  ? (
+                      liveDetailMap.get(
+                        match.id
+                      ) || match
+                    )
+                  : match
+            );
+
+        }
+
 
         /*
          * Update Home immediately.
          */
+
         setMatches(
           enrichedMatches
         );
 
+
         /*
-         * Save enriched live matches in cache
-         * so Home can display the last known score
-         * while the server is loading next time.
+         * Save latest data in cache.
          */
+
         writeMatchesCache(
           enrichedMatches
         );
+
 
       } catch (error) {
 
@@ -853,15 +1024,18 @@ export default function Home() {
           error
         );
 
+
         /*
          * Keep existing cached data if
          * the server temporarily fails.
          */
+
         setMatches((current) =>
           current.length > 0
             ? current
             : []
         );
+
 
       } finally {
 
@@ -873,162 +1047,205 @@ export default function Home() {
 
     }, []);
 
+
+  /* =======================================================
+     LOAD MATCHES ON MOUNT
+  ======================================================= */
+
+  useEffect(() => {
+
+    loadMatches();
+
+  }, [loadMatches]);
+
+
   /* =======================================================
      DELETE NORMAL MATCH
   ======================================================= */
 
   const deleteMatch =
-    async (matchId) => {
+    useCallback(
+      async (matchId) => {
 
-      if (!matchId) {
-        alert(
-          'Invalid match ID.'
-        );
+        if (!matchId) {
 
-        return;
-      }
-
-      if (deletingId) {
-        return;
-      }
-
-      const ok =
-        window.confirm(
-          'Delete this match permanently?\n\n' +
-          'This will delete the match, innings, balls and full scorecard.\n\n' +
-          'This action cannot be undone.'
-        );
-
-      if (!ok) {
-        return;
-      }
-
-      setDeletingId(
-        matchId
-      );
-
-      try {
-
-        console.log(
-          '🗑️ Deleting match:',
-          matchId
-        );
-
-        await Matches.remove(
-          matchId
-        );
-
-        console.log(
-          '✅ Match deleted:',
-          matchId
-        );
-
-        /*
-         * Remove immediately from UI.
-         */
-        setMatches((current) => {
-
-          const next =
-            current.filter(
-              (match) =>
-                match.id !== matchId
-            );
-
-          writeMatchesCache(
-            next
+          alert(
+            'Invalid match ID.'
           );
 
-          return next;
-        });
+          return;
+        }
 
-        /*
-         * Reload once from server to guarantee
-         * synchronization.
-         */
+
+        if (deletingId) {
+          return;
+        }
+
+
+        const ok =
+          window.confirm(
+            'Delete this match permanently?\n\n' +
+            'This will delete the match, innings, balls and full scorecard.\n\n' +
+            'This action cannot be undone.'
+          );
+
+
+        if (!ok) {
+          return;
+        }
+
+
+        setDeletingId(
+          matchId
+        );
+
+
         try {
 
-          const latest =
-            await Matches.list();
-
-          const latestMatches =
-            Array.isArray(latest)
-              ? latest
-              : [];
-
-          setMatches(
-            latestMatches
+          console.log(
+            '🗑️ Deleting match:',
+            matchId
           );
 
-          writeMatchesCache(
-            latestMatches
+
+          await Matches.remove(
+            matchId
           );
 
-        } catch (reloadError) {
 
-          console.warn(
-            'Match deleted but refresh failed:',
-            reloadError
+          console.log(
+            '✅ Match deleted:',
+            matchId
+          );
+
+
+          /*
+           * Remove immediately from UI.
+           */
+
+          setMatches((current) => {
+
+            const next =
+              current.filter(
+                (match) =>
+                  match.id !== matchId
+              );
+
+
+            writeMatchesCache(
+              next
+            );
+
+
+            return next;
+
+          });
+
+
+          /*
+           * Reload once from server to guarantee
+           * synchronization.
+           */
+
+          try {
+
+            const latest =
+              await Matches.list();
+
+
+            const latestMatches =
+              Array.isArray(latest)
+                ? latest
+                : [];
+
+
+            setMatches(
+              latestMatches
+            );
+
+
+            writeMatchesCache(
+              latestMatches
+            );
+
+
+          } catch (reloadError) {
+
+            console.warn(
+              'Match deleted but refresh failed:',
+              reloadError
+            );
+
+          }
+
+
+        } catch (error) {
+
+          showDeleteError(
+            error
+          );
+
+        } finally {
+
+          setDeletingId(
+            null
           );
 
         }
 
-      } catch (error) {
+      },
+      [deletingId]
+    );
 
-        showDeleteError(
-          error
-        );
-
-      } finally {
-
-        setDeletingId(
-          null
-        );
-
-      }
-
-    };
 
   /* =======================================================
      DOWNLOAD PDF
   ======================================================= */
 
   const downloadPdf =
-    async (matchId) => {
+    useCallback(
+      async (matchId) => {
 
-      try {
+        try {
 
-        const detail =
-          await Matches.get(
-            matchId
+          const detail =
+            await Matches.get(
+              matchId
+            );
+
+
+          await exportMatchPdf({
+
+            match:
+              detail.match,
+
+            innings:
+              detail.innings || [],
+
+            players:
+              detail.players || [],
+
+          });
+
+
+        } catch (error) {
+
+          console.error(
+            'PDF export failed:',
+            error
           );
 
-        await exportMatchPdf({
 
-          match:
-            detail.match,
+          alert(
+            'Unable to create PDF. Please try again.'
+          );
 
-          innings:
-            detail.innings || [],
+        }
 
-          players:
-            detail.players || [],
+      },
+      []
+    );
 
-        });
-
-      } catch (error) {
-
-        console.error(
-          'PDF export failed:',
-          error
-        );
-
-        alert(
-          'Unable to create PDF. Please try again.'
-        );
-
-      }
-
-    };
 
   /* =======================================================
      LOADING
@@ -1040,6 +1257,7 @@ export default function Home() {
   ) {
 
     return (
+
       <div className="flex min-h-[30vh] items-center justify-center">
 
         <div className="text-xs text-slate-500">
@@ -1047,31 +1265,49 @@ export default function Home() {
         </div>
 
       </div>
+
     );
 
   }
+
 
   /* =======================================================
      FILTER MATCHES
   ======================================================= */
 
-  const liveMatches =
-    matches.filter(
-      (m) =>
-        m.status === 'live'
-    );
+  const liveMatches = [];
+  const others = [];
 
-  const others =
-    matches.filter(
-      (m) =>
-        m.status !== 'live'
-    );
+
+  for (
+    const match of matches
+  ) {
+
+    if (
+      match.status === 'live'
+    ) {
+
+      liveMatches.push(
+        match
+      );
+
+    } else {
+
+      others.push(
+        match
+      );
+
+    }
+
+  }
+
 
   /* =======================================================
      RENDER
   ======================================================= */
 
   return (
+
     <div className="fade-in mx-auto w-full max-w-3xl pb-5">
 
       {/* =================================================
@@ -1086,11 +1322,13 @@ export default function Home() {
             Matches
           </h1>
 
+
           <p className="mt-0.5 text-[10px] text-slate-600">
             Scores & match records
           </p>
 
         </div>
+
 
         <Link
           to="/create-match"
@@ -1101,11 +1339,13 @@ export default function Home() {
 
       </div>
 
+
       {/* =================================================
           LIVE SECTION
       ================================================= */}
 
       {liveMatches.length > 0 && (
+
         <section className="mb-5">
 
           <div className="mb-2 flex items-center gap-1.5">
@@ -1118,14 +1358,17 @@ export default function Home() {
 
             </span>
 
+
             <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
               Live now
             </h2>
 
           </div>
 
+
           {liveMatches.map(
             (match) => (
+
               <LiveHero
                 key={match.id}
                 match={match}
@@ -1140,41 +1383,51 @@ export default function Home() {
                             match.id !== id
                         );
 
+
                       writeMatchesCache(
                         next
                       );
 
+
                       return next;
+
                     }
                   );
 
                 }}
               />
+
             )
           )}
 
         </section>
+
       )}
+
 
       {/* =================================================
           EMPTY STATE
       ================================================= */}
 
       {matches.length === 0 && (
+
         <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
 
           <div className="text-3xl">
             🏏
           </div>
 
+
           <h2 className="mt-2 text-sm font-semibold text-white">
             No matches yet
           </h2>
+
 
           <p className="mx-auto mt-1 max-w-xs text-[11px] leading-relaxed text-slate-600">
             Create your first scoreboard
             to start recording a match.
           </p>
+
 
           <Link
             to="/create-match"
@@ -1184,13 +1437,16 @@ export default function Home() {
           </Link>
 
         </div>
+
       )}
+
 
       {/* =================================================
           OTHER MATCHES
       ================================================= */}
 
       {others.length > 0 && (
+
         <section>
 
           <div className="mb-2 flex items-center justify-between">
@@ -1199,16 +1455,19 @@ export default function Home() {
               All matches
             </h2>
 
+
             <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[9px] text-slate-600">
               {others.length}
             </span>
 
           </div>
 
+
           <div className="grid gap-2">
 
             {others.map(
               (match) => (
+
                 <MatchCard
                   key={match.id}
                   match={match}
@@ -1222,15 +1481,18 @@ export default function Home() {
                     deletingId
                   }
                 />
+
               )
             )}
 
           </div>
 
         </section>
+
       )}
 
     </div>
-  );
-}
 
+  );
+
+}
