@@ -1,16 +1,9 @@
-import { Suspense, lazy, useEffect } from 'react';
+import React, { Suspense, lazy } from 'react';
 import { Routes, Route } from 'react-router-dom';
 
 import Navbar from './components/Navbar.jsx';
 import NotificationRegistration from './components/NotificationRegistration.jsx';
 import ScoreboardGate from './components/ScoreboardGate.jsx';
-import { Players, Teams } from './api/api.js';
-
-/*
-========================================================
-LAZY PAGE IMPORTS
-========================================================
-*/
 
 const Home = lazy(() => import('./pages/Home.jsx'));
 const TeamManager = lazy(() => import('./pages/TeamManager.jsx'));
@@ -20,78 +13,6 @@ const CreateMatch = lazy(() => import('./pages/CreateMatch.jsx'));
 const MatchSetup = lazy(() => import('./pages/MatchSetup.jsx'));
 const Scorer = lazy(() => import('./pages/Scorer.jsx'));
 const LiveScoreboard = lazy(() => import('./pages/LiveScoreboard.jsx'));
-
-/*
-========================================================
-PLAYER RECORDS CACHE
-========================================================
-*/
-
-const PLAYER_CACHE_KEY = 'gcc_player_records_cache_v2';
-const TEAMS_CACHE_KEY = 'gcc_teams_cache_v1';
-
-function saveCache(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Ignore localStorage errors.
-  }
-}
-
-/*
-========================================================
-PRELOAD PLAYER RECORDS
-========================================================
-
-This starts loading the Player Records data while the
-rest of the application is being used.
-
-So when the user later clicks "Player Records",
-the data may already be available.
-*/
-
-function preloadPlayerRecords() {
-  /*
-   * Start downloading the PlayerRecords JS chunk.
-   *
-   * This removes the lazy-page delay when the page
-   * is opened later.
-   */
-  import('./pages/PlayerRecords.jsx').catch(() => {});
-
-  /*
-   * Start loading player career data immediately.
-   */
-  Players.allCareerStats()
-    .then((data) => {
-      if (Array.isArray(data)) {
-        saveCache(PLAYER_CACHE_KEY, data);
-      }
-    })
-    .catch(() => {
-      // Do not interrupt the application if preload fails.
-    });
-
-  /*
-   * Teams are also needed by Player Records when
-   * adding a player.
-   */
-  Teams.list()
-    .then((data) => {
-      if (Array.isArray(data)) {
-        saveCache(TEAMS_CACHE_KEY, data);
-      }
-    })
-    .catch(() => {
-      // Do not interrupt the application if preload fails.
-    });
-}
-
-/*
-========================================================
-PAGE LOADING
-========================================================
-*/
 
 function PageLoading() {
   return (
@@ -103,22 +24,70 @@ function PageLoading() {
   );
 }
 
-/*
-========================================================
-APP
-========================================================
-*/
+function PageError({ error }) {
+  return (
+    <div className="max-w-xl mx-auto mt-10 px-4">
+      <div className="rounded-2xl border border-red-500/30 bg-red-950/40 p-5">
+
+        <h2 className="text-lg font-bold text-red-300">
+          Unable to open this page
+        </h2>
+
+        <p className="text-sm text-slate-400 mt-2 break-words">
+          {error?.message ||
+            'Something went wrong while loading the page.'}
+        </p>
+
+        <button
+          type="button"
+          className="btn btn-primary mt-4"
+          onClick={() => window.location.reload()}
+        >
+          Reload Page
+        </button>
+
+      </div>
+    </div>
+  );
+}
+
+class RouteErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+
+    this.state = {
+      error: null,
+    };
+  }
+
+  static getDerivedStateFromError(error) {
+    return {
+      error,
+    };
+  }
+
+  componentDidCatch(error, info) {
+    console.error(
+      'Route rendering error:',
+      error,
+      info
+    );
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <PageError
+          error={this.state.error}
+        />
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 export default function App() {
-
-  /*
-   * Start Player Records preload as soon as the app
-   * has mounted.
-   */
-  useEffect(() => {
-    preloadPlayerRecords();
-  }, []);
-
   return (
     <div className="min-h-screen bg-stadium">
 
@@ -126,61 +95,73 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto px-4 py-6 lg:max-w-7xl">
 
-        <Suspense fallback={<PageLoading />}>
+        <RouteErrorBoundary>
 
-          <Routes>
+          <Suspense fallback={<PageLoading />}>
 
-            <Route
-              path="/"
-              element={<Home />}
-            />
+            <Routes>
 
-            <Route
-              path="/records"
-              element={<Records />}
-            />
+              {/* HOME */}
+              <Route
+                path="/"
+                element={<Home />}
+              />
 
-            <Route
-              path="/teams"
-              element={<TeamManager />}
-            />
+              {/* RECORDS */}
+              <Route
+                path="/records"
+                element={<Records />}
+              />
 
-            <Route
-              path="/players"
-              element={<PlayerRecords />}
-            />
+              {/* TEAMS */}
+              <Route
+                path="/teams"
+                element={<TeamManager />}
+              />
 
-            <Route
-              path="/create-match"
-              element={
-                <ScoreboardGate>
-                  <CreateMatch />
-                </ScoreboardGate>
-              }
-            />
+              {/* PLAYERS */}
+              <Route
+                path="/players"
+                element={<PlayerRecords />}
+              />
 
-            <Route
-              path="/match/:matchId/setup"
-              element={<MatchSetup />}
-            />
+              {/* CREATE MATCH */}
+              <Route
+                path="/create-match"
+                element={
+                  <ScoreboardGate>
+                    <CreateMatch />
+                  </ScoreboardGate>
+                }
+              />
 
-            <Route
-              path="/match/:matchId/score"
-              element={
-                <ScoreboardGate>
-                  <Scorer />
-                </ScoreboardGate>
-              }
-            />
+              {/* MATCH SETUP / TOSS */}
+              <Route
+                path="/match/:matchId/setup"
+                element={<MatchSetup />}
+              />
 
-            <Route
-              path="/match/:matchId/live"
-              element={<LiveScoreboard />}
-            />
+              {/* SCORER */}
+              <Route
+                path="/match/:matchId/score"
+                element={
+                  <ScoreboardGate>
+                    <Scorer />
+                  </ScoreboardGate>
+                }
+              />
 
-          </Routes>
+              {/* LIVE SCOREBOARD */}
+              <Route
+                path="/match/:matchId/live"
+                element={<LiveScoreboard />}
+              />
 
-        </Suspense>
+            </Routes>
+
+          </Suspense>
+
+        </RouteErrorBoundary>
 
       </main>
 
