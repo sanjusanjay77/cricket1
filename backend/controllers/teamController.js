@@ -46,14 +46,18 @@ exports.listTeams = async (
       await db.prepare(`
         SELECT
           t.*,
+
           (
             SELECT COUNT(*)
             FROM players p
             WHERE p.team_id = t.id
               AND p.active = 1
           ) AS player_count
+
         FROM teams t
-        ORDER BY t.created_at DESC
+
+        ORDER BY
+          t.created_at DESC
       `).all();
 
     return res.json(
@@ -107,16 +111,19 @@ exports.getTeam = async (
         FROM players
         WHERE team_id = ?
           AND active = 1
+
         ORDER BY
           CASE
-            WHEN jersey_no IS NULL THEN 9999
-            ELSE jersey_no
-          END ASC,
+            WHEN jersey_no IS NULL THEN 1
+            ELSE 0
+          END,
+          jersey_no ASC,
           name ASC
       `).all(team.id);
 
     return res.json({
       ...team,
+
       players:
         players || []
     });
@@ -159,27 +166,24 @@ exports.createTeam = async (
         ? short_name.trim().toUpperCase()
         : '';
 
-    if (!teamName) {
+    if (
+      !teamName ||
+      !teamShortName
+    ) {
 
       return res.status(400).json({
         error:
-          'Enter a team name'
+          'Team name and short name are required'
       });
     }
 
-    if (!teamShortName) {
+    if (
+      teamShortName.length > 10
+    ) {
 
       return res.status(400).json({
         error:
-          'Enter a short team code'
-      });
-    }
-
-    if (teamShortName.length > 5) {
-
-      return res.status(400).json({
-        error:
-          'Short team code must be 5 characters or less'
+          'Short name must be 10 characters or less'
       });
     }
 
@@ -187,12 +191,16 @@ exports.createTeam = async (
       await db.prepare(`
         SELECT id
         FROM teams
+
         WHERE
           LOWER(TRIM(name)) =
           LOWER(TRIM(?))
+
           OR
+
           LOWER(TRIM(short_name)) =
           LOWER(TRIM(?))
+
         LIMIT 1
       `).get(
         teamName,
@@ -229,6 +237,7 @@ exports.createTeam = async (
         logo_color,
         is_own
       )
+
       VALUES (
         ?, ?, ?, ?, ?
       )
@@ -311,27 +320,24 @@ exports.updateTeam = async (
             .trim()
             .toUpperCase();
 
-    if (!newName) {
+    if (
+      !newName ||
+      !newShortName
+    ) {
 
       return res.status(400).json({
         error:
-          'Team name cannot be empty'
+          'Team name and short name cannot be empty'
       });
     }
 
-    if (!newShortName) {
+    if (
+      newShortName.length > 10
+    ) {
 
       return res.status(400).json({
         error:
-          'Short team code cannot be empty'
-      });
-    }
-
-    if (newShortName.length > 5) {
-
-      return res.status(400).json({
-        error:
-          'Short team code must be 5 characters or less'
+          'Short name must be 10 characters or less'
       });
     }
 
@@ -339,15 +345,20 @@ exports.updateTeam = async (
       await db.prepare(`
         SELECT id
         FROM teams
+
         WHERE
           (
             LOWER(TRIM(name)) =
             LOWER(TRIM(?))
+
             OR
+
             LOWER(TRIM(short_name)) =
             LOWER(TRIM(?))
           )
+
           AND id != ?
+
         LIMIT 1
       `).get(
         newName,
@@ -386,11 +397,13 @@ exports.updateTeam = async (
 
     await db.prepare(`
       UPDATE teams
+
       SET
         name = ?,
         short_name = ?,
         logo_color = ?,
         is_own = ?
+
       WHERE id = ?
     `).run(
       newName,
@@ -425,29 +438,6 @@ exports.updateTeam = async (
    DELETE TEAM
 ========================================================= */
 
-/*
- * IMPORTANT BEHAVIOUR
- *
- * A team with NO match/innings history:
- *
- *     Team
- *       ↓
- *     Players
- *
- * can be permanently deleted.
- *
- * A team with historical matches/innings:
- *
- *     Team
- *       ↓
- *     Match
- *       ↓
- *     Innings
- *
- * is protected because deleting it can destroy
- * historical scoreboard relationships.
- */
-
 exports.deleteTeam = async (
   req,
   res
@@ -468,6 +458,10 @@ exports.deleteTeam = async (
       });
     }
 
+    /* -----------------------------------------------------
+       FIND TEAM
+    ----------------------------------------------------- */
+
     const team =
       await db.prepare(`
         SELECT *
@@ -485,32 +479,40 @@ exports.deleteTeam = async (
 
     /* -----------------------------------------------------
        CHECK MATCH HISTORY
+       
+       IMPORTANT:
+       Players alone should NOT prevent deletion.
+
+       Only actual match/innings history protects
+       the team.
     ----------------------------------------------------- */
 
     const matchCount =
       await db.prepare(`
         SELECT COUNT(*) AS count
         FROM matches
+
         WHERE
           team1_id = ?
+
           OR
+
           team2_id = ?
       `).get(
         teamId,
         teamId
       );
 
-    /* -----------------------------------------------------
-       CHECK INNINGS HISTORY
-    ----------------------------------------------------- */
-
     const inningsCount =
       await db.prepare(`
         SELECT COUNT(*) AS count
         FROM innings
+
         WHERE
           batting_team_id = ?
+
           OR
+
           bowling_team_id = ?
       `).get(
         teamId,
@@ -536,43 +538,37 @@ exports.deleteTeam = async (
       innings > 0
     ) {
 
-      const playerCount =
-        await db.prepare(`
-          SELECT COUNT(*) AS count
-          FROM players
-          WHERE team_id = ?
-            AND active = 1
-        `).get(teamId);
-
       return res.status(409).json({
 
         error:
-          'This team is linked to match history and cannot be permanently deleted.',
+          'This team has match history and cannot be permanently deleted.',
 
         protected:
           true,
 
+        reason:
+          'historical_data',
+
+        team_id:
+          teamId,
+
         team_name:
           team.name,
-
-        players_count:
-          Number(
-            playerCount?.count || 0
-          ),
 
         matches_count:
           matches,
 
         innings_count:
-          innings,
-
-        message:
-          'Historical teams are protected so existing scorecards and statistics remain safe.'
+          innings
       });
     }
 
     /* -----------------------------------------------------
        COUNT PLAYERS
+       
+       Players are NOT historical match data by themselves.
+       They can safely be removed when the team has never
+       been used in a match.
     ----------------------------------------------------- */
 
     const playerCount =
@@ -589,45 +585,50 @@ exports.deleteTeam = async (
 
     /* -----------------------------------------------------
        DELETE PLAYERS FIRST
+       
+       This is necessary because players.team_id normally
+       references teams.id.
     ----------------------------------------------------- */
 
-    /*
-     * Since the team has no match/innings history,
-     * its players are safe to remove together with
-     * the unused team.
-     */
-
-    if (players > 0) {
-
-      await db.prepare(`
-        DELETE FROM players
-        WHERE team_id = ?
-      `).run(teamId);
-
-    }
+    await db.prepare(`
+      DELETE FROM players
+      WHERE team_id = ?
+    `).run(teamId);
 
     /* -----------------------------------------------------
        DELETE TEAM
     ----------------------------------------------------- */
 
-    const result =
+    const deleteResult =
       await db.prepare(`
         DELETE FROM teams
         WHERE id = ?
       `).run(teamId);
 
-    if (
-      !result ||
-      Number(result.changes || 0) === 0
-    ) {
+    /* -----------------------------------------------------
+       VERIFY DELETE
+    ----------------------------------------------------- */
 
-      return res.status(404).json({
+    const stillExists =
+      await db.prepare(`
+        SELECT id
+        FROM teams
+        WHERE id = ?
+      `).get(teamId);
+
+    if (stillExists) {
+
+      return res.status(500).json({
         error:
           'Team could not be deleted'
       });
     }
 
-    return res.json({
+    /* -----------------------------------------------------
+       SUCCESS
+    ----------------------------------------------------- */
+
+    return res.status(200).json({
 
       success:
         true,
@@ -642,34 +643,58 @@ exports.deleteTeam = async (
         team.name,
 
       players_deleted:
-        players
+        players,
 
+      rows_deleted:
+        Number(
+          deleteResult?.changes || 1
+        )
     });
 
   } catch (error) {
 
     console.error(
-      'Delete team failed:',
+      '================================================='
+    );
+
+    console.error(
+      'DELETE TEAM ERROR'
+    );
+
+    console.error(
+      'Team ID:',
+      req.params.id
+    );
+
+    console.error(
       error
+    );
+
+    console.error(
+      '================================================='
     );
 
     const message =
       String(
         error?.message || ''
-      ).toLowerCase();
+      );
 
     if (
-      message.includes('foreign key') ||
-      message.includes('constraint')
+      message
+        .toLowerCase()
+        .includes('foreign key')
     ) {
 
       return res.status(409).json({
 
         error:
-          'This team is connected to existing data and cannot be permanently deleted.',
+          'The team is still connected to other historical records and cannot be deleted.',
 
         protected:
-          true
+          true,
+
+        reason:
+          'foreign_key_constraint'
       });
     }
 
