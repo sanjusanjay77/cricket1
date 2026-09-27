@@ -1,4 +1,3 @@
-
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
@@ -86,9 +85,6 @@ export default function Scorer() {
   /*
    * ====================================================
    * BOWLER ID HELPER
-   *
-   * Different backend responses may expose the current
-   * bowler using different property names.
    * ====================================================
    */
 
@@ -508,10 +504,6 @@ export default function Scorer() {
   /*
    * ====================================================
    * SAFE DISPLAY DATA
-   *
-   * IMPORTANT:
-   * These values are calculated before any return so
-   * React hook ordering never changes.
    * ====================================================
    */
 
@@ -548,10 +540,6 @@ export default function Scorer() {
     undoPreservedRef.current?.nonStrikerId ??
     null;
 
-  /*
-   * FIX:
-   * Check ALL supported bowler fields.
-   */
   const earlyServerBowlerId =
     getBowlerId(earlyInn);
 
@@ -687,6 +675,14 @@ export default function Scorer() {
   /*
    * ====================================================
    * BUILD OPTIMISTIC BALL
+   *
+   * IMPORTANT FIX:
+   *
+   * Batting statistics are now stored by PLAYER ID,
+   * not by striker/non-striker position.
+   *
+   * This prevents the 1/3-run strike swap from making
+   * the UI wait for the backend before showing stats.
    * ====================================================
    */
 
@@ -779,18 +775,49 @@ export default function Scorer() {
 
       /*
        * ==================================================
-       * PREVIOUS BATSMAN STATS
+       * BATSMAN STATS BY PLAYER ID
+       *
+       * This is the main performance fix.
+       * ==================================================
+       */
+
+      const serverBattingStatsMap = {};
+
+      safeArray(
+        currentInnings?.battingCard
+      ).forEach(stat => {
+        if (
+          stat?.player_id != null
+        ) {
+          serverBattingStatsMap[
+            String(stat.player_id)
+          ] = stat;
+        }
+      });
+
+      /*
+       * Previous optimistic values override server
+       * values because they may contain balls/runs from
+       * clicks which have not reached the backend yet.
+       */
+
+      const battingStatsById = {
+        ...serverBattingStatsMap,
+        ...(previousOptimistic?.battingStatsById || {})
+      };
+
+      /*
+       * ==================================================
+       * PREVIOUS STRIKER
        * ==================================================
        */
 
       const previousStrikerStats =
-        previousOptimistic?.strikerStats ||
-        currentInnings?.battingCard?.find(
-          b =>
-            String(b?.player_id) ===
-            String(strikerId)
-        ) || {
-          player_id: strikerId,
+        battingStatsById[
+          String(strikerId)
+        ] || {
+          player_id:
+            strikerId,
           runs: 0,
           balls: 0,
           fours: 0,
@@ -798,14 +825,18 @@ export default function Scorer() {
           strike_rate: 0
         };
 
+      /*
+       * ==================================================
+       * PREVIOUS NON-STRIKER
+       * ==================================================
+       */
+
       const previousNonStrikerStats =
-        previousOptimistic?.nonStrikerStats ||
-        currentInnings?.battingCard?.find(
-          b =>
-            String(b?.player_id) ===
-            String(nonStrikerId)
-        ) || {
-          player_id: nonStrikerId,
+        battingStatsById[
+          String(nonStrikerId)
+        ] || {
+          player_id:
+            nonStrikerId,
           runs: 0,
           balls: 0,
           fours: 0,
@@ -872,31 +903,52 @@ export default function Scorer() {
 
       const updatedStrikerStats = {
         ...previousStrikerStats,
-        player_id: strikerId,
-        runs: strikerRuns,
-        balls: strikerBalls,
-        fours: strikerFours,
-        sixes: strikerSixes,
-        strike_rate: Number(strikerSR)
+        player_id:
+          strikerId,
+        runs:
+          strikerRuns,
+        balls:
+          strikerBalls,
+        fours:
+          strikerFours,
+        sixes:
+          strikerSixes,
+        strike_rate:
+          Number(strikerSR)
       };
 
       /*
        * ==================================================
-       * NON STRIKER
+       * NON-STRIKER
        * ==================================================
        */
 
       const updatedNonStrikerStats = {
         ...previousNonStrikerStats,
-        player_id: nonStrikerId
+        player_id:
+          nonStrikerId
       };
 
       /*
        * ==================================================
-       * BOWLER
+       * SAVE BOTH PLAYER STATS BY ID
        *
-       * IMPORTANT:
-       * Existing bowling statistics are preserved.
+       * The old striker remains attached to the old
+       * player's ID even after strike changes.
+       * ==================================================
+       */
+
+      battingStatsById[
+        String(strikerId)
+      ] = updatedStrikerStats;
+
+      battingStatsById[
+        String(nonStrikerId)
+      ] = updatedNonStrikerStats;
+
+      /*
+       * ==================================================
+       * BOWLER
        * ==================================================
        */
 
@@ -1016,6 +1068,16 @@ export default function Scorer() {
       let nextNonStrikerId =
         nonStrikerId;
 
+      /*
+       * IMPORTANT:
+       *
+       * We swap ONLY the IDs here.
+       * battingStatsById remains keyed by player ID.
+       *
+       * Therefore the statistics automatically follow
+       * the correct batsman.
+       */
+
       if (
         legal &&
         teamRuns % 2 === 1
@@ -1056,6 +1118,41 @@ export default function Scorer() {
 
         needsNextBowler =
           true;
+      }
+
+      /*
+       * ==================================================
+       * WICKET STATUS
+       *
+       * Keep the dismissed batsman's optimistic stats
+       * available immediately.
+       * ==================================================
+       */
+
+      if (
+        isWicket &&
+        payload?.dismissed_id
+      ) {
+        const dismissedKey =
+          String(
+            payload.dismissed_id
+          );
+
+        if (
+          battingStatsById[
+            dismissedKey
+          ]
+        ) {
+          battingStatsById[
+            dismissedKey
+          ] = {
+            ...battingStatsById[
+              dismissedKey
+            ],
+            is_out:
+              true
+          };
+        }
       }
 
       /*
@@ -1249,11 +1346,24 @@ export default function Scorer() {
         bowlerBalls:
           newBowlerBalls,
 
+        /*
+         * Keep these fields for compatibility with the
+         * existing UI and other logic.
+         */
         strikerStats:
           updatedStrikerStats,
 
         nonStrikerStats:
           updatedNonStrikerStats,
+
+        /*
+         * MAIN FIX:
+         *
+         * Every batsman's statistics are stored under
+         * that player's ID.
+         */
+        battingStatsById:
+          battingStatsById,
 
         recentBalls:
           newRecentBalls,
@@ -1468,6 +1578,12 @@ export default function Scorer() {
               optimisticRef.current
           });
 
+        /*
+         * IMPORTANT:
+         *
+         * Update the UI BEFORE putting the request into
+         * the backend queue.
+         */
         optimisticRef.current =
           nextOptimistic;
 
@@ -1809,10 +1925,6 @@ export default function Scorer() {
         setShowNextBowler(false);
         setShowInitialBowler(false);
 
-        /*
-         * Keep batsmen restoration for compatibility
-         * with the current backend behavior.
-         */
         if (
           restoredStrikerId &&
           restoredNonStrikerId &&
@@ -1959,11 +2071,6 @@ export default function Scorer() {
     undoPreservedRef.current?.nonStrikerId ??
     null;
 
-  /*
-   * FIX:
-   * Use current_bowler_id, bowler_id and other
-   * possible backend fields.
-   */
   const effectiveBowlerId =
     optimistic?.activeBowlerId ??
     getBowlerId(inn) ??
@@ -2030,6 +2137,28 @@ export default function Scorer() {
         stats.player_id
       );
     }
+  }
+
+  /*
+   * IMPORTANT:
+   * Check the ID-based optimistic map too.
+   */
+
+  if (
+    optimistic?.battingStatsById
+  ) {
+    Object.values(
+      optimistic.battingStatsById
+    ).forEach(stats => {
+      if (
+        stats?.is_out &&
+        stats?.player_id
+      ) {
+        outIds.add(
+          stats.player_id
+        );
+      }
+    });
   }
 
   if (
@@ -2238,6 +2367,8 @@ export default function Scorer() {
   /*
    * ====================================================
    * BATSMAN STATS
+   *
+   * MAIN DISPLAY FIX
    * ====================================================
    */
 
@@ -2271,25 +2402,30 @@ export default function Scorer() {
       strike_rate: 0
     };
 
-  const strikerStats =
-    optimistic &&
-    optimistic.strikerStats &&
-    String(
-      optimistic.strikerStats.player_id
-    ) ===
+  /*
+   * FIRST use player-ID based optimistic statistics.
+   *
+   * This means when Sanjay and Raja swap strike,
+   * their statistics follow their IDs immediately.
+   */
+
+  const optimisticStrikerStats =
+    optimistic?.battingStatsById?.[
       String(effectiveStrikerId)
-      ? optimistic.strikerStats
-      : serverStrikerStats;
+    ];
+
+  const optimisticNonStrikerStats =
+    optimistic?.battingStatsById?.[
+      String(effectiveNonStrikerId)
+    ];
+
+  const strikerStats =
+    optimisticStrikerStats ||
+    serverStrikerStats;
 
   const nonStrikerStats =
-    optimistic &&
-    optimistic.nonStrikerStats &&
-    String(
-      optimistic.nonStrikerStats.player_id
-    ) ===
-      String(effectiveNonStrikerId)
-      ? optimistic.nonStrikerStats
-      : serverNonStrikerStats;
+    optimisticNonStrikerStats ||
+    serverNonStrikerStats;
 
   /*
    * ====================================================
@@ -4224,4 +4360,3 @@ function SelectBatsmen({
     </div>
   );
 }
-
