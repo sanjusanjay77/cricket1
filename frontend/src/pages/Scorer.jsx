@@ -20,12 +20,6 @@ export default function Scorer() {
   const [flashWicket, setFlashWicket] = useState(false);
 
   const [showNextBowler, setShowNextBowler] = useState(false);
-
-  /*
-   * NEW:
-   * Show bowler selection before the first ball
-   * when a newly created innings has no bowler.
-   */
   const [showInitialBowler, setShowInitialBowler] = useState(false);
 
   const [optimistic, setOptimistic] = useState(null);
@@ -98,6 +92,12 @@ export default function Scorer() {
       );
     }
   }, [matchId, applyServerData]);
+
+  /*
+   * ----------------------------------------------------
+   * INITIAL LOAD
+   * ----------------------------------------------------
+   */
 
   useEffect(() => {
     loadFull();
@@ -191,6 +191,12 @@ export default function Scorer() {
     };
   }, [matchId]);
 
+  /*
+   * ----------------------------------------------------
+   * CLEANUP TIMERS / QUEUE
+   * ----------------------------------------------------
+   */
+
   useEffect(() => {
     return () => {
       clearTimeout(
@@ -240,7 +246,7 @@ export default function Scorer() {
 
   /*
    * ----------------------------------------------------
-   * NEXT BOWLER POPUP
+   * NEXT BOWLER EFFECT
    * ----------------------------------------------------
    */
 
@@ -522,17 +528,14 @@ export default function Scorer() {
       serverNonStrikerStats;
 
     const strikerBallsAdded =
-      safePayload.extra_type ===
-        'wide' ||
-      safePayload.extra_type ===
-        'noball'
+      safePayload.extra_type === 'wide' ||
+      safePayload.extra_type === 'noball'
         ? 0
         : 1;
 
     const batterGetsRuns =
       !safePayload.extra_type ||
-      safePayload.extra_type ===
-        'noball';
+      safePayload.extra_type === 'noball';
 
     const newStrikerRuns =
       Number(
@@ -1431,11 +1434,6 @@ export default function Scorer() {
         optimisticRef.current?.activeBowlerId ??
         current.current_bowler_id;
 
-      /*
-       * Do not score when bowler is missing.
-       * The initial bowler popup handles this.
-       */
-
       if (
         optimisticRef.current
           ?.needsNextBowler
@@ -1448,10 +1446,6 @@ export default function Scorer() {
         !effectiveNonStrikerId ||
         !effectiveBowlerId
       ) {
-        /*
-         * If batsmen exist but bowler doesn't,
-         * immediately open bowler selection.
-         */
         if (
           effectiveStrikerId &&
           effectiveNonStrikerId &&
@@ -1516,17 +1510,13 @@ export default function Scorer() {
 
   /*
    * ----------------------------------------------------
-   * LOADING
+   * EARLY DATA VALUES
+   *
+   * IMPORTANT:
+   * Everything needed by hooks below is calculated
+   * before ANY conditional return.
    * ----------------------------------------------------
    */
-
-  if (!match) {
-    return (
-      <p className="text-slate-400">
-        Loading…
-      </p>
-    );
-  }
 
   const safeInnings =
     Array.isArray(innings)
@@ -1542,6 +1532,74 @@ export default function Scorer() {
     safeInnings[
       safeInnings.length - 1
     ];
+
+  const earlyInn =
+    currentInnings?.innings &&
+    typeof currentInnings.innings === 'object'
+      ? currentInnings.innings
+      : null;
+
+  const earlyStrikerId =
+    optimistic?.strikerId ??
+    earlyInn?.striker_id ??
+    null;
+
+  const earlyNonStrikerId =
+    optimistic?.nonStrikerId ??
+    earlyInn?.non_striker_id ??
+    null;
+
+  const earlyBowlerId =
+    optimistic?.activeBowlerId ??
+    earlyInn?.current_bowler_id ??
+    null;
+
+  const earlyTotalBalls =
+    optimistic?.total_balls ??
+    Number(
+      earlyInn?.total_balls || 0
+    );
+
+  const needsInitialBowler =
+    !!earlyStrikerId &&
+    !!earlyNonStrikerId &&
+    !earlyBowlerId &&
+    Number(earlyTotalBalls) === 0;
+
+  /*
+   * ----------------------------------------------------
+   * INITIAL BOWLER EFFECT
+   *
+   * MUST BE BEFORE ALL CONDITIONAL RETURNS.
+   * This fixes React error #310.
+   * ----------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (
+      needsInitialBowler &&
+      !showInitialBowler
+    ) {
+      setShowInitialBowler(true);
+    }
+  }, [
+    needsInitialBowler,
+    showInitialBowler
+  ]);
+
+  /*
+   * ----------------------------------------------------
+   * LOADING
+   * ----------------------------------------------------
+   */
+
+  if (!match) {
+    return (
+      <p className="text-slate-400">
+        Loading…
+      </p>
+    );
+  }
 
   /*
    * ----------------------------------------------------
@@ -1586,8 +1644,7 @@ export default function Scorer() {
    */
 
   if (
-    match.status ===
-      'innings-break' &&
+    match.status === 'innings-break' &&
     pendingCount === 0
   ) {
     if (!currentInnings) {
@@ -2058,34 +2115,6 @@ export default function Scorer() {
 
   /*
    * ----------------------------------------------------
-   * INITIAL BOWLER
-   *
-   * NEW:
-   * If batsmen are selected but there is no bowler,
-   * show selector immediately.
-   * ----------------------------------------------------
-   */
-
-  const needsInitialBowler =
-    !!effectiveStrikerId &&
-    !!effectiveNonStrikerId &&
-    !effectiveBowlerId &&
-    displayTotalBalls === 0;
-
-  useEffect(() => {
-    if (
-      needsInitialBowler &&
-      !showInitialBowler
-    ) {
-      setShowInitialBowler(true);
-    }
-  }, [
-    needsInitialBowler,
-    showInitialBowler
-  ]);
-
-  /*
-   * ----------------------------------------------------
    * PARTNERSHIP
    * ----------------------------------------------------
    */
@@ -2329,9 +2358,7 @@ export default function Scorer() {
         </div>
       )}
 
-      {/* ------------------------------------------------
-          SCORING CONTROLS
-          ------------------------------------------------ */}
+      {/* SCORING CONTROLS */}
 
       {!needsNextBowler &&
         effectiveBowlerId && (
@@ -2637,9 +2664,7 @@ export default function Scorer() {
           </>
         )}
 
-      {/* ------------------------------------------------
-          SELECT BOWLER BUTTON
-          ------------------------------------------------ */}
+      {/* SELECT BOWLER BUTTON */}
 
       {!effectiveBowlerId &&
         effectiveStrikerId &&
@@ -2732,9 +2757,7 @@ export default function Scorer() {
         View Full Scoreboard
       </button>
 
-      {/* ------------------------------------------------
-          INITIAL BOWLER MODAL
-          ------------------------------------------------ */}
+      {/* INITIAL BOWLER MODAL */}
 
       {showInitialBowler && (
         <InitialBowlerModal
@@ -2772,9 +2795,6 @@ export default function Scorer() {
                 }
               );
 
-              /*
-               * Set immediately in UI.
-               */
               const nextState = {
                 ...(optimisticRef.current ||
                   {}),
@@ -2820,9 +2840,6 @@ export default function Scorer() {
                 false
               );
 
-              /*
-               * Authoritative refresh.
-               */
               const data =
                 await Matches.get(
                   matchId
@@ -2850,9 +2867,7 @@ export default function Scorer() {
         />
       )}
 
-      {/* ------------------------------------------------
-          NEXT BOWLER MODAL
-          ------------------------------------------------ */}
+      {/* NEXT BOWLER MODAL */}
 
       {showNextBowler &&
         needsNextBowler && (
