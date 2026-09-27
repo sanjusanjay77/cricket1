@@ -7,10 +7,40 @@ const socketUrl =
 
 const socket = io(socketUrl, {
   autoConnect: true,
-  transports: ['polling', 'websocket'],
+
+  // Use polling only.
+  // This prevents the failed WebSocket upgrade on Render.
+  transports: ['polling'],
+
+  // Do not attempt to upgrade polling to WebSocket.
+  upgrade: false,
+
   reconnection: true,
   reconnectionAttempts: 20,
-  reconnectionDelay: 1000
+  reconnectionDelay: 1000,
+
+  withCredentials: true
+});
+
+socket.on('connect', () => {
+  console.log(
+    '🔌 Socket connected:',
+    socket.id
+  );
+});
+
+socket.on('disconnect', (reason) => {
+  console.log(
+    '🔌 Socket disconnected:',
+    reason
+  );
+});
+
+socket.on('connect_error', (error) => {
+  console.error(
+    '❌ Socket connection error:',
+    error?.message || error
+  );
 });
 
 export function registerNotificationUser(userId) {
