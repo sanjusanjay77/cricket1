@@ -1,11 +1,80 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Records as RecordsApi, Players } from '../api/api.js';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from 'react';
+
+import {
+  Records as RecordsApi,
+  Players,
+} from '../api/api.js';
+
+
+/* =========================================================
+   CACHE
+========================================================= */
+
+const RECORDS_CACHE_KEY =
+  'gcc_records_cache_v1';
+
+
+function readRecordsCache() {
+  try {
+    const cached =
+      localStorage.getItem(
+        RECORDS_CACHE_KEY
+      );
+
+    if (!cached) {
+      return null;
+    }
+
+    const parsed =
+      JSON.parse(cached);
+
+    return parsed &&
+      typeof parsed === 'object'
+      ? parsed
+      : null;
+
+  } catch (error) {
+    console.warn(
+      'Failed to read records cache:',
+      error
+    );
+
+    return null;
+  }
+}
+
+
+function writeRecordsCache(records) {
+  try {
+    localStorage.setItem(
+      RECORDS_CACHE_KEY,
+      JSON.stringify(records)
+    );
+
+  } catch (error) {
+    console.warn(
+      'Failed to save records cache:',
+      error
+    );
+  }
+}
+
 
 /* =========================================================
    TOP FIVE HELPER
 ========================================================= */
 
-function getTopFive(list, sortFn, valueKey) {
+function getTopFive(
+  list,
+  sortFn,
+  valueKey
+) {
+
   if (!Array.isArray(list)) {
     return [];
   }
@@ -14,37 +83,48 @@ function getTopFive(list, sortFn, valueKey) {
     .sort(
       sortFn ||
         ((a, b) =>
-          Number(b[valueKey] || 0) -
-          Number(a[valueKey] || 0))
+          Number(
+            b[valueKey] || 0
+          ) -
+          Number(
+            a[valueKey] || 0
+          ))
     )
     .slice(0, 5);
 }
+
 
 /* =========================================================
    SAFE PLAYER NAME
 ========================================================= */
 
 function getPlayerName(player) {
+
   return (
     player?.player_name ||
     player?.name ||
     player?.playerName ||
     'Unknown Player'
   );
+
 }
+
 
 /* =========================================================
    PLAYER ID
 ========================================================= */
 
 function getPlayerId(player) {
+
   return (
     player?.player_id ??
     player?.id ??
     player?.playerId ??
     null
   );
+
 }
+
 
 /* =========================================================
    LEADERBOARD CARD
@@ -59,17 +139,24 @@ function LeaderboardCard({
   minLabel,
   sortFn
 }) {
-  const topFive = getTopFive(
-    list,
-    sortFn,
-    valueKey
-  );
 
-  if (topFive.length === 0) {
+  const topFive =
+    getTopFive(
+      list,
+      sortFn,
+      valueKey
+    );
+
+
+  if (
+    topFive.length === 0
+  ) {
     return null;
   }
 
+
   return (
+
     <div
       className="
         card
@@ -77,10 +164,11 @@ function LeaderboardCard({
         w-full
       "
     >
-      {/* HEADER */}
 
       <div className="flex items-center justify-between gap-2 mb-3">
+
         <h3 className="font-semibold flex items-center gap-2 min-w-0">
+
           <span className="text-xl shrink-0">
             {icon}
           </span>
@@ -88,128 +176,140 @@ function LeaderboardCard({
           <span className="truncate">
             {title}
           </span>
+
         </h3>
+
 
         <span className="text-[10px] uppercase tracking-wider text-slate-500 shrink-0">
           Top 5
         </span>
+
       </div>
 
+
       {minLabel && (
+
         <p className="text-xs text-slate-500 mb-2">
           {minLabel}
         </p>
+
       )}
+
 
       <div className="space-y-1">
 
-        {topFive.map((entry, index) => {
-          const rank = index + 1;
+        {topFive.map(
+          (entry, index) => {
 
-          const playerName =
-            getPlayerName(entry);
+            const rank =
+              index + 1;
 
-          return (
-            <div
-              key={`${getPlayerId(entry) || playerName}-${index}`}
-              className="
-                flex items-center
-                justify-between
-                gap-2
-                py-3
-                px-2
-                rounded-xl
-                border-b
-                border-slate-700/40
-                last:border-0
-                hover:bg-slate-800/40
-                transition
-              "
-            >
+            const playerName =
+              getPlayerName(entry);
 
-              {/* PLAYER */}
 
-              <div className="flex items-center gap-2 min-w-0">
+            return (
 
-                {/* RANK */}
+              <div
+                key={`${getPlayerId(entry) || playerName}-${index}`}
+                className="
+                  flex items-center
+                  justify-between
+                  gap-2
+                  py-3
+                  px-2
+                  rounded-xl
+                  border-b
+                  border-slate-700/40
+                  last:border-0
+                  hover:bg-slate-800/40
+                  transition
+                "
+              >
+
+                <div className="flex items-center gap-2 min-w-0">
+
+                  <span
+                    className="
+                      w-7
+                      h-7
+                      flex
+                      items-center
+                      justify-center
+                      shrink-0
+                      text-sm
+                      font-bold
+                    "
+                  >
+                    {rank === 1
+                      ? '🥇'
+                      : rank === 2
+                      ? '🥈'
+                      : rank === 3
+                      ? '🥉'
+                      : rank}
+                  </span>
+
+
+                  <div
+                    className="
+                      w-8
+                      h-8
+                      rounded-full
+                      bg-emerald-500/15
+                      border
+                      border-emerald-500/20
+                      flex
+                      items-center
+                      justify-center
+                      text-xs
+                      font-black
+                      text-emerald-400
+                      shrink-0
+                    "
+                  >
+                    {playerName
+                      .charAt(0)
+                      .toUpperCase()}
+                  </div>
+
+
+                  <span className="font-medium truncate text-sm">
+                    {playerName}
+                  </span>
+
+                </div>
+
 
                 <span
                   className="
-                    w-7
-                    h-7
-                    flex
-                    items-center
-                    justify-center
-                    shrink-0
-                    text-sm
                     font-bold
-                  "
-                >
-                  {rank === 1
-                    ? '🥇'
-                    : rank === 2
-                    ? '🥈'
-                    : rank === 3
-                    ? '🥉'
-                    : rank}
-                </span>
-
-                {/* AVATAR */}
-
-                <div
-                  className="
-                    w-8
-                    h-8
-                    rounded-full
-                    bg-emerald-500/15
-                    border
-                    border-emerald-500/20
-                    flex
-                    items-center
-                    justify-center
-                    text-xs
-                    font-black
                     text-emerald-400
-                    shrink-0
+                    text-xs
+                    sm:text-sm
+                    whitespace-nowrap
+                    text-right
                   "
                 >
-                  {playerName
-                    .charAt(0)
-                    .toUpperCase()}
-                </div>
-
-                {/* NAME */}
-
-                <span className="font-medium truncate text-sm">
-                  {playerName}
+                  {entry[valueKey] ?? 0}
+                  {unit}
                 </span>
 
               </div>
 
-              {/* VALUE */}
+            );
 
-              <span
-                className="
-                  font-bold
-                  text-emerald-400
-                  text-xs
-                  sm:text-sm
-                  whitespace-nowrap
-                  text-right
-                "
-              >
-                {entry[valueKey] ?? 0}
-                {unit}
-              </span>
-
-            </div>
-          );
-        })}
+          }
+        )}
 
       </div>
+
     </div>
+
   );
+
 }
+
 
 /* =========================================================
    PREMIUM SINGLE MATCH RECORD
@@ -223,8 +323,11 @@ function PremiumRecordCard({
   subtitle,
   details
 }) {
+
   if (!entry) {
+
     return (
+
       <div
         className="
           relative
@@ -251,18 +354,24 @@ function PremiumRecordCard({
 
         </div>
 
+
         <div className="mt-5 text-slate-500">
           No record available yet.
         </div>
 
       </div>
+
     );
+
   }
+
 
   const playerName =
     getPlayerName(entry);
 
+
   return (
+
     <div
       className="
         relative
@@ -280,8 +389,6 @@ function PremiumRecordCard({
       "
     >
 
-      {/* HEADER */}
-
       <div className="flex items-center justify-between gap-3 mb-5">
 
         <div className="flex items-center gap-3 min-w-0">
@@ -296,19 +403,18 @@ function PremiumRecordCard({
 
         </div>
 
+
         <span className="text-2xl shrink-0">
           🥇
         </span>
 
       </div>
 
-      {/* RECORD TYPE */}
 
       <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">
         GCC single-innings record
       </div>
 
-      {/* PLAYER */}
 
       <div className="flex items-center gap-3 min-w-0">
 
@@ -333,13 +439,13 @@ function PremiumRecordCard({
             .toUpperCase()}
         </div>
 
+
         <div className="text-2xl sm:text-3xl font-black truncate">
           {playerName}
         </div>
 
       </div>
 
-      {/* MAIN FIGURE */}
 
       <div className="mt-5">
 
@@ -347,15 +453,17 @@ function PremiumRecordCard({
           {mainValue}
         </div>
 
+
         {subtitle && (
+
           <div className="text-sm text-slate-400 mt-2">
             {subtitle}
           </div>
+
         )}
 
       </div>
 
-      {/* MATCH */}
 
       <div
         className="
@@ -373,8 +481,11 @@ function PremiumRecordCard({
           Particular Match
         </div>
 
+
         <div className="text-sm font-bold mt-1 break-words">
+
           {entry.match_date
+
             ? new Date(
                 entry.match_date
               ).toLocaleDateString(
@@ -385,17 +496,21 @@ function PremiumRecordCard({
                   year: 'numeric'
                 }
               )
+
             : entry.match_id
+
             ? `Match ${entry.match_id}`
+
             : 'Match information unavailable'}
+
         </div>
 
       </div>
 
-      {/* DETAILS */}
 
       {details &&
         details.length > 0 && (
+
           <div
             className="
               mt-5
@@ -408,6 +523,7 @@ function PremiumRecordCard({
 
             {details.map(
               (item, index) => (
+
                 <div
                   key={index}
                   className="
@@ -425,26 +541,31 @@ function PremiumRecordCard({
                     {item.label}
                   </div>
 
+
                   <div className="font-extrabold text-sm mt-1 truncate">
                     {item.value}
                   </div>
 
                 </div>
+
               )
             )}
 
           </div>
+
         )}
 
-      {/* DECORATION */}
 
       <div className="absolute -right-10 -bottom-10 text-9xl opacity-[0.04] pointer-events-none">
         {icon}
       </div>
 
     </div>
+
   );
+
 }
+
 
 /* =========================================================
    COMPARISON STAT
@@ -460,6 +581,7 @@ function ComparisonStat({
   decimals = 0,
   lowerIsBetter = false
 }) {
+
   const one =
     Number(valueOne || 0);
 
@@ -467,30 +589,44 @@ function ComparisonStat({
     Number(valueTwo || 0);
 
   const difference =
-    Math.abs(one - two);
+    Math.abs(
+      one - two
+    );
+
 
   let leader = null;
 
+
   if (one !== two) {
+
     if (lowerIsBetter) {
+
       leader =
         one < two
           ? 'one'
           : 'two';
+
     } else {
+
       leader =
         one > two
           ? 'one'
           : 'two';
+
     }
+
   }
 
-  const formatValue = (value) =>
-    decimals > 0
-      ? value.toFixed(decimals)
-      : Math.round(value);
+
+  const formatValue =
+    (value) =>
+      decimals > 0
+        ? value.toFixed(decimals)
+        : Math.round(value);
+
 
   return (
+
     <div
       className="
         rounded-2xl
@@ -501,8 +637,6 @@ function ComparisonStat({
         sm:p-5
       "
     >
-
-      {/* TITLE */}
 
       <div className="flex items-center justify-center gap-2 mb-4">
 
@@ -516,11 +650,8 @@ function ComparisonStat({
 
       </div>
 
-      {/* VALUES */}
 
       <div className="grid grid-cols-2 gap-3">
-
-        {/* PLAYER ONE */}
 
         <div
           className={`
@@ -540,6 +671,7 @@ function ComparisonStat({
             {playerOne}
           </div>
 
+
           <div
             className={`
               text-2xl
@@ -556,15 +688,17 @@ function ComparisonStat({
             {formatValue(one)}
           </div>
 
+
           {leader === 'one' && (
+
             <div className="text-[10px] text-emerald-400 font-bold mt-1">
               LEADS
             </div>
+
           )}
 
         </div>
 
-        {/* PLAYER TWO */}
 
         <div
           className={`
@@ -584,6 +718,7 @@ function ComparisonStat({
             {playerTwo}
           </div>
 
+
           <div
             className={`
               text-2xl
@@ -600,26 +735,32 @@ function ComparisonStat({
             {formatValue(two)}
           </div>
 
+
           {leader === 'two' && (
+
             <div className="text-[10px] text-emerald-400 font-bold mt-1">
               LEADS
             </div>
+
           )}
 
         </div>
 
       </div>
 
-      {/* LEAD */}
 
       <div className="text-center mt-3 text-xs text-slate-500">
 
         {one === two ? (
+
           <span className="text-slate-400 font-semibold">
             Equal
           </span>
+
         ) : (
+
           <>
+
             <span className="text-slate-400">
               {leader === 'one'
                 ? playerOne
@@ -631,6 +772,7 @@ function ComparisonStat({
             </span>
 
             <span className="font-bold text-emerald-400">
+
               {decimals > 0
                 ? difference.toFixed(
                     decimals
@@ -638,15 +780,199 @@ function ComparisonStat({
                 : Math.round(
                     difference
                   )}
+
             </span>
+
           </>
+
         )}
 
       </div>
 
     </div>
+
   );
+
 }
+
+
+/* =========================================================
+   BUILD GCC RECORDS
+========================================================= */
+
+function buildGccRecords(
+  recordsData,
+  allPlayers
+) {
+
+  const playersArray =
+    Array.isArray(allPlayers)
+      ? allPlayers
+      : [];
+
+
+  const gccPlayerIds =
+    new Set();
+
+
+  for (
+    const player of playersArray
+  ) {
+
+    const teamName =
+      player.team_name ||
+      player.team?.name ||
+      player.team ||
+      '';
+
+
+    if (
+      String(teamName)
+        .trim()
+        .toLowerCase() !==
+      'gcc'
+    ) {
+      continue;
+    }
+
+
+    if (
+      player.id != null
+    ) {
+
+      gccPlayerIds.add(
+        String(player.id)
+      );
+
+    }
+
+
+    if (
+      player.player_id != null
+    ) {
+
+      gccPlayerIds.add(
+        String(
+          player.player_id
+        )
+      );
+
+    }
+
+  }
+
+
+  function isGccPlayer(entry) {
+
+    if (!entry) {
+      return false;
+    }
+
+
+    const playerId =
+      entry.player_id ??
+      entry.id ??
+      entry.playerId;
+
+
+    return (
+      playerId != null &&
+      gccPlayerIds.has(
+        String(playerId)
+      )
+    );
+
+  }
+
+
+  function filterList(list) {
+
+    if (!Array.isArray(list)) {
+      return [];
+    }
+
+    return list.filter(
+      isGccPlayer
+    );
+
+  }
+
+
+  function filterSingle(entry) {
+
+    if (
+      !entry ||
+      !isGccPlayer(entry)
+    ) {
+      return null;
+    }
+
+    return entry;
+
+  }
+
+
+  return {
+
+    ...recordsData,
+
+    bestBattingFigure:
+      filterSingle(
+        recordsData?.bestBattingFigure
+      ),
+
+    bestBowling:
+      filterSingle(
+        recordsData?.bestBowling
+      ),
+
+    highestScore:
+      undefined,
+
+    mostRuns:
+      filterList(
+        recordsData?.mostRuns
+      ),
+
+    mostFours:
+      filterList(
+        recordsData?.mostFours
+      ),
+
+    mostSixes:
+      filterList(
+        recordsData?.mostSixes
+      ),
+
+    mostBallsFaced:
+      filterList(
+        recordsData?.mostBallsFaced
+      ),
+
+    bestStrikeRate:
+      filterList(
+        recordsData?.bestStrikeRate
+      ),
+
+    mostWickets:
+      filterList(
+        recordsData?.mostWickets
+      ),
+
+    mostBallsBowled:
+      filterList(
+        recordsData?.mostBallsBowled
+      ),
+
+    bestEconomy:
+      filterList(
+        recordsData?.bestEconomy
+      )
+
+  };
+
+}
+
 
 /* =========================================================
    RECORDS PAGE
@@ -654,14 +980,36 @@ function ComparisonStat({
 
 export default function Records() {
 
+  /*
+   * Read cache only once when component starts.
+   */
+
+  const initialRecords =
+    useState(
+      () => readRecordsCache()
+    )[0];
+
+
   const [records, setRecords] =
-    useState(null);
+    useState(initialRecords);
+
+
+  /*
+   * If cache exists, do NOT show
+   * loading screen.
+   *
+   * The page appears immediately.
+   */
 
   const [loading, setLoading] =
-    useState(true);
+    useState(
+      initialRecords === null
+    );
+
 
   const [error, setError] =
     useState('');
+
 
   /* =======================================================
      COMPARISON STATE
@@ -673,261 +1021,100 @@ export default function Records() {
   const [compareTwo, setCompareTwo] =
     useState('');
 
+
   /* =======================================================
      LOAD RECORDS
   ======================================================= */
 
+  const loadRecords =
+    useCallback(
+      async () => {
+
+        try {
+
+          setError('');
+
+
+          /*
+           * Fetch both APIs simultaneously.
+           */
+
+          const [
+            recordsData,
+            allPlayers
+          ] = await Promise.all([
+            RecordsApi.get(),
+            Players.listAll()
+          ]);
+
+
+          /*
+           * Build GCC records.
+           */
+
+          const gccRecords =
+            buildGccRecords(
+              recordsData,
+              allPlayers
+            );
+
+
+          /*
+           * Update UI.
+           */
+
+          setRecords(
+            gccRecords
+          );
+
+
+          /*
+           * Save for instant next visit.
+           */
+
+          writeRecordsCache(
+            gccRecords
+          );
+
+
+        } catch (err) {
+
+          console.error(
+            'Failed to load GCC records:',
+            err
+          );
+
+
+          /*
+           * Only show error when there
+           * is no usable cached data.
+           */
+
+          setError(
+            'Failed to load GCC records.'
+          );
+
+        } finally {
+
+          setLoading(false);
+
+        }
+
+      },
+      []
+    );
+
+
+  /* =======================================================
+     LOAD ON PAGE OPEN
+  ======================================================= */
+
   useEffect(() => {
 
-    async function loadGccRecords() {
+    loadRecords();
 
-      try {
+  }, [loadRecords]);
 
-        setLoading(true);
-        setError('');
-
-        const [
-          recordsData,
-          allPlayers
-        ] = await Promise.all([
-          RecordsApi.get(),
-          Players.listAll()
-        ]);
-
-        console.log(
-          'ALL TIME RECORDS FROM API:',
-          recordsData
-        );
-
-        console.log(
-          'ALL PLAYERS:',
-          allPlayers
-        );
-
-        /* =================================================
-           FIND GCC PLAYERS
-        ================================================= */
-
-        const playersArray =
-          Array.isArray(allPlayers)
-            ? allPlayers
-            : [];
-
-        const gccPlayerIds =
-          new Set();
-
-        playersArray.forEach(
-          (player) => {
-
-            const teamName =
-              player.team_name ||
-              player.team?.name ||
-              player.team ||
-              '';
-
-            if (
-              String(teamName)
-                .trim()
-                .toLowerCase() ===
-              'gcc'
-            ) {
-
-              if (
-                player.id != null
-              ) {
-                gccPlayerIds.add(
-                  String(player.id)
-                );
-              }
-
-              if (
-                player.player_id !=
-                null
-              ) {
-                gccPlayerIds.add(
-                  String(
-                    player.player_id
-                  )
-                );
-              }
-
-            }
-
-          }
-        );
-
-        console.log(
-          'GCC PLAYER IDS:',
-          [...gccPlayerIds]
-        );
-
-        /* =================================================
-           CHECK GCC PLAYER
-        ================================================= */
-
-        function isGccPlayer(entry) {
-
-          if (!entry) {
-            return false;
-          }
-
-          const playerId =
-            entry.player_id ??
-            entry.id ??
-            entry.playerId;
-
-          return (
-            playerId != null &&
-            gccPlayerIds.has(
-              String(playerId)
-            )
-          );
-        }
-
-        /* =================================================
-           FILTER CAREER LIST
-        ================================================= */
-
-        function filterList(list) {
-
-          if (!Array.isArray(list)) {
-            return [];
-          }
-
-          return list.filter(
-            isGccPlayer
-          );
-        }
-
-        /* =================================================
-           FILTER SINGLE RECORD
-        ================================================= */
-
-        function filterSingle(entry) {
-
-          if (
-            !entry ||
-            !isGccPlayer(entry)
-          ) {
-            return null;
-          }
-
-          return entry;
-        }
-
-        /* =================================================
-           PREMIUM RECORDS
-        ================================================= */
-
-        const gccBestBatting =
-          filterSingle(
-            recordsData?.bestBattingFigure
-          );
-
-        const gccBestBowling =
-          filterSingle(
-            recordsData?.bestBowling
-          );
-
-        /* =================================================
-           FINAL GCC RECORDS
-        ================================================= */
-
-        const gccRecords = {
-
-          ...recordsData,
-
-          bestBattingFigure:
-            gccBestBatting,
-
-          bestBowling:
-            gccBestBowling,
-
-          highestScore:
-            undefined,
-
-          mostRuns:
-            filterList(
-              recordsData?.mostRuns
-            ),
-
-          mostFours:
-            filterList(
-              recordsData?.mostFours
-            ),
-
-          mostSixes:
-            filterList(
-              recordsData?.mostSixes
-            ),
-
-          mostBallsFaced:
-            filterList(
-              recordsData?.mostBallsFaced
-            ),
-
-          bestStrikeRate:
-            filterList(
-              recordsData?.bestStrikeRate
-            ),
-
-          mostWickets:
-            filterList(
-              recordsData?.mostWickets
-            ),
-
-          mostBallsBowled:
-            filterList(
-              recordsData?.mostBallsBowled
-            ),
-
-          bestEconomy:
-            filterList(
-              recordsData?.bestEconomy
-            )
-        };
-
-        console.log(
-          'GCC BEST BATTING FIGURE:',
-          gccBestBatting
-        );
-
-        console.log(
-          'GCC BEST BOWLING FIGURE:',
-          gccBestBowling
-        );
-
-        console.log(
-          'GCC FINAL RECORDS:',
-          gccRecords
-        );
-
-        setRecords(
-          gccRecords
-        );
-
-      } catch (err) {
-
-        console.error(
-          'Failed to load GCC records:',
-          err
-        );
-
-        setError(
-          'Failed to load GCC records.'
-        );
-
-      } finally {
-
-        setLoading(false);
-
-      }
-
-    }
-
-    loadGccRecords();
-
-  }, []);
 
   /* =======================================================
      BUILD COMPARISON PLAYER LIST
@@ -940,27 +1127,44 @@ export default function Records() {
         return [];
       }
 
+
       const map =
         new Map();
 
+
       const lists = [
+
         records.mostRuns,
+
         records.mostFours,
+
         records.mostSixes,
+
         records.mostBallsFaced,
+
         records.bestStrikeRate,
+
         records.mostWickets,
+
         records.mostBallsBowled,
+
         records.bestEconomy
+
       ];
 
-      lists.forEach((list) => {
+
+      for (
+        const list of lists
+      ) {
 
         if (!Array.isArray(list)) {
-          return;
+          continue;
         }
 
-        list.forEach((entry) => {
+
+        for (
+          const entry of list
+        ) {
 
           const id =
             getPlayerId(entry);
@@ -968,182 +1172,252 @@ export default function Records() {
           const name =
             getPlayerName(entry);
 
+
           const key =
             id != null
               ? String(id)
               : name.toLowerCase();
 
-          if (!map.has(key)) {
 
-            map.set(key, {
-              id: key,
-              name,
-              runs: 0,
-              wickets: 0,
-              fours: 0,
-              sixes: 0,
-              ballsFaced: 0,
-              strike_rate: 0,
-              ballsBowled: 0,
-              economy: 0
-            });
-
-          }
-
-          const player =
+          let player =
             map.get(key);
 
-          /* Runs */
+
+          if (!player) {
+
+            player = {
+
+              id: key,
+
+              name,
+
+              runs: 0,
+
+              wickets: 0,
+
+              fours: 0,
+
+              sixes: 0,
+
+              ballsFaced: 0,
+
+              strike_rate: 0,
+
+              ballsBowled: 0,
+
+              economy: 0
+
+            };
+
+
+            map.set(
+              key,
+              player
+            );
+
+          }
+
+
+          const runs =
+            Number(
+              entry.runs || 0
+            );
 
           if (
-            entry.runs != null &&
-            Number(entry.runs) >
-              player.runs
+            runs > player.runs
           ) {
+
             player.runs =
-              Number(entry.runs);
+              runs;
+
           }
 
-          /* Wickets */
+
+          const wickets =
+            Number(
+              entry.wickets || 0
+            );
 
           if (
-            entry.wickets != null &&
-            Number(entry.wickets) >
-              player.wickets
+            wickets >
+            player.wickets
           ) {
+
             player.wickets =
-              Number(entry.wickets);
+              wickets;
+
           }
 
-          /* Fours */
+
+          const fours =
+            Number(
+              entry.fours || 0
+            );
 
           if (
-            entry.fours != null &&
-            Number(entry.fours) >
-              player.fours
+            fours >
+            player.fours
           ) {
+
             player.fours =
-              Number(entry.fours);
+              fours;
+
           }
 
-          /* Sixes */
+
+          const sixes =
+            Number(
+              entry.sixes || 0
+            );
 
           if (
-            entry.sixes != null &&
-            Number(entry.sixes) >
-              player.sixes
+            sixes >
+            player.sixes
           ) {
+
             player.sixes =
-              Number(entry.sixes);
+              sixes;
+
           }
 
-          /* Balls Faced */
 
-          if (
-            entry.balls != null &&
-            Number(entry.balls) >
-              player.ballsFaced
-          ) {
-            player.ballsFaced =
-              Number(entry.balls);
-          }
-
-          if (
-            entry.balls_faced != null &&
-            Number(entry.balls_faced) >
-              player.ballsFaced
-          ) {
-            player.ballsFaced =
+          const ballsFaced =
+            Math.max(
               Number(
-                entry.balls_faced
-              );
-          }
+                entry.balls || 0
+              ),
+              Number(
+                entry.balls_faced || 0
+              )
+            );
 
-          /* Strike Rate */
 
           if (
-            entry.strike_rate != null &&
-            Number(
-              entry.strike_rate
-            ) >
-              player.strike_rate
+            ballsFaced >
+            player.ballsFaced
           ) {
+
+            player.ballsFaced =
+              ballsFaced;
+
+          }
+
+
+          const strikeRate =
+            Number(
+              entry.strike_rate || 0
+            );
+
+
+          if (
+            strikeRate >
+            player.strike_rate
+          ) {
+
             player.strike_rate =
-              Number(
-                entry.strike_rate
-              );
+              strikeRate;
+
           }
 
-          /* Balls Bowled */
 
-          if (
-            entry.balls_bowled != null &&
+          const ballsBowled =
             Number(
-              entry.balls_bowled
-            ) >
-              player.ballsBowled
-          ) {
-            player.ballsBowled =
-              Number(
-                entry.balls_bowled
-              );
-          }
+              entry.balls_bowled || 0
+            );
 
-          /* Economy */
 
           if (
-            entry.economy != null &&
-            Number(entry.economy) >
-              0
+            ballsBowled >
+            player.ballsBowled
           ) {
 
-            if (
-              player.economy === 0 ||
-              Number(entry.economy) <
-                player.economy
-            ) {
-              player.economy =
-                Number(entry.economy);
-            }
+            player.ballsBowled =
+              ballsBowled;
 
           }
 
-        });
 
-      });
+          const economy =
+            Number(
+              entry.economy || 0
+            );
 
-      return [...map.values()].sort(
-        (a, b) =>
-          a.name.localeCompare(
-            b.name
-          )
-      );
+
+          if (
+            economy > 0 &&
+            (
+              player.economy === 0 ||
+              economy <
+                player.economy
+            )
+          ) {
+
+            player.economy =
+              economy;
+
+          }
+
+        }
+
+      }
+
+
+      return [...map.values()]
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(
+              b.name
+            )
+        );
 
     }, [records]);
 
+
   /* =======================================================
-     SELECTED COMPARISON PLAYERS
+     SELECTED PLAYERS
   ======================================================= */
 
   const playerOne =
-    comparisonPlayers.find(
-      (player) =>
-        player.id === compareOne
+    useMemo(
+      () =>
+        comparisonPlayers.find(
+          (player) =>
+            player.id ===
+            compareOne
+        ),
+      [
+        comparisonPlayers,
+        compareOne
+      ]
     );
 
+
   const playerTwo =
-    comparisonPlayers.find(
-      (player) =>
-        player.id === compareTwo
+    useMemo(
+      () =>
+        comparisonPlayers.find(
+          (player) =>
+            player.id ===
+            compareTwo
+        ),
+      [
+        comparisonPlayers,
+        compareTwo
+      ]
     );
+
 
   /* =======================================================
      LOADING
   ======================================================= */
 
-  if (loading) {
+  if (
+    loading &&
+    !records
+  ) {
 
     return (
+
       <div className="space-y-4">
 
         <div className="h-8 w-56 bg-slate-800 rounded-lg animate-pulse" />
@@ -1159,38 +1433,52 @@ export default function Records() {
         </div>
 
       </div>
+
     );
+
   }
+
 
   /* =======================================================
      ERROR
-  ======================================================= */
+========================================================= */
 
-  if (error) {
+  if (
+    error &&
+    !records
+  ) {
 
     return (
+
       <div className="card text-red-400">
         {error}
       </div>
+
     );
+
   }
+
 
   /* =======================================================
      EMPTY
-  ======================================================= */
+========================================================= */
 
   if (!records) {
 
     return (
+
       <div className="card text-center text-slate-400">
         No GCC records available.
       </div>
+
     );
+
   }
+
 
   /* =======================================================
      PAGE
-  ======================================================= */
+========================================================= */
 
   return (
 
@@ -1204,9 +1492,7 @@ export default function Records() {
       "
     >
 
-      {/* =================================================
-          HEADER
-      ================================================= */}
+      {/* HEADER */}
 
       <div
         className="
@@ -1239,11 +1525,13 @@ export default function Records() {
             📜
           </div>
 
+
           <div className="min-w-0">
 
             <h1 className="text-xl sm:text-2xl font-bold truncate">
               GCC All-Time Records
             </h1>
+
 
             <p className="text-xs sm:text-sm text-slate-500">
               GCC players only
@@ -1255,9 +1543,8 @@ export default function Records() {
 
       </div>
 
-      {/* =================================================
-          BEST OF GCC
-      ================================================= */}
+
+      {/* BEST OF GCC */}
 
       <section>
 
@@ -1273,6 +1560,7 @@ export default function Records() {
 
         </div>
 
+
         <div
           className="
             grid
@@ -1282,8 +1570,6 @@ export default function Records() {
             sm:gap-5
           "
         >
-
-          {/* BEST BOWLING */}
 
           <PremiumRecordCard
 
@@ -1348,7 +1634,6 @@ export default function Records() {
 
           />
 
-          {/* BEST BATTING */}
 
           <PremiumRecordCard
 
@@ -1417,15 +1702,15 @@ export default function Records() {
 
       </section>
 
-      {/* =================================================
-          CAREER BATTING RECORDS
-      ================================================= */}
+
+      {/* BATTING RECORDS */}
 
       <section>
 
         <h2 className="text-lg font-black mb-3">
           🏏 Batting Records
         </h2>
+
 
         <div
           className="
@@ -1454,6 +1739,7 @@ export default function Records() {
             }
           />
 
+
           <LeaderboardCard
             title="Most Fours"
             icon="🔥"
@@ -1472,6 +1758,7 @@ export default function Records() {
             }
           />
 
+
           <LeaderboardCard
             title="Most Sixes"
             icon="🚀"
@@ -1489,6 +1776,7 @@ export default function Records() {
               )
             }
           />
+
 
           <LeaderboardCard
             title="Best Strike Rate"
@@ -1513,15 +1801,15 @@ export default function Records() {
 
       </section>
 
-      {/* =================================================
-          CAREER BOWLING RECORDS
-      ================================================= */}
+
+      {/* BOWLING RECORDS */}
 
       <section>
 
         <h2 className="text-lg font-black mb-3">
           🎯 Bowling Records
         </h2>
+
 
         <div
           className="
@@ -1550,6 +1838,7 @@ export default function Records() {
             }
           />
 
+
           <LeaderboardCard
             title="Best Economy"
             icon="🛡️"
@@ -1573,6 +1862,7 @@ export default function Records() {
 
       </section>
 
+
       {/* =================================================
           COMPARE PLAYERS
       ================================================= */}
@@ -1589,8 +1879,6 @@ export default function Records() {
           sm:p-6
         "
       >
-
-        {/* HEADER */}
 
         <div className="flex items-center gap-3 mb-2">
 
@@ -1611,6 +1899,7 @@ export default function Records() {
             ⚔️
           </div>
 
+
           <div>
 
             <h2 className="text-xl font-black">
@@ -1625,6 +1914,7 @@ export default function Records() {
 
         </div>
 
+
         {/* SELECTORS */}
 
         <div
@@ -1637,13 +1927,12 @@ export default function Records() {
           "
         >
 
-          {/* PLAYER ONE */}
-
           <div>
 
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
               Player 1
             </label>
+
 
             <select
               value={compareOne}
@@ -1672,14 +1961,17 @@ export default function Records() {
                 Select Player 1
               </option>
 
+
               {comparisonPlayers.map(
                 (player) => (
+
                   <option
                     key={player.id}
                     value={player.id}
                   >
                     {player.name}
                   </option>
+
                 )
               )}
 
@@ -1687,13 +1979,13 @@ export default function Records() {
 
           </div>
 
-          {/* PLAYER TWO */}
 
           <div>
 
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
               Player 2
             </label>
+
 
             <select
               value={compareTwo}
@@ -1722,14 +2014,17 @@ export default function Records() {
                 Select Player 2
               </option>
 
+
               {comparisonPlayers.map(
                 (player) => (
+
                   <option
                     key={player.id}
                     value={player.id}
                   >
                     {player.name}
                   </option>
+
                 )
               )}
 
@@ -1739,10 +2034,12 @@ export default function Records() {
 
         </div>
 
-        {/* EMPTY STATE */}
+
+        {/* EMPTY */}
 
         {(!playerOne ||
           !playerTwo) && (
+
           <div
             className="
               mt-5
@@ -1758,7 +2055,9 @@ export default function Records() {
           >
             Select two players to see their comparison.
           </div>
+
         )}
+
 
         {/* SAME PLAYER */}
 
@@ -1766,22 +2065,25 @@ export default function Records() {
           playerTwo &&
           playerOne.id ===
             playerTwo.id && (
-            <div
-              className="
-                mt-5
-                rounded-xl
-                border
-                border-amber-500/20
-                bg-amber-500/5
-                p-4
-                text-center
-                text-sm
-                text-amber-400
-              "
-            >
-              Please select two different players.
-            </div>
-          )}
+
+          <div
+            className="
+              mt-5
+              rounded-xl
+              border
+              border-amber-500/20
+              bg-amber-500/5
+              p-4
+              text-center
+              text-sm
+              text-amber-400
+            "
+          >
+            Please select two different players.
+          </div>
+
+        )}
+
 
         {/* COMPARISON */}
 
@@ -1790,343 +2092,378 @@ export default function Records() {
           playerOne.id !==
             playerTwo.id && (
 
-            <div className="mt-6">
+          <div className="mt-6">
 
-              {/* PLAYER HEADER */}
-
-              <div
-                className="
-                  grid
-                  grid-cols-2
-                  gap-3
-                  mb-5
-                "
-              >
-
-                <div
-                  className="
-                    rounded-2xl
-                    bg-slate-950
-                    border
-                    border-slate-700
-                    p-4
-                    text-center
-                  "
-                >
-
-                  <div
-                    className="
-                      mx-auto
-                      w-12
-                      h-12
-                      rounded-full
-                      bg-emerald-500/10
-                      border
-                      border-emerald-500/20
-                      flex
-                      items-center
-                      justify-center
-                      text-lg
-                      font-black
-                      text-emerald-400
-                    "
-                  >
-                    {playerOne.name
-                      .charAt(0)
-                      .toUpperCase()}
-                  </div>
-
-                  <div className="font-black mt-2 truncate">
-                    {playerOne.name}
-                  </div>
-
-                </div>
-
-                <div
-                  className="
-                    rounded-2xl
-                    bg-slate-950
-                    border
-                    border-slate-700
-                    p-4
-                    text-center
-                  "
-                >
-
-                  <div
-                    className="
-                      mx-auto
-                      w-12
-                      h-12
-                      rounded-full
-                      bg-purple-500/10
-                      border
-                      border-purple-500/20
-                      flex
-                      items-center
-                      justify-center
-                      text-lg
-                      font-black
-                      text-purple-400
-                    "
-                  >
-                    {playerTwo.name
-                      .charAt(0)
-                      .toUpperCase()}
-                  </div>
-
-                  <div className="font-black mt-2 truncate">
-                    {playerTwo.name}
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* STATS */}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-
-                <ComparisonStat
-                  label="Runs"
-                  icon="🏏"
-                  playerOne={
-                    playerOne.name
-                  }
-                  playerTwo={
-                    playerTwo.name
-                  }
-                  valueOne={
-                    playerOne.runs
-                  }
-                  valueTwo={
-                    playerTwo.runs
-                  }
-                />
-
-                <ComparisonStat
-                  label="Wickets"
-                  icon="🎯"
-                  playerOne={
-                    playerOne.name
-                  }
-                  playerTwo={
-                    playerTwo.name
-                  }
-                  valueOne={
-                    playerOne.wickets
-                  }
-                  valueTwo={
-                    playerTwo.wickets
-                  }
-                />
-
-                <ComparisonStat
-                  label="Fours"
-                  icon="🔥"
-                  playerOne={
-                    playerOne.name
-                  }
-                  playerTwo={
-                    playerTwo.name
-                  }
-                  valueOne={
-                    playerOne.fours
-                  }
-                  valueTwo={
-                    playerTwo.fours
-                  }
-                />
-
-                <ComparisonStat
-                  label="Sixes"
-                  icon="🚀"
-                  playerOne={
-                    playerOne.name
-                  }
-                  playerTwo={
-                    playerTwo.name
-                  }
-                  valueOne={
-                    playerOne.sixes
-                  }
-                  valueTwo={
-                    playerTwo.sixes
-                  }
-                />
-
-                <ComparisonStat
-                  label="Strike Rate"
-                  icon="⚡"
-                  playerOne={
-                    playerOne.name
-                  }
-                  playerTwo={
-                    playerTwo.name
-                  }
-                  valueOne={
-                    playerOne.strike_rate
-                  }
-                  valueTwo={
-                    playerTwo.strike_rate
-                  }
-                  decimals={2}
-                />
-
-                <ComparisonStat
-                  label="Economy"
-                  icon="🛡️"
-                  playerOne={
-                    playerOne.name
-                  }
-                  playerTwo={
-                    playerTwo.name
-                  }
-                  valueOne={
-                    playerOne.economy
-                  }
-                  valueTwo={
-                    playerTwo.economy
-                  }
-                  decimals={2}
-                  lowerIsBetter
-                />
-
-              </div>
-
-              {/* SUMMARY */}
+            <div
+              className="
+                grid
+                grid-cols-2
+                gap-3
+                mb-5
+              "
+            >
 
               <div
                 className="
-                  mt-5
                   rounded-2xl
-                  bg-emerald-500/5
+                  bg-slate-950
                   border
-                  border-emerald-500/20
+                  border-slate-700
                   p-4
                   text-center
                 "
               >
 
-                <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">
-                  Head-to-Head Summary
+                <div
+                  className="
+                    mx-auto
+                    w-12
+                    h-12
+                    rounded-full
+                    bg-emerald-500/10
+                    border
+                    border-emerald-500/20
+                    flex
+                    items-center
+                    justify-center
+                    text-lg
+                    font-black
+                    text-emerald-400
+                  "
+                >
+                  {playerOne.name
+                    .charAt(0)
+                    .toUpperCase()}
                 </div>
 
-                <div className="text-sm sm:text-base font-bold">
 
-                  {Number(
-                    playerOne.runs || 0
-                  ) >
-                  Number(
-                    playerTwo.runs || 0
-                  ) ? (
-                    <>
-                      🏏 {playerOne.name} leads by{' '}
-                      <span className="text-emerald-400">
-                        {Math.abs(
-                          Number(
-                            playerOne.runs ||
-                              0
-                          ) -
-                            Number(
-                              playerTwo.runs ||
-                                0
-                            )
-                        )}{' '}
-                        runs
-                      </span>
-                    </>
-                  ) : Number(
-                      playerTwo.runs || 0
-                    ) >
-                    Number(
-                      playerOne.runs || 0
-                    ) ? (
-                    <>
-                      🏏 {playerTwo.name} leads by{' '}
-                      <span className="text-emerald-400">
-                        {Math.abs(
-                          Number(
-                            playerTwo.runs ||
-                              0
-                          ) -
-                            Number(
-                              playerOne.runs ||
-                                0
-                            )
-                        )}{' '}
-                        runs
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      🏏 Both players have equal runs
-                    </>
-                  )}
-
+                <div className="font-black mt-2 truncate">
+                  {playerOne.name}
                 </div>
 
-                <div className="text-sm sm:text-base font-bold mt-2">
+              </div>
 
-                  {Number(
-                    playerOne.wickets || 0
-                  ) >
-                  Number(
-                    playerTwo.wickets || 0
-                  ) ? (
-                    <>
-                      🎯 {playerOne.name} leads by{' '}
-                      <span className="text-emerald-400">
-                        {Math.abs(
-                          Number(
-                            playerOne.wickets ||
-                              0
-                          ) -
-                            Number(
-                              playerTwo.wickets ||
-                                0
-                            )
-                        )}{' '}
-                        wickets
-                      </span>
-                    </>
-                  ) : Number(
-                      playerTwo.wickets || 0
-                    ) >
-                    Number(
-                      playerOne.wickets || 0
-                    ) ? (
-                    <>
-                      🎯 {playerTwo.name} leads by{' '}
-                      <span className="text-emerald-400">
-                        {Math.abs(
-                          Number(
-                            playerTwo.wickets ||
-                              0
-                          ) -
-                            Number(
-                              playerOne.wickets ||
-                                0
-                            )
-                        )}{' '}
-                        wickets
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      🎯 Both players have equal wickets
-                    </>
-                  )}
 
+              <div
+                className="
+                  rounded-2xl
+                  bg-slate-950
+                  border
+                  border-slate-700
+                  p-4
+                  text-center
+                "
+              >
+
+                <div
+                  className="
+                    mx-auto
+                    w-12
+                    h-12
+                    rounded-full
+                    bg-purple-500/10
+                    border
+                    border-purple-500/20
+                    flex
+                    items-center
+                    justify-center
+                    text-lg
+                    font-black
+                    text-purple-400
+                  "
+                >
+                  {playerTwo.name
+                    .charAt(0)
+                    .toUpperCase()}
+                </div>
+
+
+                <div className="font-black mt-2 truncate">
+                  {playerTwo.name}
                 </div>
 
               </div>
 
             </div>
-          )}
+
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+              <ComparisonStat
+                label="Runs"
+                icon="🏏"
+                playerOne={
+                  playerOne.name
+                }
+                playerTwo={
+                  playerTwo.name
+                }
+                valueOne={
+                  playerOne.runs
+                }
+                valueTwo={
+                  playerTwo.runs
+                }
+              />
+
+
+              <ComparisonStat
+                label="Wickets"
+                icon="🎯"
+                playerOne={
+                  playerOne.name
+                }
+                playerTwo={
+                  playerTwo.name
+                }
+                valueOne={
+                  playerOne.wickets
+                }
+                valueTwo={
+                  playerTwo.wickets
+                }
+              />
+
+
+              <ComparisonStat
+                label="Fours"
+                icon="🔥"
+                playerOne={
+                  playerOne.name
+                }
+                playerTwo={
+                  playerTwo.name
+                }
+                valueOne={
+                  playerOne.fours
+                }
+                valueTwo={
+                  playerTwo.fours
+                }
+              />
+
+
+              <ComparisonStat
+                label="Sixes"
+                icon="🚀"
+                playerOne={
+                  playerOne.name
+                }
+                playerTwo={
+                  playerTwo.name
+                }
+                valueOne={
+                  playerOne.sixes
+                }
+                valueTwo={
+                  playerTwo.sixes
+                }
+              />
+
+
+              <ComparisonStat
+                label="Strike Rate"
+                icon="⚡"
+                playerOne={
+                  playerOne.name
+                }
+                playerTwo={
+                  playerTwo.name
+                }
+                valueOne={
+                  playerOne.strike_rate
+                }
+                valueTwo={
+                  playerTwo.strike_rate
+                }
+                decimals={2}
+              />
+
+
+              <ComparisonStat
+                label="Economy"
+                icon="🛡️"
+                playerOne={
+                  playerOne.name
+                }
+                playerTwo={
+                  playerTwo.name
+                }
+                valueOne={
+                  playerOne.economy
+                }
+                valueTwo={
+                  playerTwo.economy
+                }
+                decimals={2}
+                lowerIsBetter
+              />
+
+            </div>
+
+
+            {/* SUMMARY */}
+
+            <div
+              className="
+                mt-5
+                rounded-2xl
+                bg-emerald-500/5
+                border
+                border-emerald-500/20
+                p-4
+                text-center
+              "
+            >
+
+              <div className="text-xs uppercase tracking-wider text-slate-500 mb-2">
+                Head-to-Head Summary
+              </div>
+
+
+              <div className="text-sm sm:text-base font-bold">
+
+                {Number(
+                  playerOne.runs || 0
+                ) >
+                Number(
+                  playerTwo.runs || 0
+                ) ? (
+
+                  <>
+                    🏏 {playerOne.name} leads by{' '}
+
+                    <span className="text-emerald-400">
+
+                      {Math.abs(
+                        Number(
+                          playerOne.runs ||
+                            0
+                        ) -
+                        Number(
+                          playerTwo.runs ||
+                            0
+                        )
+                      )}{' '}
+                      runs
+
+                    </span>
+                  </>
+
+                ) : Number(
+                    playerTwo.runs || 0
+                  ) >
+                  Number(
+                    playerOne.runs || 0
+                  ) ? (
+
+                  <>
+                    🏏 {playerTwo.name} leads by{' '}
+
+                    <span className="text-emerald-400">
+
+                      {Math.abs(
+                        Number(
+                          playerTwo.runs ||
+                            0
+                        ) -
+                        Number(
+                          playerOne.runs ||
+                            0
+                        )
+                      )}{' '}
+                      runs
+
+                    </span>
+                  </>
+
+                ) : (
+
+                  <>
+                    🏏 Both players have equal runs
+                  </>
+
+                )}
+
+              </div>
+
+
+              <div className="text-sm sm:text-base font-bold mt-2">
+
+                {Number(
+                  playerOne.wickets || 0
+                ) >
+                Number(
+                  playerTwo.wickets || 0
+                ) ? (
+
+                  <>
+                    🎯 {playerOne.name} leads by{' '}
+
+                    <span className="text-emerald-400">
+
+                      {Math.abs(
+                        Number(
+                          playerOne.wickets ||
+                            0
+                        ) -
+                        Number(
+                          playerTwo.wickets ||
+                            0
+                        )
+                      )}{' '}
+                      wickets
+
+                    </span>
+                  </>
+
+                ) : Number(
+                    playerTwo.wickets || 0
+                  ) >
+                  Number(
+                    playerOne.wickets || 0
+                  ) ? (
+
+                  <>
+                    🎯 {playerTwo.name} leads by{' '}
+
+                    <span className="text-emerald-400">
+
+                      {Math.abs(
+                        Number(
+                          playerTwo.wickets ||
+                            0
+                        ) -
+                        Number(
+                          playerOne.wickets ||
+                            0
+                        )
+                      )}{' '}
+                      wickets
+
+                    </span>
+                  </>
+
+                ) : (
+
+                  <>
+                    🎯 Both players have equal wickets
+                  </>
+
+                )}
+
+              </div>
+
+            </div>
+
+          </div>
+
+        )}
 
       </section>
 
     </div>
+
   );
+
 }
