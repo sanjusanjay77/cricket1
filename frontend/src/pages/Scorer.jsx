@@ -3479,6 +3479,137 @@ function BowlingStat({
 
 /*
  * ----------------------------------------------------
+ * BATSMAN CARD
+ * ----------------------------------------------------
+ */
+
+function BatsmanCard({
+  player,
+  stats,
+  striker = false
+}) {
+  const safeStats =
+    stats &&
+    typeof stats === 'object'
+      ? stats
+      : {};
+
+  const runs =
+    Number(
+      safeStats.runs || 0
+    );
+
+  const balls =
+    Number(
+      safeStats.balls || 0
+    );
+
+  const fours =
+    Number(
+      safeStats.fours || 0
+    );
+
+  const sixes =
+    Number(
+      safeStats.sixes || 0
+    );
+
+  const strikeRate =
+    safeStats.strike_rate != null
+      ? Number(
+          safeStats.strike_rate
+        ).toFixed(2)
+      : balls > 0
+        ? (
+            (runs / balls) *
+            100
+          ).toFixed(2)
+        : '0.00';
+
+  return (
+    <div
+      className={`rounded-xl p-3 border ${
+        striker
+          ? 'bg-emerald-950/40 border-emerald-500/40'
+          : 'bg-slate-900/70 border-slate-700'
+      }`}
+    >
+
+      <div className="flex items-center justify-between gap-2">
+
+        <div className="min-w-0">
+
+          <div className="flex items-center gap-1.5">
+
+            {striker && (
+              <span className="text-emerald-400 text-sm">
+                ▶
+              </span>
+            )}
+
+            <span className="font-semibold text-white truncate">
+              {player?.name || 'Batsman'}
+            </span>
+
+            {safeStats.is_out && (
+              <span className="text-red-400 text-xs font-bold">
+                OUT
+              </span>
+            )}
+
+          </div>
+
+          <div className="text-[10px] text-slate-500 mt-1 uppercase tracking-wide">
+            {striker
+              ? 'STRIKER'
+              : 'NON-STRIKER'}
+          </div>
+
+        </div>
+
+        <div className="text-right shrink-0">
+
+          <div className="text-xl font-extrabold text-white">
+            {runs}
+            <span className="text-xs text-slate-400 font-normal">
+              ({balls})
+            </span>
+          </div>
+
+          <div className="text-[10px] text-slate-500">
+            SR {strikeRate}
+          </div>
+
+        </div>
+
+      </div>
+
+      <div className="flex gap-4 mt-2 pt-2 border-t border-slate-800 text-xs">
+
+        <Stat
+          value={fours}
+          label="4s"
+        />
+
+        <Stat
+          value={sixes}
+          label="6s"
+        />
+
+        <Stat
+          value={strikeRate}
+          label="SR"
+        />
+
+      </div>
+
+    </div>
+  );
+}
+
+
+/*
+ * ----------------------------------------------------
  * BALL DISPLAY
  * ----------------------------------------------------
  */
