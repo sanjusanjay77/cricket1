@@ -236,6 +236,7 @@ export default function PlayerRecords() {
           if (showLoader) {
             setLoadingStats(false);
           }
+
         }
 
       },
@@ -307,13 +308,33 @@ export default function PlayerRecords() {
 
 
   /* ============================================================
-     OPEN PLAYER
+     OPEN / CLOSE PLAYER
   ============================================================ */
 
   const openPlayer =
     useCallback(
       (player) => {
 
+        /*
+         * If the same player is clicked again,
+         * close the stats.
+         */
+        if (
+          String(selected?.id) ===
+          String(player.id)
+        ) {
+
+          setSelected(null);
+          setStats(null);
+
+          return;
+        }
+
+
+        /*
+         * Open this player directly below
+         * their name on mobile.
+         */
         setSelected(
           player
         );
@@ -331,7 +352,9 @@ export default function PlayerRecords() {
         );
 
       },
-      []
+      [
+        selected
+      ]
     );
 
 
@@ -389,7 +412,9 @@ export default function PlayerRecords() {
           err?.message ||
           'Failed to add player'
         );
+
       }
+
     };
 
 
@@ -491,6 +516,7 @@ export default function PlayerRecords() {
           null
         );
       }
+
     };
 
 
@@ -566,7 +592,484 @@ export default function PlayerRecords() {
 
 
   /* ============================================================
+     PLAYER STATS CONTENT
+     
+     This is used INSIDE the selected player's card
+     on mobile and in the right panel on desktop.
+  ============================================================ */
+
+  const statsContent = (
+
+    <div className="space-y-3 min-w-0">
+
+      {/* PLAYER INFO */}
+
+      <div
+        className="
+          card
+          !p-3
+          sm:!p-5
+          min-w-0
+        "
+      >
+
+        <div
+          className="
+            flex
+            items-center
+            justify-between
+            gap-3
+            min-w-0
+          "
+        >
+
+          <div className="min-w-0 flex-1">
+
+            <h2
+              className="
+                text-lg
+                sm:text-2xl
+                font-bold
+                truncate
+              "
+            >
+              {stats?.player?.name ||
+                selected?.name}
+            </h2>
+
+
+            <p
+              className="
+                text-xs
+                sm:text-sm
+                text-slate-400
+                mt-1
+                truncate
+              "
+            >
+              {stats?.player?.team_name ||
+                selected?.team_name ||
+                'Team'}
+
+              {' · '}
+
+              {stats?.player?.role ||
+                selected?.role ||
+                'Player'}
+            </p>
+
+          </div>
+
+
+          {/* Close */}
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null);
+              setStats(null);
+            }}
+            className="
+              min-w-[36px]
+              min-h-[36px]
+              rounded-lg
+              bg-slate-800
+              text-slate-400
+              hover:text-white
+              flex
+              items-center
+              justify-center
+              shrink-0
+            "
+            aria-label="Close player stats"
+          >
+            ✕
+          </button>
+
+        </div>
+
+      </div>
+
+
+      {/* BATTING / BOWLING TABS */}
+
+      <div
+        className="
+          grid
+          grid-cols-2
+          gap-1.5
+          p-1
+          bg-slate-900
+          rounded-xl
+          shadow-lg
+        "
+      >
+
+        <button
+          type="button"
+          onClick={() =>
+            setActiveTab(
+              'batting'
+            )
+          }
+          className={`
+            min-h-[44px]
+            rounded-lg
+            font-semibold
+            text-xs
+            sm:text-sm
+            transition
+            flex
+            items-center
+            justify-center
+            gap-1.5
+            ${
+              activeTab ===
+              'batting'
+                ? 'bg-emerald-500 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }
+          `}
+        >
+
+          <span>🏏</span>
+
+          <span>
+            Batting
+          </span>
+
+        </button>
+
+
+        <button
+          type="button"
+          onClick={() =>
+            setActiveTab(
+              'bowling'
+            )
+          }
+          className={`
+            min-h-[44px]
+            rounded-lg
+            font-semibold
+            text-xs
+            sm:text-sm
+            transition
+            flex
+            items-center
+            justify-center
+            gap-1.5
+            ${
+              activeTab ===
+              'bowling'
+                ? 'bg-orange-500 text-white shadow'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }
+          `}
+        >
+
+          <span>🎯</span>
+
+          <span>
+            Bowling
+          </span>
+
+        </button>
+
+      </div>
+
+
+      {/* =====================================================
+          BATTING
+      ===================================================== */}
+
+      {activeTab ===
+        'batting' && (
+
+        <div
+          className="
+            card
+            !p-3
+            sm:!p-5
+            min-w-0
+          "
+        >
+
+          <div
+            className="
+              flex
+              items-center
+              justify-between
+              gap-2
+              mb-3
+            "
+          >
+
+            <h3
+              className="
+                font-semibold
+                text-emerald-400
+                text-sm
+                sm:text-base
+              "
+            >
+              🏏 Batting Details
+            </h3>
+
+
+            <span
+              className="
+                text-[10px]
+                sm:text-xs
+                text-slate-500
+                shrink-0
+              "
+            >
+              Career
+            </span>
+
+          </div>
+
+
+          <div
+            className="
+              grid
+              grid-cols-2
+              gap-2
+              sm:gap-3
+              text-sm
+            "
+          >
+
+            <Stat
+              label="Innings Batted"
+              value={
+                stats?.batting
+                  ?.innings_batted
+              }
+            />
+
+            <Stat
+              label="Runs Scored"
+              value={
+                stats?.batting
+                  ?.runs
+              }
+            />
+
+            <Stat
+              label="Highest Score"
+              value={
+                stats?.batting
+                  ?.highest_score
+              }
+            />
+
+            <Stat
+              label="Balls Faced"
+              value={
+                stats?.batting
+                  ?.balls_faced
+              }
+            />
+
+            <Stat
+              label="Fours"
+              value={
+                stats?.batting
+                  ?.fours
+              }
+            />
+
+            <Stat
+              label="Sixes"
+              value={
+                stats?.batting
+                  ?.sixes
+              }
+            />
+
+            <Stat
+              label="Strike Rate"
+              value={
+                stats?.batting
+                  ?.strike_rate
+              }
+            />
+
+            <Stat
+              label="Average"
+              value={
+                stats?.batting
+                  ?.average
+              }
+            />
+
+            <Stat
+              label="Times Out"
+              value={
+                stats?.batting
+                  ?.times_out
+              }
+            />
+
+            <Stat
+              label="Not Outs"
+              value={
+                stats?.batting
+                  ?.not_outs
+              }
+            />
+
+          </div>
+
+        </div>
+
+      )}
+
+
+      {/* =====================================================
+          BOWLING
+      ===================================================== */}
+
+      {activeTab ===
+        'bowling' && (
+
+        <div
+          className="
+            card
+            !p-3
+            sm:!p-5
+            min-w-0
+          "
+        >
+
+          <div
+            className="
+              flex
+              items-center
+              justify-between
+              gap-2
+              mb-3
+            "
+          >
+
+            <h3
+              className="
+                font-semibold
+                text-orange-400
+                text-sm
+                sm:text-base
+              "
+            >
+              🎯 Bowling Details
+            </h3>
+
+
+            <span
+              className="
+                text-[10px]
+                sm:text-xs
+                text-slate-500
+                shrink-0
+              "
+            >
+              Career
+            </span>
+
+          </div>
+
+
+          <div
+            className="
+              grid
+              grid-cols-2
+              gap-2
+              sm:gap-3
+              text-sm
+            "
+          >
+
+            <Stat
+              label="Innings Bowled"
+              value={
+                stats?.bowling
+                  ?.innings_bowled
+              }
+            />
+
+            <Stat
+              label="Overs Bowled"
+              value={
+                stats?.bowling
+                  ?.overs
+              }
+            />
+
+            <Stat
+              label="Balls Bowled"
+              value={
+                stats?.bowling
+                  ?.balls_bowled
+              }
+            />
+
+            <Stat
+              label="Runs Given"
+              value={
+                stats?.bowling
+                  ?.runs_given
+              }
+            />
+
+            <Stat
+              label="Wickets"
+              value={
+                stats?.bowling
+                  ?.wickets
+              }
+            />
+
+            <Stat
+              label="Economy"
+              value={
+                stats?.bowling
+                  ?.economy
+              }
+            />
+
+            <Stat
+              label="Fours Given"
+              value={
+                stats?.bowling
+                  ?.fours_given
+              }
+            />
+
+            <Stat
+              label="Sixes Given"
+              value={
+                stats?.bowling
+                  ?.sixes_given
+              }
+            />
+
+          </div>
+
+        </div>
+
+      )}
+
+    </div>
+  );
+
+
+  /* ============================================================
      PLAYER LIST
+     
+     IMPORTANT:
+     On mobile, stats are rendered immediately BELOW
+     the clicked player's row.
   ============================================================ */
 
   const playerList = (
@@ -605,7 +1108,7 @@ export default function PlayerRecords() {
 
           <div
             key={teamName}
-            className="mb-4"
+            className="mb-4 min-w-0"
           >
 
             <h2
@@ -621,120 +1124,168 @@ export default function PlayerRecords() {
             </h2>
 
 
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0">
 
               {teamPlayers.map(
-                player => (
+                player => {
 
-                  <div
-                    key={player.id}
-                    onClick={() =>
-                      openPlayer(
-                        player
-                      )
-                    }
-                    className={`
-                      card
-                      flex
-                      items-center
-                      justify-between
-                      gap-3
-                      py-3
-                      px-3
-                      cursor-pointer
-                      transition
-                      hover:border-emerald-500
-                      active:scale-[0.99]
-                      ${
-                        selected?.id ===
-                        player.id
-                          ? 'border-emerald-500 bg-slate-800/60'
-                          : ''
-                      }
-                    `}
-                  >
+                  const isSelected =
+                    String(selected?.id) ===
+                    String(player.id);
 
-                    <div className="min-w-0">
-
-                      <div className="font-medium truncate">
-                        {player.name}
-                      </div>
-
-                      {/* Mobile role */}
-                      <div
-                        className="
-                          text-xs
-                          text-slate-500
-                          mt-0.5
-                          sm:hidden
-                        "
-                      >
-                        {player.role ||
-                          'Player'}
-                      </div>
-
-                    </div>
-
+                  return (
 
                     <div
-                      className="
-                        flex
-                        items-center
-                        gap-2
-                        shrink-0
-                      "
+                      key={player.id}
+                      className="min-w-0"
                     >
 
-                      <span
-                        className="
-                          text-xs
-                          text-slate-400
-                          hidden
-                          sm:block
-                        "
-                      >
-                        {player.role ||
-                          'Player'}
-                      </span>
+                      {/* PLAYER ROW */}
 
-
-                      <button
-                        type="button"
-                        onClick={(e) =>
-                          removePlayer(
-                            player,
-                            e
+                      <div
+                        onClick={() =>
+                          openPlayer(
+                            player
                           )
                         }
-                        disabled={
-                          deletingId ===
-                          player.id
-                        }
-                        className="
-                          min-w-[36px]
-                          min-h-[36px]
+                        className={`
+                          card
                           flex
                           items-center
-                          justify-center
-                          rounded-lg
-                          text-red-400
-                          hover:text-red-300
-                          hover:bg-red-500/10
-                        "
+                          justify-between
+                          gap-3
+                          py-3
+                          px-3
+                          min-w-0
+                          cursor-pointer
+                          transition
+                          hover:border-emerald-500
+                          active:scale-[0.99]
+                          ${
+                            isSelected
+                              ? 'border-emerald-500 bg-slate-800/60 rounded-b-none'
+                              : ''
+                          }
+                        `}
                       >
 
-                        {deletingId ===
-                        player.id
-                          ? '...'
-                          : '🗑️'}
+                        <div className="min-w-0 flex-1">
 
-                      </button>
+                          <div className="font-medium truncate">
+                            {player.name}
+                          </div>
+
+
+                          {/* Mobile role */}
+
+                          <div
+                            className="
+                              text-xs
+                              text-slate-500
+                              mt-0.5
+                              sm:hidden
+                            "
+                          >
+                            {player.role ||
+                              'Player'}
+                          </div>
+
+                        </div>
+
+
+                        <div
+                          className="
+                            flex
+                            items-center
+                            gap-2
+                            shrink-0
+                          "
+                        >
+
+                          <span
+                            className="
+                              text-xs
+                              text-slate-400
+                              hidden
+                              sm:block
+                            "
+                          >
+                            {player.role ||
+                              'Player'}
+                          </span>
+
+
+                          <button
+                            type="button"
+                            onClick={(e) =>
+                              removePlayer(
+                                player,
+                                e
+                              )
+                            }
+                            disabled={
+                              deletingId ===
+                              player.id
+                            }
+                            className="
+                              min-w-[36px]
+                              min-h-[36px]
+                              flex
+                              items-center
+                              justify-center
+                              rounded-lg
+                              text-red-400
+                              hover:text-red-300
+                              hover:bg-red-500/10
+                            "
+                          >
+
+                            {deletingId ===
+                            player.id
+                              ? '...'
+                              : '🗑️'}
+
+                          </button>
+
+                        </div>
+
+                      </div>
+
+
+                      {/* =================================================
+                          MOBILE INLINE STATS
+
+                          Stats appear directly below the clicked
+                          player's name.
+                      ================================================= */}
+
+                      {isSelected &&
+                        stats && (
+
+                        <div
+                          className="
+                            md:hidden
+                            mt-0
+                            rounded-b-2xl
+                            bg-slate-950/60
+                            border
+                            border-t-0
+                            border-emerald-500/50
+                            p-2
+                          "
+                        >
+
+                          {statsContent}
+
+                        </div>
+
+                      )}
 
                     </div>
 
-                  </div>
+                  );
 
-                )
+                }
               )}
 
             </div>
@@ -750,493 +1301,6 @@ export default function PlayerRecords() {
 
 
   /* ============================================================
-     PLAYER STATS PANEL
-  ============================================================ */
-
-  const statsPanel = (
-
-    <>
-
-      {/* NOTHING SELECTED */}
-
-      {!selected && (
-
-        <div className="card text-slate-400">
-          Select a player to see their full
-          batting and bowling record.
-        </div>
-
-      )}
-
-
-      {/* =======================================================
-          SELECTED PLAYER
-      ======================================================= */}
-
-      {selected &&
-        stats && (
-
-        <div className="space-y-3">
-
-          {/* PLAYER INFO */}
-
-          <div
-            className="
-              card
-              !p-4
-              sm:!p-5
-            "
-          >
-
-            <div
-              className="
-                flex
-                items-center
-                justify-between
-                gap-3
-              "
-            >
-
-              <div className="min-w-0">
-
-                <h2
-                  className="
-                    text-xl
-                    sm:text-2xl
-                    font-bold
-                    truncate
-                  "
-                >
-                  {stats.player?.name ||
-                    selected.name}
-                </h2>
-
-
-                <p
-                  className="
-                    text-sm
-                    text-slate-400
-                    mt-1
-                    truncate
-                  "
-                >
-                  {stats.player?.team_name ||
-                    selected.team_name ||
-                    'Team'}
-
-                  {' · '}
-
-                  {stats.player?.role ||
-                    selected.role ||
-                    'Player'}
-                </p>
-
-              </div>
-
-
-              {/* Close selection on mobile */}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSelected(null);
-                  setStats(null);
-                }}
-                className="
-                  md:hidden
-                  min-w-[38px]
-                  min-h-[38px]
-                  rounded-lg
-                  bg-slate-800
-                  text-slate-400
-                  hover:text-white
-                  flex
-                  items-center
-                  justify-center
-                  shrink-0
-                "
-                aria-label="Close player stats"
-              >
-                ✕
-              </button>
-
-            </div>
-
-          </div>
-
-
-          {/* BATTING / BOWLING */}
-
-          <div
-            className="
-              grid
-              grid-cols-2
-              gap-1.5
-              p-1
-              bg-slate-900
-              rounded-xl
-              sticky
-              top-2
-              z-10
-              shadow-lg
-            "
-          >
-
-            <button
-              type="button"
-              onClick={() =>
-                setActiveTab(
-                  'batting'
-                )
-              }
-              className={`
-                min-h-[46px]
-                rounded-lg
-                font-semibold
-                text-sm
-                transition
-                flex
-                items-center
-                justify-center
-                gap-2
-                ${
-                  activeTab ===
-                  'batting'
-                    ? 'bg-emerald-500 text-white shadow'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                }
-              `}
-            >
-
-              <span>🏏</span>
-
-              <span>
-                Batting
-              </span>
-
-            </button>
-
-
-            <button
-              type="button"
-              onClick={() =>
-                setActiveTab(
-                  'bowling'
-                )
-              }
-              className={`
-                min-h-[46px]
-                rounded-lg
-                font-semibold
-                text-sm
-                transition
-                flex
-                items-center
-                justify-center
-                gap-2
-                ${
-                  activeTab ===
-                  'bowling'
-                    ? 'bg-orange-500 text-white shadow'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                }
-              `}
-            >
-
-              <span>🎯</span>
-
-              <span>
-                Bowling
-              </span>
-
-            </button>
-
-          </div>
-
-
-          {/* =================================================
-              BATTING
-          ================================================= */}
-
-          {activeTab ===
-            'batting' && (
-
-            <div className="card !p-3 sm:!p-5">
-
-              <div
-                className="
-                  flex
-                  items-center
-                  justify-between
-                  mb-3
-                  sm:mb-4
-                "
-              >
-
-                <h3
-                  className="
-                    font-semibold
-                    text-emerald-400
-                  "
-                >
-                  🏏 Batting Details
-                </h3>
-
-
-                <span
-                  className="
-                    text-xs
-                    text-slate-500
-                  "
-                >
-                  Career
-                </span>
-
-              </div>
-
-
-              <div
-                className="
-                  grid
-                  grid-cols-2
-                  gap-2
-                  sm:gap-3
-                  text-sm
-                "
-              >
-
-                <Stat
-                  label="Innings Batted"
-                  value={
-                    stats.batting
-                      ?.innings_batted
-                  }
-                />
-
-                <Stat
-                  label="Runs Scored"
-                  value={
-                    stats.batting
-                      ?.runs
-                  }
-                />
-
-                <Stat
-                  label="Highest Score"
-                  value={
-                    stats.batting
-                      ?.highest_score
-                  }
-                />
-
-                <Stat
-                  label="Balls Faced"
-                  value={
-                    stats.batting
-                      ?.balls_faced
-                  }
-                />
-
-                <Stat
-                  label="Fours"
-                  value={
-                    stats.batting
-                      ?.fours
-                  }
-                />
-
-                <Stat
-                  label="Sixes"
-                  value={
-                    stats.batting
-                      ?.sixes
-                  }
-                />
-
-                <Stat
-                  label="Strike Rate"
-                  value={
-                    stats.batting
-                      ?.strike_rate
-                  }
-                />
-
-                <Stat
-                  label="Average"
-                  value={
-                    stats.batting
-                      ?.average
-                  }
-                />
-
-                <Stat
-                  label="Times Out"
-                  value={
-                    stats.batting
-                      ?.times_out
-                  }
-                />
-
-                <Stat
-                  label="Not Outs"
-                  value={
-                    stats.batting
-                      ?.not_outs
-                  }
-                />
-
-              </div>
-
-            </div>
-
-          )}
-
-
-          {/* =================================================
-              BOWLING
-          ================================================= */}
-
-          {activeTab ===
-            'bowling' && (
-
-            <div className="card !p-3 sm:!p-5">
-
-              <div
-                className="
-                  flex
-                  items-center
-                  justify-between
-                  mb-3
-                  sm:mb-4
-                "
-              >
-
-                <h3
-                  className="
-                    font-semibold
-                    text-orange-400
-                  "
-                >
-                  🎯 Bowling Details
-                </h3>
-
-
-                <span
-                  className="
-                    text-xs
-                    text-slate-500
-                  "
-                >
-                  Career
-                </span>
-
-              </div>
-
-
-              <div
-                className="
-                  grid
-                  grid-cols-2
-                  gap-2
-                  sm:gap-3
-                  text-sm
-                "
-              >
-
-                <Stat
-                  label="Innings Bowled"
-                  value={
-                    stats.bowling
-                      ?.innings_bowled
-                  }
-                />
-
-                <Stat
-                  label="Overs Bowled"
-                  value={
-                    stats.bowling
-                      ?.overs
-                  }
-                />
-
-                <Stat
-                  label="Balls Bowled"
-                  value={
-                    stats.bowling
-                      ?.balls_bowled
-                  }
-                />
-
-                <Stat
-                  label="Runs Given"
-                  value={
-                    stats.bowling
-                      ?.runs_given
-                  }
-                />
-
-                <Stat
-                  label="Wickets"
-                  value={
-                    stats.bowling
-                      ?.wickets
-                  }
-                />
-
-                <Stat
-                  label="Economy"
-                  value={
-                    stats.bowling
-                      ?.economy
-                  }
-                />
-
-                <Stat
-                  label="Fours Given"
-                  value={
-                    stats.bowling
-                      ?.fours_given
-                  }
-                />
-
-                <Stat
-                  label="Sixes Given"
-                  value={
-                    stats.bowling
-                      ?.sixes_given
-                  }
-                />
-
-              </div>
-
-            </div>
-
-          )}
-
-        </div>
-
-      )}
-
-
-      {/* FAILED */}
-
-      {selected &&
-        !stats &&
-        !loadingStats && (
-
-        <div className="card text-red-400">
-          Unable to load this player's
-          statistics.
-        </div>
-
-      )}
-
-    </>
-
-  );
-
-
-  /* ============================================================
      RENDER
   ============================================================ */
 
@@ -1244,6 +1308,8 @@ export default function PlayerRecords() {
 
     <div
       className="
+        w-full
+        min-w-0
         grid
         md:grid-cols-2
         gap-4
@@ -1255,12 +1321,17 @@ export default function PlayerRecords() {
       {/* =====================================================
           MOBILE
           
-          Stats are intentionally ABOVE player list.
-          
-          md:hidden = only mobile/tablet below md.
+          Player stats appear directly under the clicked
+          player.
       ===================================================== */}
 
-      <div className="md:hidden min-w-0">
+      <div
+        className="
+          md:hidden
+          min-w-0
+          w-full
+        "
+      >
 
         {/* HEADER */}
 
@@ -1271,10 +1342,17 @@ export default function PlayerRecords() {
             justify-between
             gap-3
             mb-1
+            min-w-0
           "
         >
 
-          <h1 className="text-2xl font-bold">
+          <h1
+            className="
+              text-2xl
+              font-bold
+              min-w-0
+            "
+          >
             Player Stats
           </h1>
 
@@ -1288,6 +1366,7 @@ export default function PlayerRecords() {
               whitespace-nowrap
               min-h-[44px]
               px-3
+              shrink-0
             "
             onClick={() =>
               setShowAdd(
@@ -1326,6 +1405,7 @@ export default function PlayerRecords() {
               card
               space-y-3
               mb-4
+              min-w-0
             "
           >
 
@@ -1456,37 +1536,7 @@ export default function PlayerRecords() {
         />
 
 
-        {/* =================================================
-            SELECTED PLAYER STATS
-            THIS IS NOW ABOVE THE PLAYER LIST
-        ================================================= */}
-
-        {selected && stats && (
-
-          <div className="mb-5">
-
-            <div
-              className="
-                text-xs
-                font-semibold
-                uppercase
-                tracking-wide
-                text-slate-500
-                mb-2
-                px-1
-              "
-            >
-              Selected Player
-            </div>
-
-            {statsPanel}
-
-          </div>
-
-        )}
-
-
-        {/* OTHER PLAYERS */}
+        {/* PLAYER LIST */}
 
         <div>
 
@@ -1507,9 +1557,7 @@ export default function PlayerRecords() {
                 text-slate-300
               "
             >
-              {selected
-                ? 'Other Players'
-                : 'Players'}
+              Players
             </h2>
 
 
@@ -1533,12 +1581,17 @@ export default function PlayerRecords() {
 
 
       {/* =====================================================
-          DESKTOP
-          
-          Existing two-column layout remains.
+          DESKTOP PLAYER LIST
       ===================================================== */}
 
-      <div className="hidden md:block min-w-0">
+      <div
+        className="
+          hidden
+          md:block
+          min-w-0
+          w-full
+        "
+      >
 
         <div
           className="
@@ -1736,7 +1789,14 @@ export default function PlayerRecords() {
           DESKTOP STATS
       ===================================================== */}
 
-      <div className="hidden md:block min-w-0">
+      <div
+        className="
+          hidden
+          md:block
+          min-w-0
+          w-full
+        "
+      >
 
         <h1
           className="
@@ -1748,12 +1808,18 @@ export default function PlayerRecords() {
           Career Record
         </h1>
 
-        {statsPanel}
+        {stats && selected
+          ? statsContent
+          : (
+            <div className="card text-slate-400">
+              Select a player to see their full
+              batting and bowling record.
+            </div>
+          )}
 
       </div>
 
     </div>
-
   );
 }
 
@@ -1779,6 +1845,7 @@ function Stat({
         flex
         flex-col
         justify-center
+        min-w-0
       "
     >
 
@@ -1787,6 +1854,7 @@ function Stat({
           text-slate-400
           text-xs
           leading-tight
+          break-words
         "
       >
         {label}
@@ -1807,5 +1875,4 @@ function Stat({
     </div>
 
   );
-
 }
