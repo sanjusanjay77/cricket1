@@ -14,9 +14,13 @@ const MatchSetup = lazy(() => import('./pages/MatchSetup.jsx'));
 const Scorer = lazy(() => import('./pages/Scorer.jsx'));
 const LiveScoreboard = lazy(() => import('./pages/LiveScoreboard.jsx'));
 
+/* =========================================================
+   PAGE LOADING
+========================================================= */
+
 function PageLoading() {
   return (
-    <div className="flex min-h-[300px] items-center justify-center">
+    <div className="flex min-h-[300px] w-full items-center justify-center px-4">
       <div className="text-sm text-slate-400">
         Loading...
       </div>
@@ -24,23 +28,27 @@ function PageLoading() {
   );
 }
 
+/* =========================================================
+   PAGE ERROR
+========================================================= */
+
 function PageError({ error }) {
   return (
-    <div className="max-w-xl mx-auto mt-10 px-4">
-      <div className="rounded-2xl border border-red-500/30 bg-red-950/40 p-5">
+    <div className="mx-auto mt-6 w-full max-w-xl px-3 sm:mt-10 sm:px-4">
+      <div className="rounded-2xl border border-red-500/30 bg-red-950/40 p-4 sm:p-5">
 
-        <h2 className="text-lg font-bold text-red-300">
+        <h2 className="text-base font-bold text-red-300 sm:text-lg">
           Unable to open this page
         </h2>
 
-        <p className="text-sm text-slate-400 mt-2 break-words">
+        <p className="mt-2 break-words text-sm leading-6 text-slate-400">
           {error?.message ||
             'Something went wrong while loading the page.'}
         </p>
 
         <button
           type="button"
-          className="btn btn-primary mt-4"
+          className="btn btn-primary mt-4 min-h-[44px] w-full sm:w-auto"
           onClick={() => window.location.reload()}
         >
           Reload Page
@@ -50,6 +58,10 @@ function PageError({ error }) {
     </div>
   );
 }
+
+/* =========================================================
+   ROUTE ERROR BOUNDARY
+========================================================= */
 
 class RouteErrorBoundary extends React.Component {
   constructor(props) {
@@ -87,13 +99,40 @@ class RouteErrorBoundary extends React.Component {
   }
 }
 
+/* =========================================================
+   APP
+========================================================= */
+
 export default function App() {
   return (
-    <div className="min-h-screen bg-stadium">
+    <div className="min-h-screen w-full overflow-x-hidden bg-stadium">
+
+      {/* ===================================================
+          NAVBAR
+      =================================================== */}
 
       <Navbar />
 
-      <main className="max-w-6xl mx-auto px-4 py-6 lg:max-w-7xl">
+      {/* ===================================================
+          MAIN CONTENT
+      =================================================== */}
+
+      <main
+        className="
+          mx-auto
+          w-full
+          max-w-7xl
+          overflow-x-hidden
+          px-3
+          py-4
+          sm:px-4
+          sm:py-5
+          md:px-6
+          md:py-6
+          lg:px-8
+          lg:py-8
+        "
+      >
 
         <RouteErrorBoundary>
 
@@ -164,6 +203,10 @@ export default function App() {
         </RouteErrorBoundary>
 
       </main>
+
+      {/* ===================================================
+          NOTIFICATIONS
+      =================================================== */}
 
       <NotificationRegistration />
 
