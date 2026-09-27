@@ -1,4 +1,3 @@
-
 const { createClient } = require('@tursodatabase/serverless/compat');
 require('dotenv').config();
 
@@ -180,19 +179,51 @@ async function ensureDatabaseUpdates() {
     }
 
     // =====================================================
-    // MULTI-DEVICE NOTIFICATION TABLE
+    // TEAM ARCHIVE
     // =====================================================
     //
-    // One notification user can have:
+    // 0 = Active
+    // 1 = Archived
     //
-    // 💻 Laptop
-    // 📱 Phone
-    // 📱 Tablet
+    // We NEVER delete historical teams just because
+    // they have match history.
     //
-    // Each device has its own FCM token.
+    // Archived teams can remain connected to:
+    // - matches
+    // - innings
+    // - balls
+    // - player statistics
+    // - records
     //
-    // The old notification_users.fcm_token column
-    // is intentionally kept for compatibility.
+    // This protects historical scoreboard data.
+    // =====================================================
+
+    const hasTeamArchived = await columnExists(
+      'teams',
+      'archived'
+    );
+
+    if (!hasTeamArchived) {
+      console.log(
+        '➕ Adding archived column to teams...'
+      );
+
+      await client.execute(`
+        ALTER TABLE teams
+        ADD COLUMN archived INTEGER NOT NULL DEFAULT 0
+      `);
+
+      console.log(
+        '✅ teams.archived column added successfully'
+      );
+    } else {
+      console.log(
+        '✅ teams.archived column already exists'
+      );
+    }
+
+    // =====================================================
+    // MULTI-DEVICE NOTIFICATION TABLE
     // =====================================================
 
     await client.execute(`
@@ -219,8 +250,22 @@ async function ensureDatabaseUpdates() {
       ON notification_devices(user_id)
     `);
 
+    // =====================================================
+    // INDEX FOR ACTIVE / ARCHIVED TEAMS
+    // =====================================================
+
+    await client.execute(`
+      CREATE INDEX IF NOT EXISTS
+      idx_teams_archived
+      ON teams(archived)
+    `);
+
     console.log(
       '✅ Multi-device notification table ready'
+    );
+
+    console.log(
+      '✅ Team archive system ready'
     );
 
   } catch (error) {
@@ -326,4 +371,3 @@ const db = {
 };
 
 module.exports = db;
-
