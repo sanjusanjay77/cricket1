@@ -1,3 +1,4 @@
+
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
@@ -38,6 +39,12 @@ export default function Scorer() {
    * ----------------------------------------------------
    * FIRST-BALL UNDO BOWLER PRESERVATION
    * ----------------------------------------------------
+   *
+   * When the first ball is undone, the backend may return
+   * current_bowler_id as null.
+   *
+   * Remember the bowler so the UI/socket state can keep
+   * showing that same bowler.
    */
 
   const preservedBowlerRef = useRef(null);
@@ -91,9 +98,10 @@ export default function Scorer() {
    * FULL MATCH LOAD
    * ----------------------------------------------------
    *
-   * Used only for:
+   * Only used:
    * - initial page load
-   * - actual save failure
+   * - failed save
+   * - failed Undo
    *
    * NOT used after every successful ball.
    */
@@ -179,7 +187,7 @@ export default function Scorer() {
       innings: updatedInnings
     } = {}) => {
       /*
-       * Do not allow socket state to overwrite
+       * Never allow socket data to overwrite
        * optimistic scoring while balls are pending.
        */
       if (pendingCountRef.current > 0) {
@@ -193,7 +201,7 @@ export default function Scorer() {
 
       /*
        * ------------------------------------------------
-       * FIRST-BALL UNDO BOWLER FIX
+       * FIRST-BALL UNDO BOWLER PRESERVATION
        * ------------------------------------------------
        */
 
@@ -228,6 +236,11 @@ export default function Scorer() {
 
             innings: {
               ...lastInn,
+
+              /*
+               * Keep the exact same bowler that was
+               * selected before the first-ball Undo.
+               */
               current_bowler_id:
                 preservedBowler
             }
@@ -245,8 +258,8 @@ export default function Scorer() {
       setInnings(finalInnings);
 
       /*
-       * Clear preservation once server confirms
-       * the bowler.
+       * Clear preservation only after the server/socket
+       * confirms the same bowler.
        */
 
       if (
@@ -1449,10 +1462,6 @@ export default function Scorer() {
           optimisticRef.current = null;
           setOptimistic(null);
 
-          /*
-           * Only reload when save actually fails.
-           */
-
           try {
             const data =
               await Matches.get(
@@ -1469,10 +1478,6 @@ export default function Scorer() {
       processingQueueRef.current =
         false;
 
-      /*
-       * No Matches.get() after successful saves.
-       * Socket.IO synchronizes the server state.
-       */
     }, [
       matchId,
       applyServerData
@@ -1600,13 +1605,15 @@ export default function Scorer() {
    * UNDO
    * ----------------------------------------------------
    *
-   * FIX:
+   * IMPORTANT:
    *
-   * Do NOT reference currentInnings here because
-   * currentInnings is declared later in the component.
+   * If the innings has exactly ONE legal ball before
+   * Undo, remember the current bowler.
    *
-   * Instead, get the latest innings directly from the
-   * current innings state inside this callback.
+   * The server may reset current_bowler_id to NULL
+   * after deleting the first ball.
+   *
+   * We restore that bowler locally and in the backend.
    */
 
   const handleUndo =
@@ -1637,35 +1644,86 @@ export default function Scorer() {
         latestCurrentInnings.innings;
 
       /*
-       * Remember bowler BEFORE Undo.
+       * ------------------------------------------------
+       * CAPTURE STATE BEFORE UNDO
+       * ------------------------------------------------
        */
+
+      const ballsBeforeUndo =
+        Number(
+          optimisticRef.current?.total_balls ??
+          undoInn.total_balls ??
+          0
+        );
 
       const bowlerBeforeUndo =
         optimisticRef.current?.activeBowlerId ??
         undoInn.current_bowler_id ??
         null;
 
+      /*
+       * Only preserve the bowler when Undoing the
+       * very first legal ball.
+       */
+      const isFirstBallUndo =
+        ballsBeforeUndo === 1 &&
+        !!bowlerBeforeUndo;
+
       try {
         setError('');
 
-        preservedBowlerRef.current =
-          null;
+        /*
+         * IMPORTANT:
+         * Set this BEFORE calling the API.
+         *
+         * That way, if Socket.IO sends the Undo state
+         * immediately, the socket handler already knows
+         * which bowler must be preserved.
+         */
+
+        if (isFirstBallUndo) {
+          preservedBowlerRef.current =
+            bowlerBeforeUndo;
+        } else {
+          preservedBowlerRef.current =
+            null;
+        }
+
+        /*
+         * ------------------------------------------------
+         * CALL SERVER UNDO
+         * ------------------------------------------------
+         */
 
         const result =
           await Innings.undo(
             undoInn.id
           );
 
-        const resultInn =
-          result?.innings &&
-          typeof result.innings === 'object'
-            ? result.innings
-            : null;
+        /*
+         * Try to read the returned innings data.
+         *
+         * Different backend versions can return slightly
+         * different shapes, so support the common forms.
+         */
 
-        const resultBalls =
-          Number(
-            resultInn?.total_balls || 0
-          );
+        let resultInn = null;
+
+        if (
+          result?.innings &&
+          typeof result.innings === 'object' &&
+          !Array.isArray(result.innings)
+        ) {
+          resultInn =
+            result.innings;
+        } else if (
+          result?.data?.innings &&
+          typeof result.data.innings === 'object' &&
+          !Array.isArray(result.data.innings)
+        ) {
+          resultInn =
+            result.data.innings;
+        }
 
         /*
          * ------------------------------------------------
@@ -1673,48 +1731,75 @@ export default function Scorer() {
          * ------------------------------------------------
          */
 
-        if (
-          resultInn &&
-          resultBalls === 0 &&
-          bowlerBeforeUndo
-        ) {
+        if (isFirstBallUndo) {
+          /*
+           * The first ball is now gone.
+           * Keep the same bowler.
+           */
+
           preservedBowlerRef.current =
             bowlerBeforeUndo;
 
-          const currentOptimistic =
-            optimisticRef.current || {};
+          /*
+           * If the API returned innings information,
+           * use its values.
+           *
+           * Otherwise the previous innings state is used
+           * and the score is safely reset to zero because
+           * we know this was ball #1.
+           */
+
+          const restoredRuns =
+            resultInn
+              ? Number(
+                  resultInn.total_runs || 0
+                )
+              : 0;
+
+          const restoredWickets =
+            resultInn
+              ? Number(
+                  resultInn.total_wickets || 0
+                )
+              : 0;
+
+          const restoredStrikerId =
+            resultInn?.striker_id ??
+            undoInn.striker_id ??
+            null;
+
+          const restoredNonStrikerId =
+            resultInn?.non_striker_id ??
+            undoInn.non_striker_id ??
+            null;
+
+          /*
+           * Create a clean zero-ball optimistic state.
+           *
+           * The bowler ID intentionally remains.
+           */
 
           const preservedState = {
-            ...currentOptimistic,
-
             total_runs:
-              Number(
-                resultInn.total_runs || 0
-              ),
+              restoredRuns,
 
             total_wickets:
-              Number(
-                resultInn.total_wickets || 0
-              ),
+              restoredWickets,
 
             total_balls:
               0,
+
+            strikerId:
+              restoredStrikerId,
+
+            nonStrikerId:
+              restoredNonStrikerId,
 
             activeBowlerId:
               bowlerBeforeUndo,
 
             needsNextBowler:
               false,
-
-            strikerId:
-              resultInn.striker_id ??
-              currentOptimistic.strikerId ??
-              undoInn.striker_id,
-
-            nonStrikerId:
-              resultInn.non_striker_id ??
-              currentOptimistic.nonStrikerId ??
-              undoInn.non_striker_id,
 
             bowlerBalls:
               0,
@@ -1746,7 +1831,22 @@ export default function Scorer() {
             partnership: {
               runs: 0,
               balls: 0
-            }
+            },
+
+            extras: {
+              wide: 0,
+              noball: 0,
+              bye: 0,
+              legbye: 0,
+              penalty: 0
+            },
+
+            fallOfWickets:
+              Array.isArray(
+                result?.fallOfWickets
+              )
+                ? result.fallOfWickets
+                : []
           };
 
           optimisticRef.current =
@@ -1757,7 +1857,12 @@ export default function Scorer() {
           );
 
           /*
-           * Patch local innings immediately.
+           * ------------------------------------------------
+           * PATCH LOCAL INNINGS IMMEDIATELY
+           * ------------------------------------------------
+           *
+           * This prevents the UI from briefly showing
+           * "No bowler selected".
            */
 
           setInnings(prev => {
@@ -1788,40 +1893,52 @@ export default function Scorer() {
               return safePrev;
             }
 
+            const oldInn =
+              lastEntry.innings;
+
             next[lastIndex] = {
               ...lastEntry,
 
               innings: {
-                ...lastEntry.innings,
+                ...oldInn,
 
                 total_runs:
-                  Number(
-                    resultInn.total_runs || 0
-                  ),
+                  restoredRuns,
 
                 total_wickets:
-                  Number(
-                    resultInn.total_wickets || 0
-                  ),
+                  restoredWickets,
 
                 total_balls:
                   0,
 
+                /*
+                 * THIS IS THE IMPORTANT LINE.
+                 */
                 current_bowler_id:
                   bowlerBeforeUndo,
 
                 striker_id:
-                  resultInn.striker_id ??
-                  lastEntry.innings.striker_id,
+                  restoredStrikerId,
 
                 non_striker_id:
-                  resultInn.non_striker_id ??
-                  lastEntry.innings.non_striker_id
+                  restoredNonStrikerId
               },
 
               overs:
                 '0.0',
 
+              recentBalls: [],
+
+              partnership: {
+                runs: 0,
+                balls: 0
+              },
+
+              /*
+               * If Undo returned cards, use them.
+               * Otherwise keep the server card until the
+               * socket update arrives.
+               */
               battingCard:
                 Array.isArray(
                   result?.battingCard
@@ -1834,21 +1951,20 @@ export default function Scorer() {
                   result?.bowlingCard
                 )
                   ? result.bowlingCard
-                  : lastEntry.bowlingCard,
-
-              recentBalls: [],
-
-              partnership: {
-                runs: 0,
-                balls: 0
-              }
+                  : lastEntry.bowlingCard
             };
 
             return next;
           });
 
           /*
-           * Restore bowler in DB without blocking UI.
+           * ------------------------------------------------
+           * RESTORE BOWLER IN BACKEND
+           * ------------------------------------------------
+           *
+           * This is intentionally not awaited.
+           *
+           * The UI should remain instant.
            */
 
           Innings.setBowler(
@@ -1857,7 +1973,12 @@ export default function Scorer() {
               bowler_id:
                 bowlerBeforeUndo
             }
-          ).catch(err => {
+          ).then(() => {
+            /*
+             * Keep preservation active until the socket
+             * confirms the restored bowler.
+             */
+          }).catch(err => {
             console.warn(
               'Unable to restore bowler after first-ball Undo:',
               err
@@ -1952,6 +2073,15 @@ export default function Scorer() {
         }
 
       } catch (err) {
+        /*
+         * Undo failed.
+         *
+         * Do not preserve a bowler incorrectly.
+         */
+
+        preservedBowlerRef.current =
+          null;
+
         setError(
           err?.response?.data?.error ||
           err?.response?.data?.message ||
@@ -1971,8 +2101,9 @@ export default function Scorer() {
    * SAFE DISPLAY DATA
    * ----------------------------------------------------
    *
-   * These values are declared BEFORE any conditional
-   * return and therefore do not affect hook order.
+   * IMPORTANT:
+   * These declarations are BEFORE any conditional return.
+   * No hook dependency uses a variable declared below it.
    */
 
   const safeInnings =
@@ -2030,9 +2161,16 @@ export default function Scorer() {
    */
 
   useEffect(() => {
+    /*
+     * Do not show the initial bowler selector if we are
+     * intentionally preserving a bowler after first-ball
+     * Undo.
+     */
+
     if (
       needsInitialBowler &&
-      !showInitialBowler
+      !showInitialBowler &&
+      !preservedBowlerRef.current
     ) {
       setShowInitialBowler(true);
     }
@@ -3113,7 +3251,8 @@ export default function Scorer() {
       {!effectiveBowlerId &&
         effectiveStrikerId &&
         effectiveNonStrikerId &&
-        displayTotalBalls === 0 && (
+        displayTotalBalls === 0 &&
+        !preservedBowlerRef.current && (
 
           <div className="card">
 
@@ -4335,3 +4474,4 @@ function SelectBatsmen({
     </div>
   );
 }
+
