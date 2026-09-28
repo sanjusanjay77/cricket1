@@ -22,6 +22,9 @@ import {
 const MATCHES_CACHE_KEY =
   'gcc_matches_cache_v1';
 
+const HOME_INTRO_KEY =
+  'gcc_home_intro_seen_v1';
+
 
 /* =========================================================
    STATUS BADGES
@@ -127,6 +130,349 @@ function writeMatchesCache(matches) {
     );
 
   }
+
+}
+
+
+/* =========================================================
+   WELCOME INTRO
+========================================================= */
+
+function HomeIntro({
+  onFinished,
+}) {
+
+  useEffect(() => {
+
+    const timer =
+      window.setTimeout(() => {
+
+        try {
+
+          sessionStorage.setItem(
+            HOME_INTRO_KEY,
+            '1'
+          );
+
+        } catch (error) {
+
+          console.warn(
+            'Unable to save intro state:',
+            error
+          );
+
+        }
+
+
+        onFinished();
+
+      }, 850);
+
+
+    return () => {
+
+      window.clearTimeout(
+        timer
+      );
+
+    };
+
+  }, [onFinished]);
+
+
+  return (
+
+    <div
+      className="
+        fixed
+        inset-0
+        z-[9999]
+        flex
+        items-center
+        justify-center
+        overflow-hidden
+        bg-slate-950
+        px-5
+      "
+      style={{
+        animation:
+          'homeIntroOut 0.35s ease-out 0.5s both',
+      }}
+    >
+
+      {/* ===============================================
+          BACKGROUND GLOW
+      =============================================== */}
+
+      <div
+        className="
+          pointer-events-none
+          absolute
+          left-1/2
+          top-1/2
+          h-72
+          w-72
+          -translate-x-1/2
+          -translate-y-1/2
+          rounded-full
+          bg-emerald-500/10
+          blur-3xl
+        "
+        style={{
+          animation:
+            'homeGlow 2s ease-in-out infinite',
+        }}
+      />
+
+
+      {/* ===============================================
+          CONTENT
+      =============================================== */}
+
+      <div
+        className="
+          relative
+          flex
+          w-full
+          max-w-sm
+          flex-col
+          items-center
+          text-center
+        "
+      >
+
+        {/* Cricket icon */}
+
+        <div
+          className="
+            flex
+            h-24
+            w-24
+            items-center
+            justify-center
+            rounded-[28px]
+            border
+            border-emerald-400/20
+            bg-emerald-500/10
+            text-5xl
+            shadow-2xl
+            shadow-emerald-950/40
+          "
+          style={{
+            animation:
+              'homeBallIn 0.65s cubic-bezier(.2,.8,.2,1) both',
+          }}
+        >
+          🏏
+        </div>
+
+
+        {/* Small label */}
+
+        <div
+          className="
+            mt-6
+            text-[9px]
+            font-black
+            uppercase
+            tracking-[0.35em]
+            text-emerald-400
+          "
+          style={{
+            animation:
+              'homeTextIn 0.5s ease-out 0.15s both',
+          }}
+        >
+          GCC Cricket
+        </div>
+
+
+        {/* Main title */}
+
+        <h1
+          className="
+            mt-2
+            text-3xl
+            font-black
+            tracking-tight
+            text-white
+          "
+          style={{
+            animation:
+              'homeTextIn 0.5s ease-out 0.25s both',
+          }}
+        >
+          Live Scoreboard
+        </h1>
+
+
+        {/* Subtitle */}
+
+        <p
+          className="
+            mt-2
+            text-[11px]
+            font-medium
+            text-slate-500
+          "
+          style={{
+            animation:
+              'homeTextIn 0.5s ease-out 0.35s both',
+          }}
+        >
+          Your matches. Your records.
+        </p>
+
+
+        {/* Loading line */}
+
+        <div
+          className="
+            mt-7
+            h-1
+            w-32
+            overflow-hidden
+            rounded-full
+            bg-slate-800
+          "
+          style={{
+            animation:
+              'homeTextIn 0.5s ease-out 0.4s both',
+          }}
+        >
+
+          <div
+            className="
+              h-full
+              w-1/2
+              rounded-full
+              bg-emerald-500
+            "
+            style={{
+              animation:
+                'homeProgress 0.8s ease-in-out infinite',
+            }}
+          />
+
+        </div>
+
+      </div>
+
+
+      {/* ===============================================
+          INLINE ANIMATION STYLES
+      =============================================== */}
+
+      <style>{`
+
+        @keyframes homeBallIn {
+
+          0% {
+            opacity: 0;
+            transform:
+              translateY(24px)
+              scale(0.65)
+              rotate(-12deg);
+          }
+
+          70% {
+            opacity: 1;
+            transform:
+              translateY(-5px)
+              scale(1.04)
+              rotate(2deg);
+          }
+
+          100% {
+            opacity: 1;
+            transform:
+              translateY(0)
+              scale(1)
+              rotate(0);
+          }
+
+        }
+
+
+        @keyframes homeTextIn {
+
+          from {
+            opacity: 0;
+            transform: translateY(12px);
+          }
+
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+
+        }
+
+
+        @keyframes homeGlow {
+
+          0%,
+          100% {
+            opacity: 0.45;
+            transform:
+              translate(-50%, -50%)
+              scale(0.9);
+          }
+
+          50% {
+            opacity: 0.8;
+            transform:
+              translate(-50%, -50%)
+              scale(1.08);
+          }
+
+        }
+
+
+        @keyframes homeProgress {
+
+          0% {
+            transform: translateX(-100%);
+          }
+
+          100% {
+            transform: translateX(200%);
+          }
+
+        }
+
+
+        @keyframes homeIntroOut {
+
+          0% {
+            opacity: 1;
+          }
+
+          100% {
+            opacity: 0;
+            visibility: hidden;
+          }
+
+        }
+
+
+        @media (prefers-reduced-motion: reduce) {
+
+          *,
+          *::before,
+          *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+          }
+
+        }
+
+      `}</style>
+
+    </div>
+
+  );
 
 }
 
@@ -410,6 +756,19 @@ const LiveHero = memo(function LiveHero({
       innings,
     }) => {
 
+      /*
+       * Ignore updates belonging to
+       * another match.
+       */
+      if (
+        updatedMatch?.id &&
+        String(updatedMatch.id) !==
+          String(match.id)
+      ) {
+        return;
+      }
+
+
       setData(
         (current) => ({
 
@@ -622,8 +981,9 @@ const LiveHero = memo(function LiveHero({
         shadow-black/20
         transition-all
         duration-300
+        hover:-translate-y-0.5
         hover:border-red-500/40
-        hover:shadow-red-950/20
+        hover:shadow-red-950/30
         active:scale-[0.99]
       "
     >
@@ -929,6 +1289,7 @@ const LiveHero = memo(function LiveHero({
                 text-slate-500
               "
             >
+
               <span className="mr-1 text-emerald-500">
                 ●
               </span>
@@ -977,10 +1338,12 @@ const LiveHero = memo(function LiveHero({
             text-[11px]
             font-bold
             text-slate-300
-            transition
+            transition-all
+            duration-150
+            hover:bg-slate-700
+            hover:-translate-y-px
             active:scale-95
             active:bg-slate-700
-            hover:bg-slate-700
           "
         >
           👁 View
@@ -999,10 +1362,12 @@ const LiveHero = memo(function LiveHero({
             text-[11px]
             font-bold
             text-slate-300
-            transition
+            transition-all
+            duration-150
+            hover:bg-slate-700
+            hover:-translate-y-px
             active:scale-95
             active:bg-slate-700
-            hover:bg-slate-700
             disabled:opacity-50
           "
           onClick={downloadPdf}
@@ -1024,10 +1389,12 @@ const LiveHero = memo(function LiveHero({
             text-[11px]
             font-bold
             text-red-400
-            transition
+            transition-all
+            duration-150
+            hover:bg-red-500/20
+            hover:-translate-y-px
             active:scale-95
             active:bg-red-500/20
-            hover:bg-red-500/20
             disabled:cursor-not-allowed
             disabled:opacity-50
           "
@@ -1084,10 +1451,12 @@ const MatchCard = memo(function MatchCard({
         shadow-black/10
         transition-all
         duration-300
+        hover:-translate-y-0.5
         hover:border-slate-700
         hover:bg-slate-900
         hover:shadow-lg
-        active:scale-[0.99]
+        hover:shadow-black/20
+        active:scale-[0.985]
         animate-[fadeSlideUp_0.35s_ease-out_both]
       "
       style={{
@@ -1208,6 +1577,10 @@ const MatchCard = memo(function MatchCard({
               bg-emerald-500/5
               px-3
               py-2
+              transition-all
+              duration-200
+              group-hover:border-emerald-500/20
+              group-hover:bg-emerald-500/10
             "
           >
 
@@ -1264,10 +1637,12 @@ const MatchCard = memo(function MatchCard({
               text-[11px]
               font-bold
               text-slate-300
-              transition
+              transition-all
+              duration-150
+              hover:-translate-y-px
+              hover:bg-slate-700
               active:scale-95
               active:bg-slate-700
-              hover:bg-slate-700
             "
           >
             🏏 Start Toss
@@ -1290,10 +1665,12 @@ const MatchCard = memo(function MatchCard({
               text-[11px]
               font-bold
               text-slate-300
-              transition
+              transition-all
+              duration-150
+              hover:-translate-y-px
+              hover:bg-slate-700
               active:scale-95
               active:bg-slate-700
-              hover:bg-slate-700
             "
           >
             ▶ Continue
@@ -1317,10 +1694,12 @@ const MatchCard = memo(function MatchCard({
             text-[11px]
             font-bold
             text-slate-300
-            transition
+            transition-all
+            duration-150
+            hover:-translate-y-px
+            hover:bg-slate-700
             active:scale-95
             active:bg-slate-700
-            hover:bg-slate-700
           "
         >
           👁 View
@@ -1339,10 +1718,12 @@ const MatchCard = memo(function MatchCard({
             text-[11px]
             font-bold
             text-slate-300
-            transition
+            transition-all
+            duration-150
+            hover:-translate-y-px
+            hover:bg-slate-700
             active:scale-95
             active:bg-slate-700
-            hover:bg-slate-700
             disabled:opacity-50
           "
           onClick={() =>
@@ -1366,10 +1747,12 @@ const MatchCard = memo(function MatchCard({
             text-[11px]
             font-bold
             text-red-400
-            transition
+            transition-all
+            duration-150
+            hover:-translate-y-px
+            hover:bg-red-500/20
             active:scale-95
             active:bg-red-500/20
-            hover:bg-red-500/20
             disabled:cursor-not-allowed
             disabled:opacity-50
           "
@@ -1397,6 +1780,38 @@ const MatchCard = memo(function MatchCard({
 ========================================================= */
 
 export default function Home() {
+
+  /* =======================================================
+     WELCOME INTRO
+  ======================================================= */
+
+  const [showIntro, setShowIntro] =
+    useState(() => {
+
+      try {
+
+        return (
+          sessionStorage.getItem(
+            HOME_INTRO_KEY
+          ) !== '1'
+        );
+
+      } catch (error) {
+
+        return false;
+
+      }
+
+    });
+
+
+  const finishIntro =
+    useCallback(() => {
+
+      setShowIntro(false);
+
+    }, []);
+
 
   /* =======================================================
      CACHE
@@ -1803,7 +2218,17 @@ export default function Home() {
   ) {
 
     return (
-      <HomeLoading />
+      <>
+        {showIntro && (
+          <HomeIntro
+            onFinished={
+              finishIntro
+            }
+          />
+        )}
+
+        <HomeLoading />
+      </>
     );
 
   }
@@ -1846,420 +2271,553 @@ export default function Home() {
 
   return (
 
-    <div
-      className="
-        fade-in
-        mx-auto
-        w-full
-        max-w-3xl
-        min-w-0
-        overflow-hidden
-        pb-6
-      "
-    >
+    <>
+      {showIntro && (
 
-      {/* =================================================
-          HEADER
-      ================================================= */}
-
-      <div
-        className="
-          mb-5
-          flex
-          items-center
-          justify-between
-          gap-3
-          animate-[fadeSlideUp_0.35s_ease-out_both]
-        "
-      >
-
-        <div className="min-w-0">
-
-          <div className="flex items-center gap-2">
-
-            <div
-              className="
-                flex
-                h-9
-                w-9
-                shrink-0
-                items-center
-                justify-center
-                rounded-xl
-                border
-                border-emerald-500/15
-                bg-emerald-500/10
-                text-lg
-              "
-            >
-              🏏
-            </div>
-
-
-            <div className="min-w-0">
-
-              <h1
-                className="
-                  truncate
-                  text-xl
-                  font-black
-                  tracking-tight
-                  text-white
-                "
-              >
-                Matches
-              </h1>
-
-
-              <p
-                className="
-                  mt-0.5
-                  text-[10px]
-                  font-medium
-                  text-slate-600
-                "
-              >
-                Scores & match records
-              </p>
-
-            </div>
-
-          </div>
-
-        </div>
-
-
-        <Link
-          to="/create-match"
-          className="
-            flex
-            min-h-[40px]
-            shrink-0
-            items-center
-            justify-center
-            rounded-xl
-            bg-white
-            px-3.5
-            text-[11px]
-            font-black
-            text-slate-950
-            shadow-sm
-            shadow-white/5
-            transition-all
-            duration-200
-            hover:bg-slate-200
-            active:scale-95
-          "
-        >
-          + New Match
-        </Link>
-
-      </div>
-
-
-      {/* =================================================
-          LIVE SECTION
-      ================================================= */}
-
-      {liveMatches.length > 0 && (
-
-        <section
-          className="
-            mb-6
-            animate-[fadeSlideUp_0.4s_ease-out_both]
-          "
-        >
-
-          <div
-            className="
-              mb-2.5
-              flex
-              items-center
-              justify-between
-            "
-          >
-
-            <div className="flex items-center gap-2">
-
-              <span className="relative flex h-2.5 w-2.5">
-
-                <span
-                  className="
-                    absolute
-                    h-full
-                    w-full
-                    animate-ping
-                    rounded-full
-                    bg-red-400
-                    opacity-60
-                  "
-                />
-
-                <span
-                  className="
-                    relative
-                    h-2.5
-                    w-2.5
-                    rounded-full
-                    bg-red-500
-                  "
-                />
-
-              </span>
-
-
-              <h2
-                className="
-                  text-[10px]
-                  font-black
-                  uppercase
-                  tracking-[0.18em]
-                  text-slate-500
-                "
-              >
-                Live now
-              </h2>
-
-            </div>
-
-
-            <span
-              className="
-                rounded-full
-                border
-                border-red-500/10
-                bg-red-500/5
-                px-2
-                py-0.5
-                text-[9px]
-                font-bold
-                text-red-400
-              "
-            >
-              {liveMatches.length}
-            </span>
-
-          </div>
-
-
-          {liveMatches.map(
-            (match) => (
-
-              <LiveHero
-                key={match.id}
-                match={match}
-                onDeleted={(id) => {
-
-                  setMatches(
-                    (current) => {
-
-                      const next =
-                        current.filter(
-                          (match) =>
-                            match.id !== id
-                        );
-
-
-                      writeMatchesCache(
-                        next
-                      );
-
-
-                      return next;
-
-                    }
-                  );
-
-                }}
-              />
-
-            )
-          )}
-
-        </section>
+        <HomeIntro
+          onFinished={
+            finishIntro
+          }
+        />
 
       )}
 
 
-      {/* =================================================
-          EMPTY STATE
-      ================================================= */}
+      <div
+        className="
+          fade-in
+          mx-auto
+          w-full
+          max-w-3xl
+          min-w-0
+          overflow-hidden
+          pb-6
+        "
+      >
 
-      {matches.length === 0 && (
+        {/* =================================================
+            HEADER
+        ================================================= */}
 
         <div
           className="
-            overflow-hidden
-            rounded-2xl
-            border
-            border-dashed
-            border-slate-800
-            bg-slate-900/40
-            px-4
-            py-10
-            text-center
-            animate-[fadeSlideUp_0.4s_ease-out_both]
+            mb-5
+            flex
+            items-center
+            justify-between
+            gap-3
+            animate-[fadeSlideUp_0.35s_ease-out_both]
           "
         >
 
-          <div
-            className="
-              mx-auto
-              flex
-              h-16
-              w-16
-              items-center
-              justify-center
-              rounded-2xl
-              border
-              border-emerald-500/10
-              bg-emerald-500/5
-              text-4xl
-              animate-[floatBall_2.5s_ease-in-out_infinite]
-            "
-          >
-            🏏
+          <div className="min-w-0">
+
+            <div className="flex items-center gap-2">
+
+              <div
+                className="
+                  flex
+                  h-9
+                  w-9
+                  shrink-0
+                  items-center
+                  justify-center
+                  rounded-xl
+                  border
+                  border-emerald-500/15
+                  bg-emerald-500/10
+                  text-lg
+                  transition-all
+                  duration-300
+                  hover:scale-105
+                  hover:rotate-3
+                "
+              >
+                🏏
+              </div>
+
+
+              <div className="min-w-0">
+
+                <h1
+                  className="
+                    truncate
+                    text-xl
+                    font-black
+                    tracking-tight
+                    text-white
+                  "
+                >
+                  Matches
+                </h1>
+
+
+                <p
+                  className="
+                    mt-0.5
+                    text-[10px]
+                    font-medium
+                    text-slate-600
+                  "
+                >
+                  Scores & match records
+                </p>
+
+              </div>
+
+            </div>
+
           </div>
 
 
-          <h2
-            className="
-              mt-4
-              text-base
-              font-black
-              text-white
-            "
-          >
-            No matches yet
-          </h2>
-
-
-          <p
-            className="
-              mx-auto
-              mt-1.5
-              max-w-xs
-              text-[11px]
-              leading-relaxed
-              text-slate-600
-            "
-          >
-            Create your first scoreboard
-            to start recording a match.
-          </p>
-
+          {/* =================================================
+              PREMIUM NEW MATCH BUTTON
+          ================================================= */}
 
           <Link
             to="/create-match"
             className="
-              mt-5
-              inline-flex
-              min-h-[42px]
+              group/new
+              relative
+              flex
+              min-h-[40px]
+              shrink-0
               items-center
               justify-center
+              overflow-hidden
               rounded-xl
               bg-white
-              px-5
+              px-3.5
               text-[11px]
               font-black
               text-slate-950
-              transition
+              shadow-sm
+              shadow-white/5
+              transition-all
+              duration-200
+              hover:-translate-y-0.5
+              hover:bg-slate-100
+              hover:shadow-lg
+              hover:shadow-white/10
+              active:translate-y-0
               active:scale-95
-              hover:bg-slate-200
-            "
-          >
-            + Create Match
-          </Link>
-
-        </div>
-
-      )}
-
-
-      {/* =================================================
-          OTHER MATCHES
-      ================================================= */}
-
-      {others.length > 0 && (
-
-        <section>
-
-          <div
-            className="
-              mb-2.5
-              flex
-              items-center
-              justify-between
-              animate-[fadeSlideUp_0.4s_ease-out_both]
             "
           >
 
-            <div>
+            {/* Shine */}
 
-              <h2
-                className="
-                  text-[10px]
-                  font-black
-                  uppercase
-                  tracking-[0.18em]
-                  text-slate-500
-                "
-              >
-                All matches
-              </h2>
-
-            </div>
+            <span
+              className="
+                pointer-events-none
+                absolute
+                inset-y-0
+                -left-8
+                w-6
+                rotate-[20deg]
+                bg-white/60
+                blur-sm
+                transition-transform
+                duration-500
+                group-hover/new:translate-x-32
+              "
+            />
 
 
             <span
               className="
-                rounded-full
-                border
-                border-slate-800
-                bg-slate-900
-                px-2.5
-                py-1
-                text-[9px]
-                font-bold
-                text-slate-500
+                relative
+                z-10
+                transition-transform
+                duration-200
+                group-hover/new:scale-105
               "
             >
-              {others.length}
+              + New Match
             </span>
 
-          </div>
+          </Link>
+
+        </div>
 
 
-          <div className="grid gap-2">
+        {/* =================================================
+            LIVE SECTION
+        ================================================= */}
 
-            {others.map(
-              (match, index) => (
+        {liveMatches.length > 0 && (
 
-                <MatchCard
+          <section
+            className="
+              mb-6
+              animate-[fadeSlideUp_0.4s_ease-out_both]
+            "
+          >
+
+            <div
+              className="
+                mb-2.5
+                flex
+                items-center
+                justify-between
+              "
+            >
+
+              <div className="flex items-center gap-2">
+
+                <span className="relative flex h-2.5 w-2.5">
+
+                  <span
+                    className="
+                      absolute
+                      h-full
+                      w-full
+                      animate-ping
+                      rounded-full
+                      bg-red-400
+                      opacity-60
+                    "
+                  />
+
+                  <span
+                    className="
+                      relative
+                      h-2.5
+                      w-2.5
+                      rounded-full
+                      bg-red-500
+                    "
+                  />
+
+                </span>
+
+
+                <h2
+                  className="
+                    text-[10px]
+                    font-black
+                    uppercase
+                    tracking-[0.18em]
+                    text-slate-500
+                  "
+                >
+                  Live now
+                </h2>
+
+              </div>
+
+
+              <span
+                className="
+                  rounded-full
+                  border
+                  border-red-500/10
+                  bg-red-500/5
+                  px-2
+                  py-0.5
+                  text-[9px]
+                  font-bold
+                  text-red-400
+                "
+              >
+                {liveMatches.length}
+              </span>
+
+            </div>
+
+
+            {liveMatches.map(
+              (match) => (
+
+                <LiveHero
                   key={match.id}
                   match={match}
-                  index={index}
-                  onDelete={
-                    deleteMatch
-                  }
-                  onDownload={
-                    downloadPdf
-                  }
-                  deletingId={
-                    deletingId
-                  }
+                  onDeleted={(id) => {
+
+                    setMatches(
+                      (current) => {
+
+                        const next =
+                          current.filter(
+                            (match) =>
+                              match.id !== id
+                          );
+
+
+                        writeMatchesCache(
+                          next
+                        );
+
+
+                        return next;
+
+                      }
+                    );
+
+                  }}
                 />
 
               )
             )}
 
+          </section>
+
+        )}
+
+
+        {/* =================================================
+            EMPTY STATE
+        ================================================= */}
+
+        {matches.length === 0 && (
+
+          <div
+            className="
+              group/empty
+              relative
+              overflow-hidden
+              rounded-2xl
+              border
+              border-dashed
+              border-slate-800
+              bg-slate-900/40
+              px-4
+              py-10
+              text-center
+              animate-[fadeSlideUp_0.4s_ease-out_both]
+            "
+          >
+
+            {/* Soft background glow */}
+
+            <div
+              className="
+                pointer-events-none
+                absolute
+                left-1/2
+                top-10
+                h-28
+                w-28
+                -translate-x-1/2
+                rounded-full
+                bg-emerald-500/5
+                blur-3xl
+                transition-all
+                duration-500
+                group-hover/empty:bg-emerald-500/10
+              "
+            />
+
+
+            <div
+              className="
+                relative
+                mx-auto
+                flex
+                h-16
+                w-16
+                items-center
+                justify-center
+                rounded-2xl
+                border
+                border-emerald-500/10
+                bg-emerald-500/5
+                text-4xl
+                transition-all
+                duration-300
+                group-hover/empty:scale-105
+                group-hover/empty:border-emerald-500/20
+              "
+              style={{
+                animation:
+                  'floatBall 2.5s ease-in-out infinite',
+              }}
+            >
+              🏏
+            </div>
+
+
+            <h2
+              className="
+                relative
+                mt-4
+                text-base
+                font-black
+                text-white
+              "
+            >
+              No matches yet
+            </h2>
+
+
+            <p
+              className="
+                relative
+                mx-auto
+                mt-1.5
+                max-w-xs
+                text-[11px]
+                leading-relaxed
+                text-slate-600
+              "
+            >
+              Create your first scoreboard
+              to start recording a match.
+            </p>
+
+
+            {/* =================================================
+                EMPTY STATE BUTTON
+            ================================================= */}
+
+            <Link
+              to="/create-match"
+              className="
+                group/create
+                relative
+                mt-5
+                inline-flex
+                min-h-[42px]
+                items-center
+                justify-center
+                overflow-hidden
+                rounded-xl
+                bg-white
+                px-5
+                text-[11px]
+                font-black
+                text-slate-950
+                shadow-sm
+                shadow-white/5
+                transition-all
+                duration-200
+                hover:-translate-y-0.5
+                hover:bg-slate-100
+                hover:shadow-lg
+                hover:shadow-white/10
+                active:translate-y-0
+                active:scale-95
+              "
+            >
+
+              <span
+                className="
+                  pointer-events-none
+                  absolute
+                  inset-y-0
+                  -left-8
+                  w-6
+                  rotate-[20deg]
+                  bg-white/60
+                  blur-sm
+                  transition-transform
+                  duration-500
+                  group-hover/create:translate-x-32
+                "
+              />
+
+
+              <span
+                className="
+                  relative
+                  z-10
+                "
+              >
+                + Create Match
+              </span>
+
+            </Link>
+
           </div>
 
-        </section>
+        )}
 
-      )}
 
-    </div>
+        {/* =================================================
+            OTHER MATCHES
+        ================================================= */}
+
+        {others.length > 0 && (
+
+          <section>
+
+            <div
+              className="
+                mb-2.5
+                flex
+                items-center
+                justify-between
+                animate-[fadeSlideUp_0.4s_ease-out_both]
+              "
+            >
+
+              <div>
+
+                <h2
+                  className="
+                    text-[10px]
+                    font-black
+                    uppercase
+                    tracking-[0.18em]
+                    text-slate-500
+                  "
+                >
+                  All matches
+                </h2>
+
+              </div>
+
+
+              <span
+                className="
+                  rounded-full
+                  border
+                  border-slate-800
+                  bg-slate-900
+                  px-2.5
+                  py-1
+                  text-[9px]
+                  font-bold
+                  text-slate-500
+                "
+              >
+                {others.length}
+              </span>
+
+            </div>
+
+
+            <div className="grid gap-2">
+
+              {others.map(
+                (match, index) => (
+
+                  <MatchCard
+                    key={match.id}
+                    match={match}
+                    index={index}
+                    onDelete={
+                      deleteMatch
+                    }
+                    onDownload={
+                      downloadPdf
+                    }
+                    deletingId={
+                      deletingId
+                    }
+                  />
+
+                )
+              )}
+
+            </div>
+
+          </section>
+
+        )}
+
+      </div>
+
+    </>
 
   );
 
