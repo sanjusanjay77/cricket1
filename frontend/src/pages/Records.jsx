@@ -20,6 +20,154 @@ const RECORDS_CACHE_KEY =
 
 
 /* =========================================================
+   PREMIUM ANIMATION CSS
+========================================================= */
+
+const RECORDS_ANIMATION_CSS = `
+  @keyframes recordsPageIn {
+    0% {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes recordsCardIn {
+    0% {
+      opacity: 0;
+      transform: translateY(14px) scale(0.985);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes recordsIconFloat {
+    0%,
+    100% {
+      transform: translateY(0) rotate(0deg);
+    }
+
+    50% {
+      transform: translateY(-5px) rotate(2deg);
+    }
+  }
+
+  @keyframes recordsGlow {
+    0%,
+    100% {
+      opacity: 0.25;
+      transform: scale(0.95);
+    }
+
+    50% {
+      opacity: 0.55;
+      transform: scale(1.05);
+    }
+  }
+
+  @keyframes recordsAttention {
+    0%,
+    100% {
+      transform: translateY(0);
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+
+    20% {
+      transform: translateY(-2px);
+      box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.08);
+    }
+
+    40% {
+      transform: translateY(0);
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+  }
+
+  @keyframes recordsRankPulse {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+
+    50% {
+      transform: scale(1.035);
+    }
+  }
+
+  @keyframes recordsLineShine {
+    0% {
+      transform: translateX(-120%);
+      opacity: 0;
+    }
+
+    25% {
+      opacity: 1;
+    }
+
+    75% {
+      opacity: 1;
+    }
+
+    100% {
+      transform: translateX(120%);
+      opacity: 0;
+    }
+  }
+
+  .records-page {
+    animation: recordsPageIn 0.45s ease-out both;
+  }
+
+  .records-card {
+    animation: recordsCardIn 0.42s ease-out both;
+  }
+
+  .records-float {
+    animation: recordsIconFloat 2.8s ease-in-out infinite;
+  }
+
+  .records-glow {
+    animation: recordsGlow 3s ease-in-out infinite;
+  }
+
+  .records-attention {
+    animation: recordsAttention 2.8s ease-in-out 0.8s 3;
+  }
+
+  .records-rank-pulse {
+    animation: recordsRankPulse 2.6s ease-in-out infinite;
+  }
+
+  .records-shine {
+    animation: recordsLineShine 1.2s ease-out both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .records-page,
+    .records-card,
+    .records-float,
+    .records-glow,
+    .records-attention,
+    .records-rank-pulse,
+    .records-shine {
+      animation: none !important;
+    }
+
+    .records-transition {
+      transition: none !important;
+    }
+  }
+`;
+
+
+/* =========================================================
    LOCAL STORAGE READ
 ========================================================= */
 
@@ -149,6 +297,7 @@ function RankBadge({ rank }) {
     return (
       <div
         className="
+          records-rank-pulse
           w-9 h-9
           rounded-xl
           bg-amber-400/10
@@ -258,6 +407,8 @@ function PlayerAvatar({
         font-black
         shrink-0
         border
+        transition-all
+        duration-300
         ${
           isPurple
             ? `
@@ -311,10 +462,17 @@ function LeaderboardCard({
 
       <div
         className="
+          records-card
           rounded-2xl
           border border-slate-800
           bg-slate-900/60
           p-4
+          transition-all
+          duration-300
+          hover:-translate-y-1
+          hover:border-slate-700
+          hover:bg-slate-900
+          active:scale-[0.985]
         "
       >
 
@@ -322,6 +480,7 @@ function LeaderboardCard({
 
           <div
             className="
+              records-float
               w-10 h-10
               rounded-xl
               bg-slate-800
@@ -358,14 +517,60 @@ function LeaderboardCard({
 
     <div
       className="
+        records-card
+        group
         relative
         overflow-hidden
         rounded-2xl
         border border-slate-800
         bg-slate-900/80
         shadow-lg
+        shadow-black/10
+        transition-all
+        duration-300
+        hover:-translate-y-1
+        hover:border-slate-700
+        hover:bg-slate-900
+        hover:shadow-2xl
+        hover:shadow-black/20
+        active:scale-[0.985]
       "
     >
+
+      {/* HOVER SHINE */}
+
+      <div
+        className="
+          pointer-events-none
+          absolute
+          inset-x-0
+          top-0
+          h-px
+          overflow-hidden
+          opacity-0
+          transition-opacity
+          duration-300
+          group-hover:opacity-100
+        "
+      >
+
+        <div
+          className="
+            h-full
+            w-1/3
+            bg-gradient-to-r
+            from-transparent
+            via-emerald-400/60
+            to-transparent
+            translate-x-[-150%]
+            transition-transform
+            duration-700
+            group-hover:translate-x-[450%]
+          "
+        />
+
+      </div>
+
 
       {/* CARD HEADER */}
 
@@ -373,7 +578,7 @@ function LeaderboardCard({
         className="
           px-4 py-4
           border-b border-slate-800
-          bg-slate-900
+          bg-slate-900/80
         "
       >
 
@@ -391,6 +596,10 @@ function LeaderboardCard({
                 justify-center
                 text-xl
                 shrink-0
+                transition-transform
+                duration-300
+                group-hover:scale-110
+                group-hover:-rotate-2
               "
             >
               {icon}
@@ -433,6 +642,10 @@ function LeaderboardCard({
               tracking-wider
               text-slate-400
               shrink-0
+              transition-all
+              duration-300
+              group-hover:border-emerald-500/20
+              group-hover:text-emerald-400
             "
           >
             TOP 5
@@ -467,12 +680,17 @@ function LeaderboardCard({
                   }-${index}`
                 }
                 className={`
+                  group/player
                   flex items-center
                   gap-3
                   px-2
                   py-3
                   rounded-xl
-                  transition
+                  transition-all
+                  duration-300
+                  hover:bg-slate-800/70
+                  hover:translate-x-0.5
+                  active:scale-[0.99]
                   ${
                     rank === 1
                       ? 'bg-emerald-500/[0.04]'
@@ -493,7 +711,7 @@ function LeaderboardCard({
 
                 <div className="min-w-0 flex-1">
 
-                  <div className="font-bold text-sm truncate">
+                  <div className="font-bold text-sm truncate transition-colors duration-300 group-hover/player:text-white">
                     {playerName}
                   </div>
 
@@ -511,6 +729,9 @@ function LeaderboardCard({
                       font-black
                       text-emerald-400
                       text-sm
+                      transition-transform
+                      duration-300
+                      group-hover/player:scale-105
                     "
                   >
                     {entry[valueKey] ?? 0}
@@ -549,6 +770,10 @@ function LeaderboardCard({
           text-8xl
           opacity-[0.025]
           pointer-events-none
+          transition-all
+          duration-500
+          group-hover:scale-110
+          group-hover:opacity-[0.045]
         "
       >
         {icon}
@@ -580,10 +805,16 @@ function PremiumRecordCard({
 
       <div
         className="
+          records-card
           rounded-2xl
           border border-slate-800
           bg-slate-900/70
           p-5
+          transition-all
+          duration-300
+          hover:-translate-y-1
+          hover:border-slate-700
+          active:scale-[0.985]
         "
       >
 
@@ -591,6 +822,7 @@ function PremiumRecordCard({
 
           <div
             className="
+              records-float
               w-11 h-11
               rounded-xl
               bg-slate-800
@@ -631,6 +863,8 @@ function PremiumRecordCard({
 
     <div
       className="
+        records-card
+        group
         relative
         overflow-hidden
         rounded-3xl
@@ -640,12 +874,42 @@ function PremiumRecordCard({
         via-slate-900
         to-slate-800
         shadow-xl
+        shadow-black/15
+        transition-all
+        duration-300
+        hover:-translate-y-1
+        hover:border-emerald-500/20
+        hover:shadow-2xl
+        hover:shadow-emerald-950/10
+        active:scale-[0.985]
       "
     >
 
+      {/* PREMIUM LIGHT */}
+
+      <div
+        className="
+          pointer-events-none
+          absolute
+          -top-24
+          -right-24
+          h-48
+          w-48
+          rounded-full
+          bg-emerald-500/10
+          blur-3xl
+          opacity-30
+          transition-all
+          duration-500
+          group-hover:opacity-60
+          group-hover:scale-125
+        "
+      />
+
+
       {/* TOP */}
 
-      <div className="p-5 sm:p-6">
+      <div className="relative p-5 sm:p-6">
 
         <div className="flex items-center justify-between gap-3">
 
@@ -653,6 +917,7 @@ function PremiumRecordCard({
 
             <div
               className="
+                records-float
                 w-11 h-11
                 rounded-2xl
                 bg-emerald-500/10
@@ -661,6 +926,9 @@ function PremiumRecordCard({
                 justify-center
                 text-2xl
                 shrink-0
+                transition-transform
+                duration-300
+                group-hover:scale-110
               "
             >
               {icon}
@@ -690,6 +958,10 @@ function PremiumRecordCard({
               flex items-center
               justify-center
               shrink-0
+              transition-all
+              duration-300
+              group-hover:scale-110
+              group-hover:rotate-3
             "
           >
             🥇
@@ -734,6 +1006,9 @@ function PremiumRecordCard({
               tracking-tight
               text-white
               leading-none
+              transition-transform
+              duration-300
+              group-hover:translate-x-1
             "
           >
             {mainValue}
@@ -761,6 +1036,9 @@ function PremiumRecordCard({
           bg-slate-950/60
           border border-slate-800
           px-4 py-3
+          transition-all
+          duration-300
+          group-hover:border-slate-700
         "
       >
 
@@ -830,6 +1108,10 @@ function PremiumRecordCard({
                     border border-slate-800
                     px-3 py-3
                     min-w-0
+                    transition-all
+                    duration-300
+                    hover:border-slate-700
+                    hover:bg-slate-950/80
                   "
                 >
 
@@ -874,6 +1156,9 @@ function PremiumRecordCard({
           text-9xl
           opacity-[0.025]
           pointer-events-none
+          transition-all
+          duration-500
+          group-hover:scale-110
         "
       >
         {icon}
@@ -946,13 +1231,18 @@ function ComparisonStat({
 
     <div
       className={`
+        group
         rounded-2xl
         border
         p-4
+        transition-all
+        duration-300
+        hover:-translate-y-0.5
+        active:scale-[0.985]
         ${
           leader
-            ? 'border-slate-700 bg-slate-900/80'
-            : 'border-slate-800 bg-slate-900/60'
+            ? 'border-slate-700 bg-slate-900/80 hover:border-emerald-500/20'
+            : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
         }
       `}
     >
@@ -961,7 +1251,14 @@ function ComparisonStat({
 
       <div className="flex items-center justify-center gap-2 mb-4">
 
-        <span className="text-base">
+        <span
+          className="
+            text-base
+            transition-transform
+            duration-300
+            group-hover:scale-110
+          "
+        >
           {icon}
         </span>
 
@@ -991,11 +1288,15 @@ function ComparisonStat({
             text-center
             border
             min-w-0
+            transition-all
+            duration-300
             ${
               leader === 'one'
                 ? `
                   border-emerald-500/30
                   bg-emerald-500/10
+                  shadow-lg
+                  shadow-emerald-950/10
                 `
                 : `
                   border-slate-800
@@ -1020,6 +1321,9 @@ function ComparisonStat({
               text-2xl
               font-black
               mt-1
+              transition-transform
+              duration-300
+              group-hover:scale-105
               ${
                 leader === 'one'
                   ? 'text-emerald-400'
@@ -1056,11 +1360,15 @@ function ComparisonStat({
             text-center
             border
             min-w-0
+            transition-all
+            duration-300
             ${
               leader === 'two'
                 ? `
                   border-emerald-500/30
                   bg-emerald-500/10
+                  shadow-lg
+                  shadow-emerald-950/10
                 `
                 : `
                   border-slate-800
@@ -1085,6 +1393,9 @@ function ComparisonStat({
               text-2xl
               font-black
               mt-1
+              transition-transform
+              duration-300
+              group-hover:scale-105
               ${
                 leader === 'two'
                   ? 'text-emerald-400'
@@ -1357,6 +1668,7 @@ function SectionTitle({
 
       <div
         className="
+          records-float
           w-10 h-10
           rounded-xl
           bg-slate-900
@@ -1365,6 +1677,9 @@ function SectionTitle({
           justify-center
           text-xl
           shrink-0
+          transition-all
+          duration-300
+          hover:border-emerald-500/20
         "
       >
         {icon}
@@ -1822,34 +2137,40 @@ export default function Records() {
 
     return (
 
-      <div className="space-y-4">
+      <>
+        <style>
+          {RECORDS_ANIMATION_CSS}
+        </style>
 
-        <div className="flex items-center gap-3">
+        <div className="records-page space-y-4">
 
-          <div className="w-11 h-11 rounded-2xl bg-slate-800 animate-pulse" />
+          <div className="flex items-center gap-3">
 
-          <div className="space-y-2">
+            <div className="w-11 h-11 rounded-2xl bg-slate-800 animate-pulse" />
 
-            <div className="h-5 w-48 bg-slate-800 rounded animate-pulse" />
+            <div className="space-y-2">
 
-            <div className="h-3 w-28 bg-slate-800 rounded animate-pulse" />
+              <div className="h-5 w-48 bg-slate-800 rounded animate-pulse" />
+
+              <div className="h-3 w-28 bg-slate-800 rounded animate-pulse" />
+
+            </div>
+
+          </div>
+
+
+          <div className="h-64 bg-slate-800 rounded-3xl animate-pulse" />
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+            <div className="h-64 bg-slate-800 rounded-2xl animate-pulse" />
+
+            <div className="h-64 bg-slate-800 rounded-2xl animate-pulse" />
 
           </div>
 
         </div>
-
-
-        <div className="h-64 bg-slate-800 rounded-3xl animate-pulse" />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-          <div className="h-64 bg-slate-800 rounded-2xl animate-pulse" />
-
-          <div className="h-64 bg-slate-800 rounded-2xl animate-pulse" />
-
-        </div>
-
-      </div>
+      </>
 
     );
 
@@ -1867,18 +2188,25 @@ export default function Records() {
 
     return (
 
-      <div
-        className="
-          rounded-2xl
-          border border-red-500/20
-          bg-red-500/5
-          p-5
-          text-center
-          text-red-400
-        "
-      >
-        {error}
-      </div>
+      <>
+        <style>
+          {RECORDS_ANIMATION_CSS}
+        </style>
+
+        <div
+          className="
+            records-page
+            rounded-2xl
+            border border-red-500/20
+            bg-red-500/5
+            p-5
+            text-center
+            text-red-400
+          "
+        >
+          {error}
+        </div>
+      </>
 
     );
 
@@ -1893,26 +2221,77 @@ export default function Records() {
 
     return (
 
-      <div
-        className="
-          rounded-2xl
-          border border-slate-800
-          bg-slate-900/60
-          p-8
-          text-center
-          text-slate-400
-        "
-      >
+      <>
+        <style>
+          {RECORDS_ANIMATION_CSS}
+        </style>
 
-        <div className="text-4xl mb-3">
-          📜
+        <div
+          className="
+            records-page
+            group
+            relative
+            overflow-hidden
+            rounded-3xl
+            border
+            border-dashed
+            border-slate-700
+            bg-slate-900/60
+            p-8
+            text-center
+          "
+        >
+
+          <div
+            className="
+              records-glow
+              pointer-events-none
+              absolute
+              left-1/2
+              top-1/2
+              h-32
+              w-32
+              -translate-x-1/2
+              -translate-y-1/2
+              rounded-full
+              bg-emerald-500/10
+              blur-3xl
+            "
+          />
+
+
+          <div
+            className="
+              records-float
+              relative
+              mx-auto
+              flex
+              h-16
+              w-16
+              items-center
+              justify-center
+              rounded-2xl
+              border
+              border-emerald-500/15
+              bg-emerald-500/5
+              text-4xl
+            "
+          >
+            📜
+          </div>
+
+
+          <div className="relative mt-4 font-black text-white">
+            No GCC records available
+          </div>
+
+
+          <div className="relative mt-1 text-xs text-slate-500">
+            Records will appear here once matches are completed.
+          </div>
+
         </div>
-
-        <div className="font-bold">
-          No GCC records available
-        </div>
-
-      </div>
+      </>
 
     );
 
@@ -1925,1066 +2304,1177 @@ export default function Records() {
 
   return (
 
-    <div
-      className="
-        fade-in
-        w-full
-        max-w-full
-        overflow-x-hidden
-        pb-8
-      "
-    >
+    <div className="records-page">
 
-      {/* ===================================================
-          MOBILE / DESKTOP HEADER
-      =================================================== */}
+      <style>
+        {RECORDS_ANIMATION_CSS}
+      </style>
+
 
       <div
         className="
-          sticky
-          top-0
-          z-20
-          -mx-1
-          px-1
-          pt-1
-          pb-4
-          bg-slate-950/95
-          backdrop-blur-md
-          border-b
-          border-slate-900
+          fade-in
+          w-full
+          max-w-full
+          overflow-x-hidden
+          pb-8
         "
       >
 
-        <div className="flex items-center gap-3">
+        {/* ===================================================
+            MOBILE / DESKTOP HEADER
+        =================================================== */}
 
-          <div
-            className="
-              w-12 h-12
-              rounded-2xl
-              bg-gradient-to-br
-              from-emerald-500/15
-              to-emerald-500/5
-              border border-emerald-500/20
-              flex items-center
-              justify-center
-              text-2xl
-              shrink-0
-              shadow-lg
-            "
-          >
-            📜
-          </div>
+        <div
+          className="
+            sticky
+            top-0
+            z-20
+            -mx-1
+            px-1
+            pt-1
+            pb-4
+            bg-slate-950/95
+            backdrop-blur-md
+            border-b
+            border-slate-900
+          "
+        >
 
+          <div className="flex items-center gap-3">
 
-          <div className="min-w-0 flex-1">
-
-            <div className="flex items-center gap-2">
-
-              <h1
-                className="
-                  text-xl
-                  sm:text-2xl
-                  font-black
-                  tracking-tight
-                  truncate
-                "
-              >
-                GCC Records
-              </h1>
-
-              <span
-                className="
-                  hidden
-                  sm:inline-flex
-                  px-2
-                  py-1
-                  rounded-full
-                  bg-emerald-500/10
-                  border border-emerald-500/20
-                  text-[9px]
-                  uppercase
-                  tracking-widest
-                  font-black
-                  text-emerald-400
-                "
-              >
-                ALL TIME
-              </span>
-
+            <div
+              className="
+                records-float
+                w-12 h-12
+                rounded-2xl
+                bg-gradient-to-br
+                from-emerald-500/15
+                to-emerald-500/5
+                border border-emerald-500/20
+                flex items-center
+                justify-center
+                text-2xl
+                shrink-0
+                shadow-lg
+                shadow-emerald-950/10
+              "
+            >
+              📜
             </div>
 
 
-            <p className="text-[11px] sm:text-sm text-slate-500 mt-0.5">
-              GCC players • Career records & milestones
-            </p>
+            <div className="min-w-0 flex-1">
+
+              <div className="flex items-center gap-2">
+
+                <h1
+                  className="
+                    text-xl
+                    sm:text-2xl
+                    font-black
+                    tracking-tight
+                    truncate
+                  "
+                >
+                  GCC Records
+                </h1>
+
+                <span
+                  className="
+                    hidden
+                    sm:inline-flex
+                    px-2
+                    py-1
+                    rounded-full
+                    bg-emerald-500/10
+                    border border-emerald-500/20
+                    text-[9px]
+                    uppercase
+                    tracking-widest
+                    font-black
+                    text-emerald-400
+                  "
+                >
+                  ALL TIME
+                </span>
+
+              </div>
+
+
+              <p className="text-[11px] sm:text-sm text-slate-500 mt-0.5">
+                GCC players • Career records & milestones
+              </p>
+
+            </div>
 
           </div>
 
         </div>
 
-      </div>
+
+        <div className="space-y-7 mt-5">
 
 
-      <div className="space-y-7 mt-5">
+          {/* =================================================
+              BEST OF GCC
+          ================================================= */}
 
+          <section>
 
-        {/* =================================================
-            BEST OF GCC
-        ================================================= */}
-
-        <section>
-
-          <SectionTitle
-            icon="👑"
-            title="Best of GCC"
-            subtitle="The biggest single-innings performances"
-          />
-
-
-          <div
-            className="
-              grid
-              grid-cols-1
-              lg:grid-cols-2
-              gap-4
-            "
-          >
-
-            <PremiumRecordCard
-
-              title="Best Bowling Figure"
-
-              icon="🎯"
-
-              entry={
-                records.bestBowling
-              }
-
-              mainValue={
-                records.bestBowling
-                  ? `${Number(
-                      records.bestBowling.wickets || 0
-                    )}/${Number(
-                      records.bestBowling.runs || 0
-                    )}`
-                  : '—'
-              }
-
-              subtitle="Best bowling performance in a single innings"
-
-              details={[
-                {
-                  label: 'Overs',
-                  value:
-                    records.bestBowling?.overs ||
-                    '0.0',
-                },
-                {
-                  label: 'Wickets',
-                  value:
-                    records.bestBowling?.wickets ||
-                    0,
-                },
-                {
-                  label: 'Runs',
-                  value:
-                    records.bestBowling?.runs ||
-                    0,
-                },
-                {
-                  label: 'Economy',
-                  value:
-                    records.bestBowling?.economy ||
-                    0,
-                },
-              ]}
-
+            <SectionTitle
+              icon="👑"
+              title="Best of GCC"
+              subtitle="The biggest single-innings performances"
             />
 
 
-            <PremiumRecordCard
+            <div
+              className="
+                grid
+                grid-cols-1
+                lg:grid-cols-2
+                gap-4
+              "
+            >
 
-              title="Best Batting Figure"
+              <PremiumRecordCard
 
-              icon="⚡"
+                title="Best Bowling Figure"
 
-              entry={
-                records.bestBattingFigure
-              }
+                icon="🎯"
 
-              mainValue={
-                records.bestBattingFigure
-                  ? `${Number(
-                      records.bestBattingFigure.runs || 0
-                    )} (${Number(
-                      records.bestBattingFigure.balls || 0
-                    )})`
-                  : '—'
-              }
+                entry={
+                  records.bestBowling
+                }
 
-              subtitle="Most runs scored in a particular single innings"
+                mainValue={
+                  records.bestBowling
+                    ? `${Number(
+                        records.bestBowling.wickets || 0
+                      )}/${Number(
+                        records.bestBowling.runs || 0
+                      )}`
+                    : '—'
+                }
 
-              details={[
-                {
-                  label: 'Strike Rate',
-                  value:
-                    records.bestBattingFigure?.strike_rate ??
-                    0,
-                },
-                {
-                  label: 'Fours',
-                  value:
-                    records.bestBattingFigure?.fours ??
-                    0,
-                },
-                {
-                  label: 'Sixes',
-                  value:
-                    records.bestBattingFigure?.sixes ??
-                    0,
-                },
-                {
-                  label: 'Balls',
-                  value:
-                    records.bestBattingFigure?.balls ??
-                    0,
-                },
-              ]}
+                subtitle="Best bowling performance in a single innings"
 
-            />
+                details={[
+                  {
+                    label: 'Overs',
+                    value:
+                      records.bestBowling?.overs ||
+                      '0.0',
+                  },
+                  {
+                    label: 'Wickets',
+                    value:
+                      records.bestBowling?.wickets ||
+                      0,
+                  },
+                  {
+                    label: 'Runs',
+                    value:
+                      records.bestBowling?.runs ||
+                      0,
+                  },
+                  {
+                    label: 'Economy',
+                    value:
+                      records.bestBowling?.economy ||
+                      0,
+                  },
+                ]}
 
-          </div>
-
-        </section>
-
-
-        {/* =================================================
-            BATTING RECORDS
-        ================================================= */}
-
-        <section>
-
-          <SectionTitle
-            icon="🏏"
-            title="Batting Records"
-            subtitle="GCC's leading batting performances"
-          />
+              />
 
 
-          <div
-            className="
-              grid
-              grid-cols-1
-              md:grid-cols-2
-              gap-4
-            "
-          >
+              <PremiumRecordCard
 
-            <LeaderboardCard
-              title="Most Runs"
-              icon="🏆"
-              list={records.mostRuns}
-              valueKey="runs"
-              unit="runs"
-              sortFn={(a, b) =>
-                Number(b.runs || 0) -
-                Number(a.runs || 0)
-              }
-            />
+                title="Best Batting Figure"
 
+                icon="⚡"
 
-            <LeaderboardCard
-              title="Most Fours"
-              icon="🔥"
-              list={records.mostFours}
-              valueKey="fours"
-              unit="fours"
-              sortFn={(a, b) =>
-                Number(b.fours || 0) -
-                Number(a.fours || 0)
-              }
-            />
+                entry={
+                  records.bestBattingFigure
+                }
 
+                mainValue={
+                  records.bestBattingFigure
+                    ? `${Number(
+                        records.bestBattingFigure.runs || 0
+                      )} (${Number(
+                        records.bestBattingFigure.balls || 0
+                      )})`
+                    : '—'
+                }
 
-            <LeaderboardCard
-              title="Most Sixes"
-              icon="🚀"
-              list={records.mostSixes}
-              valueKey="sixes"
-              unit="sixes"
-              sortFn={(a, b) =>
-                Number(b.sixes || 0) -
-                Number(a.sixes || 0)
-              }
-            />
+                subtitle="Most runs scored in a particular single innings"
 
+                details={[
+                  {
+                    label: 'Strike Rate',
+                    value:
+                      records.bestBattingFigure?.strike_rate ??
+                      0,
+                  },
+                  {
+                    label: 'Fours',
+                    value:
+                      records.bestBattingFigure?.fours ??
+                      0,
+                  },
+                  {
+                    label: 'Sixes',
+                    value:
+                      records.bestBattingFigure?.sixes ??
+                      0,
+                  },
+                  {
+                    label: 'Balls',
+                    value:
+                      records.bestBattingFigure?.balls ??
+                      0,
+                  },
+                ]}
 
-            <LeaderboardCard
-              title="Best Strike Rate"
-              icon="⚡"
-              list={records.bestStrikeRate}
-              valueKey="strike_rate"
-              unit="SR"
-              minLabel="Minimum 10 balls faced"
-              sortFn={(a, b) =>
-                Number(b.strike_rate || 0) -
-                Number(a.strike_rate || 0)
-              }
-            />
-
-          </div>
-
-        </section>
-
-
-        {/* =================================================
-            BOWLING RECORDS
-        ================================================= */}
-
-        <section>
-
-          <SectionTitle
-            icon="🎯"
-            title="Bowling Records"
-            subtitle="GCC's leading bowling performances"
-          />
-
-
-          <div
-            className="
-              grid
-              grid-cols-1
-              md:grid-cols-2
-              gap-4
-            "
-          >
-
-            <LeaderboardCard
-              title="Most Wickets"
-              icon="🏆"
-              list={records.mostWickets}
-              valueKey="wickets"
-              unit="wickets"
-              sortFn={(a, b) =>
-                Number(b.wickets || 0) -
-                Number(a.wickets || 0)
-              }
-            />
-
-
-            <LeaderboardCard
-              title="Best Economy"
-              icon="🛡️"
-              list={records.bestEconomy}
-              valueKey="economy"
-              unit="Econ"
-              minLabel="Minimum 2 overs bowled"
-              sortFn={(a, b) =>
-                Number(a.economy || 0) -
-                Number(b.economy || 0)
-              }
-            />
-
-          </div>
-
-        </section>
-
-
-        {/* =================================================
-            COMPARE PLAYERS
-        ================================================= */}
-
-        <section
-          className="
-            rounded-3xl
-            border border-slate-800
-            bg-gradient-to-br
-            from-slate-900
-            to-slate-800/70
-            overflow-hidden
-            shadow-xl
-          "
-        >
-
-          {/* COMPARE HEADER */}
-
-          <div
-            className="
-              p-5
-              sm:p-6
-              border-b border-slate-800
-            "
-          >
-
-            <div className="flex items-center gap-3">
-
-              <div
-                className="
-                  w-11 h-11
-                  rounded-2xl
-                  bg-emerald-500/10
-                  border border-emerald-500/20
-                  flex items-center
-                  justify-center
-                  text-2xl
-                  shrink-0
-                "
-              >
-                ⚔️
-              </div>
-
-
-              <div className="min-w-0">
-
-                <h2 className="text-xl font-black truncate">
-                  Compare Players
-                </h2>
-
-                <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
-                  Head-to-head GCC career comparison
-                </p>
-
-              </div>
+              />
 
             </div>
 
-          </div>
+          </section>
 
 
-          {/* SELECTORS */}
+          {/* =================================================
+              BATTING RECORDS
+          ================================================= */}
 
-          <div className="p-5 sm:p-6">
+          <section>
+
+            <SectionTitle
+              icon="🏏"
+              title="Batting Records"
+              subtitle="GCC's leading batting performances"
+            />
+
 
             <div
               className="
                 grid
                 grid-cols-1
                 md:grid-cols-2
-                gap-3
+                gap-4
               "
             >
 
-              {/* PLAYER ONE */}
+              <LeaderboardCard
+                title="Most Runs"
+                icon="🏆"
+                list={records.mostRuns}
+                valueKey="runs"
+                unit="runs"
+                sortFn={(a, b) =>
+                  Number(b.runs || 0) -
+                  Number(a.runs || 0)
+                }
+              />
 
-              <div>
 
-                <label
+              <LeaderboardCard
+                title="Most Fours"
+                icon="🔥"
+                list={records.mostFours}
+                valueKey="fours"
+                unit="fours"
+                sortFn={(a, b) =>
+                  Number(b.fours || 0) -
+                  Number(a.fours || 0)
+                }
+              />
+
+
+              <LeaderboardCard
+                title="Most Sixes"
+                icon="🚀"
+                list={records.mostSixes}
+                valueKey="sixes"
+                unit="sixes"
+                sortFn={(a, b) =>
+                  Number(b.sixes || 0) -
+                  Number(a.sixes || 0)
+                }
+              />
+
+
+              <LeaderboardCard
+                title="Best Strike Rate"
+                icon="⚡"
+                list={records.bestStrikeRate}
+                valueKey="strike_rate"
+                unit="SR"
+                minLabel="Minimum 10 balls faced"
+                sortFn={(a, b) =>
+                  Number(b.strike_rate || 0) -
+                  Number(a.strike_rate || 0)
+                }
+              />
+
+            </div>
+
+          </section>
+
+
+          {/* =================================================
+              BOWLING RECORDS
+          ================================================= */}
+
+          <section>
+
+            <SectionTitle
+              icon="🎯"
+              title="Bowling Records"
+              subtitle="GCC's leading bowling performances"
+            />
+
+
+            <div
+              className="
+                grid
+                grid-cols-1
+                md:grid-cols-2
+                gap-4
+              "
+            >
+
+              <LeaderboardCard
+                title="Most Wickets"
+                icon="🏆"
+                list={records.mostWickets}
+                valueKey="wickets"
+                unit="wickets"
+                sortFn={(a, b) =>
+                  Number(b.wickets || 0) -
+                  Number(a.wickets || 0)
+                }
+              />
+
+
+              <LeaderboardCard
+                title="Best Economy"
+                icon="🛡️"
+                list={records.bestEconomy}
+                valueKey="economy"
+                unit="Econ"
+                minLabel="Minimum 2 overs bowled"
+                sortFn={(a, b) =>
+                  Number(a.economy || 0) -
+                  Number(b.economy || 0)
+                }
+              />
+
+            </div>
+
+          </section>
+
+
+          {/* =================================================
+              COMPARE PLAYERS
+          ================================================= */}
+
+          <section
+            className="
+              group/compare
+              relative
+              rounded-3xl
+              border border-slate-800
+              bg-gradient-to-br
+              from-slate-900
+              to-slate-800/70
+              overflow-hidden
+              shadow-xl
+              transition-all
+              duration-300
+              hover:border-slate-700
+              hover:shadow-2xl
+              active:scale-[0.995]
+            "
+          >
+
+            {/* COMPARE GLOW */}
+
+            <div
+              className="
+                pointer-events-none
+                absolute
+                -right-20
+                -top-20
+                h-56
+                w-56
+                rounded-full
+                bg-emerald-500/5
+                blur-3xl
+                transition-all
+                duration-500
+                group-hover/compare:bg-emerald-500/10
+              "
+            />
+
+
+            {/* COMPARE HEADER */}
+
+            <div
+              className="
+                relative
+                p-5
+                sm:p-6
+                border-b border-slate-800
+              "
+            >
+
+              <div className="flex items-center gap-3">
+
+                <div
                   className="
-                    flex
-                    items-center
-                    gap-2
-                    text-[10px]
-                    font-black
-                    uppercase
-                    tracking-widest
-                    text-slate-500
-                    mb-2
-                  "
-                >
-                  <span
-                    className="
-                      w-5 h-5
-                      rounded-lg
-                      bg-emerald-500/10
-                      text-emerald-400
-                      flex items-center
-                      justify-center
-                    "
-                  >
-                    1
-                  </span>
-
-                  Player One
-                </label>
-
-
-                <select
-                  value={compareOne}
-                  onChange={e =>
-                    setCompareOne(
-                      e.target.value
-                    )
-                  }
-                  className="
-                    w-full
-                    min-h-[52px]
+                    records-float
+                    w-11 h-11
                     rounded-2xl
-                    bg-slate-950
-                    border border-slate-700
-                    px-4
-                    text-sm
-                    font-bold
-                    text-white
-                    outline-none
-                    appearance-none
-                    cursor-pointer
-                    focus:border-emerald-500
-                    focus:ring-2
-                    focus:ring-emerald-500/10
+                    bg-emerald-500/10
+                    border border-emerald-500/20
+                    flex items-center
+                    justify-center
+                    text-2xl
+                    shrink-0
                   "
                 >
-
-                  <option value="">
-                    Select Player 1
-                  </option>
+                  ⚔️
+                </div>
 
 
-                  {comparisonPlayers.map(
-                    player => (
+                <div className="min-w-0">
 
-                      <option
-                        key={player.id}
-                        value={player.id}
-                      >
-                        {player.name}
-                      </option>
+                  <h2 className="text-xl font-black truncate">
+                    Compare Players
+                  </h2>
 
-                    )
-                  )}
+                  <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
+                    Head-to-head GCC career comparison
+                  </p>
 
-                </select>
-
-              </div>
-
-
-              {/* PLAYER TWO */}
-
-              <div>
-
-                <label
-                  className="
-                    flex
-                    items-center
-                    gap-2
-                    text-[10px]
-                    font-black
-                    uppercase
-                    tracking-widest
-                    text-slate-500
-                    mb-2
-                  "
-                >
-                  <span
-                    className="
-                      w-5 h-5
-                      rounded-lg
-                      bg-purple-500/10
-                      text-purple-400
-                      flex items-center
-                      justify-center
-                    "
-                  >
-                    2
-                  </span>
-
-                  Player Two
-                </label>
-
-
-                <select
-                  value={compareTwo}
-                  onChange={e =>
-                    setCompareTwo(
-                      e.target.value
-                    )
-                  }
-                  className="
-                    w-full
-                    min-h-[52px]
-                    rounded-2xl
-                    bg-slate-950
-                    border border-slate-700
-                    px-4
-                    text-sm
-                    font-bold
-                    text-white
-                    outline-none
-                    appearance-none
-                    cursor-pointer
-                    focus:border-purple-500
-                    focus:ring-2
-                    focus:ring-purple-500/10
-                  "
-                >
-
-                  <option value="">
-                    Select Player 2
-                  </option>
-
-
-                  {comparisonPlayers.map(
-                    player => (
-
-                      <option
-                        key={player.id}
-                        value={player.id}
-                      >
-                        {player.name}
-                      </option>
-
-                    )
-                  )}
-
-                </select>
+                </div>
 
               </div>
 
             </div>
 
 
-            {/* EMPTY STATE */}
+            {/* SELECTORS */}
 
-            {(!playerOne ||
-              !playerTwo) && (
-
-              <div
-                className="
-                  mt-4
-                  rounded-2xl
-                  border border-dashed
-                  border-slate-700
-                  bg-slate-950/30
-                  p-6
-                  text-center
-                "
-              >
-
-                <div className="text-3xl mb-2">
-                  ⚔️
-                </div>
-
-                <div className="text-sm font-bold text-slate-300">
-                  Choose two players
-                </div>
-
-                <div className="text-xs text-slate-500 mt-1">
-                  Their head-to-head statistics will appear here.
-                </div>
-
-              </div>
-
-            )}
-
-
-            {/* SAME PLAYER */}
-
-            {playerOne &&
-              playerTwo &&
-              playerOne.id ===
-                playerTwo.id && (
+            <div className="relative p-5 sm:p-6">
 
               <div
                 className="
-                  mt-4
-                  rounded-2xl
-                  border border-amber-500/20
-                  bg-amber-500/5
-                  p-4
-                  text-center
+                  grid
+                  grid-cols-1
+                  md:grid-cols-2
+                  gap-3
                 "
               >
 
-                <div className="text-xl mb-1">
-                  ⚠️
-                </div>
+                {/* PLAYER ONE */}
 
-                <div className="text-sm font-bold text-amber-400">
-                  Please select two different players.
-                </div>
+                <div>
 
-              </div>
-
-            )}
-
-
-            {/* COMPARISON */}
-
-            {playerOne &&
-              playerTwo &&
-              playerOne.id !==
-                playerTwo.id && (
-
-              <div className="mt-6">
-
-
-                {/* PLAYER HEADER */}
-
-                <div
-                  className="
-                    grid
-                    grid-cols-2
-                    gap-2
-                    mb-4
-                  "
-                >
-
-                  <div
+                  <label
                     className="
-                      rounded-2xl
-                      bg-slate-950
-                      border border-emerald-500/20
-                      p-4
-                      text-center
-                      min-w-0
+                      flex
+                      items-center
+                      gap-2
+                      text-[10px]
+                      font-black
+                      uppercase
+                      tracking-widest
+                      text-slate-500
+                      mb-2
                     "
                   >
 
-                    <PlayerAvatar
-                      name={playerOne.name}
-                      size="large"
-                    />
-
-                    <div
+                    <span
                       className="
-                        font-black
-                        text-sm
-                        mt-3
-                        truncate
-                      "
-                    >
-                      {playerOne.name}
-                    </div>
-
-                    <div
-                      className="
-                        text-[9px]
-                        uppercase
-                        tracking-widest
+                        w-5 h-5
+                        rounded-lg
+                        bg-emerald-500/10
                         text-emerald-400
-                        mt-1
+                        flex items-center
+                        justify-center
                       "
                     >
-                      Player 1
-                    </div>
+                      1
+                    </span>
 
-                  </div>
+                    Player One
+                  </label>
+
+
+                  <select
+                    value={compareOne}
+                    onChange={e =>
+                      setCompareOne(
+                        e.target.value
+                      )
+                    }
+                    className="
+                      w-full
+                      min-h-[52px]
+                      rounded-2xl
+                      bg-slate-950
+                      border border-slate-700
+                      px-4
+                      text-sm
+                      font-bold
+                      text-white
+                      outline-none
+                      appearance-none
+                      cursor-pointer
+                      transition-all
+                      duration-200
+                      focus:border-emerald-500
+                      focus:ring-2
+                      focus:ring-emerald-500/10
+                      hover:border-slate-600
+                      active:scale-[0.995]
+                    "
+                  >
+
+                    <option value="">
+                      Select Player 1
+                    </option>
+
+
+                    {comparisonPlayers.map(
+                      player => (
+
+                        <option
+                          key={player.id}
+                          value={player.id}
+                        >
+                          {player.name}
+                        </option>
+
+                      )
+                    )}
+
+                  </select>
+
+                </div>
+
+
+                {/* PLAYER TWO */}
+
+                <div>
+
+                  <label
+                    className="
+                      flex
+                      items-center
+                      gap-2
+                      text-[10px]
+                      font-black
+                      uppercase
+                      tracking-widest
+                      text-slate-500
+                      mb-2
+                    "
+                  >
+
+                    <span
+                      className="
+                        w-5 h-5
+                        rounded-lg
+                        bg-purple-500/10
+                        text-purple-400
+                        flex items-center
+                        justify-center
+                      "
+                    >
+                      2
+                    </span>
+
+                    Player Two
+                  </label>
+
+
+                  <select
+                    value={compareTwo}
+                    onChange={e =>
+                      setCompareTwo(
+                        e.target.value
+                      )
+                    }
+                    className="
+                      w-full
+                      min-h-[52px]
+                      rounded-2xl
+                      bg-slate-950
+                      border border-slate-700
+                      px-4
+                      text-sm
+                      font-bold
+                      text-white
+                      outline-none
+                      appearance-none
+                      cursor-pointer
+                      transition-all
+                      duration-200
+                      focus:border-purple-500
+                      focus:ring-2
+                      focus:ring-purple-500/10
+                      hover:border-slate-600
+                      active:scale-[0.995]
+                    "
+                  >
+
+                    <option value="">
+                      Select Player 2
+                    </option>
+
+
+                    {comparisonPlayers.map(
+                      player => (
+
+                        <option
+                          key={player.id}
+                          value={player.id}
+                        >
+                          {player.name}
+                        </option>
+
+                      )
+                    )}
+
+                  </select>
+
+                </div>
+
+              </div>
+
+
+              {/* EMPTY STATE */}
+
+              {(!playerOne ||
+                !playerTwo) && (
+
+                <div
+                  className="
+                    records-card
+                    relative
+                    mt-4
+                    overflow-hidden
+                    rounded-2xl
+                    border border-dashed
+                    border-slate-700
+                    bg-slate-950/30
+                    p-6
+                    text-center
+                    transition-all
+                    duration-300
+                    hover:border-emerald-500/20
+                  "
+                >
+
+                  <div
+                    className="
+                      records-glow
+                      pointer-events-none
+                      absolute
+                      left-1/2
+                      top-1/2
+                      h-24
+                      w-24
+                      -translate-x-1/2
+                      -translate-y-1/2
+                      rounded-full
+                      bg-emerald-500/10
+                      blur-3xl
+                    "
+                  />
 
 
                   <div
                     className="
-                      rounded-2xl
-                      bg-slate-950
-                      border border-purple-500/20
-                      p-4
-                      text-center
-                      min-w-0
+                      records-float
+                      relative
+                      text-3xl
+                      mb-2
                     "
                   >
+                    ⚔️
+                  </div>
 
-                    <PlayerAvatar
-                      name={playerTwo.name}
-                      variant="purple"
-                      size="large"
-                    />
+                  <div className="relative text-sm font-bold text-slate-300">
+                    Choose two players
+                  </div>
 
-                    <div
-                      className="
-                        font-black
-                        text-sm
-                        mt-3
-                        truncate
-                      "
-                    >
-                      {playerTwo.name}
-                    </div>
-
-                    <div
-                      className="
-                        text-[9px]
-                        uppercase
-                        tracking-widest
-                        text-purple-400
-                        mt-1
-                      "
-                    >
-                      Player 2
-                    </div>
-
+                  <div className="relative text-xs text-slate-500 mt-1">
+                    Their head-to-head statistics will appear here.
                   </div>
 
                 </div>
 
-
-                {/* STATS */}
-
-                <div
-                  className="
-                    grid
-                    grid-cols-1
-                    sm:grid-cols-2
-                    gap-3
-                  "
-                >
-
-                  <ComparisonStat
-                    label="Runs"
-                    icon="🏏"
-                    playerOne={playerOne.name}
-                    playerTwo={playerTwo.name}
-                    valueOne={playerOne.runs}
-                    valueTwo={playerTwo.runs}
-                  />
+              )}
 
 
-                  <ComparisonStat
-                    label="Wickets"
-                    icon="🎯"
-                    playerOne={playerOne.name}
-                    playerTwo={playerTwo.name}
-                    valueOne={playerOne.wickets}
-                    valueTwo={playerTwo.wickets}
-                  />
+              {/* SAME PLAYER */}
 
-
-                  <ComparisonStat
-                    label="Fours"
-                    icon="🔥"
-                    playerOne={playerOne.name}
-                    playerTwo={playerTwo.name}
-                    valueOne={playerOne.fours}
-                    valueTwo={playerTwo.fours}
-                  />
-
-
-                  <ComparisonStat
-                    label="Sixes"
-                    icon="🚀"
-                    playerOne={playerOne.name}
-                    playerTwo={playerTwo.name}
-                    valueOne={playerOne.sixes}
-                    valueTwo={playerTwo.sixes}
-                  />
-
-
-                  <ComparisonStat
-                    label="Strike Rate"
-                    icon="⚡"
-                    playerOne={playerOne.name}
-                    playerTwo={playerTwo.name}
-                    valueOne={playerOne.strike_rate}
-                    valueTwo={playerTwo.strike_rate}
-                    decimals={2}
-                  />
-
-
-                  <ComparisonStat
-                    label="Economy"
-                    icon="🛡️"
-                    playerOne={playerOne.name}
-                    playerTwo={playerTwo.name}
-                    valueOne={playerOne.economy}
-                    valueTwo={playerTwo.economy}
-                    decimals={2}
-                    lowerIsBetter
-                  />
-
-                </div>
-
-
-                {/* SUMMARY */}
+              {playerOne &&
+                playerTwo &&
+                playerOne.id ===
+                  playerTwo.id && (
 
                 <div
                   className="
                     mt-4
                     rounded-2xl
-                    bg-emerald-500/[0.04]
-                    border border-emerald-500/15
+                    border border-amber-500/20
+                    bg-amber-500/5
                     p-4
+                    text-center
+                    transition-all
+                    duration-300
                   "
                 >
 
+                  <div className="text-xl mb-1">
+                    ⚠️
+                  </div>
+
+                  <div className="text-sm font-bold text-amber-400">
+                    Please select two different players.
+                  </div>
+
+                </div>
+
+              )}
+
+
+              {/* COMPARISON */}
+
+              {playerOne &&
+                playerTwo &&
+                playerOne.id !==
+                  playerTwo.id && (
+
+                <div className="mt-6">
+
+
+                  {/* PLAYER HEADER */}
+
                   <div
                     className="
-                      text-[9px]
-                      uppercase
-                      tracking-widest
-                      text-slate-500
-                      text-center
-                      mb-3
+                      grid
+                      grid-cols-2
+                      gap-2
+                      mb-4
                     "
                   >
-                    Head-to-Head Summary
+
+                    <div
+                      className="
+                        group/player1
+                        rounded-2xl
+                        bg-slate-950
+                        border border-emerald-500/20
+                        p-4
+                        text-center
+                        min-w-0
+                        transition-all
+                        duration-300
+                        hover:-translate-y-1
+                        hover:border-emerald-500/40
+                        active:scale-[0.985]
+                      "
+                    >
+
+                      <div className="flex justify-center">
+
+                        <PlayerAvatar
+                          name={playerOne.name}
+                          size="large"
+                        />
+
+                      </div>
+
+                      <div
+                        className="
+                          font-black
+                          text-sm
+                          mt-3
+                          truncate
+                        "
+                      >
+                        {playerOne.name}
+                      </div>
+
+                      <div
+                        className="
+                          text-[9px]
+                          uppercase
+                          tracking-widest
+                          text-emerald-400
+                          mt-1
+                        "
+                      >
+                        Player 1
+                      </div>
+
+                    </div>
+
+
+                    <div
+                      className="
+                        group/player2
+                        rounded-2xl
+                        bg-slate-950
+                        border border-purple-500/20
+                        p-4
+                        text-center
+                        min-w-0
+                        transition-all
+                        duration-300
+                        hover:-translate-y-1
+                        hover:border-purple-500/40
+                        active:scale-[0.985]
+                      "
+                    >
+
+                      <div className="flex justify-center">
+
+                        <PlayerAvatar
+                          name={playerTwo.name}
+                          variant="purple"
+                          size="large"
+                        />
+
+                      </div>
+
+                      <div
+                        className="
+                          font-black
+                          text-sm
+                          mt-3
+                          truncate
+                        "
+                      >
+                        {playerTwo.name}
+                      </div>
+
+                      <div
+                        className="
+                          text-[9px]
+                          uppercase
+                          tracking-widest
+                          text-purple-400
+                          mt-1
+                        "
+                      >
+                        Player 2
+                      </div>
+
+                    </div>
+
                   </div>
 
 
-                  {/* RUNS SUMMARY */}
+                  {/* STATS */}
 
                   <div
                     className="
-                      flex
-                      items-center
-                      gap-2
-                      text-xs
-                      sm:text-sm
-                      font-bold
+                      grid
+                      grid-cols-1
+                      sm:grid-cols-2
+                      gap-3
                     "
                   >
 
-                    <span className="shrink-0">
-                      🏏
-                    </span>
+                    <ComparisonStat
+                      label="Runs"
+                      icon="🏏"
+                      playerOne={playerOne.name}
+                      playerTwo={playerTwo.name}
+                      valueOne={playerOne.runs}
+                      valueTwo={playerTwo.runs}
+                    />
 
-                    <span className="min-w-0">
 
-                      {Number(playerOne.runs || 0) >
-                      Number(playerTwo.runs || 0) ? (
+                    <ComparisonStat
+                      label="Wickets"
+                      icon="🎯"
+                      playerOne={playerOne.name}
+                      playerTwo={playerTwo.name}
+                      valueOne={playerOne.wickets}
+                      valueTwo={playerTwo.wickets}
+                    />
 
-                        <>
-                          {playerOne.name}
-                          <span className="text-slate-500 mx-1">
-                            leads by
-                          </span>
 
-                          <span className="text-emerald-400">
-                            {Math.abs(
-                              Number(playerOne.runs || 0) -
-                              Number(playerTwo.runs || 0)
-                            )}{' '}
-                            runs
-                          </span>
-                        </>
+                    <ComparisonStat
+                      label="Fours"
+                      icon="🔥"
+                      playerOne={playerOne.name}
+                      playerTwo={playerTwo.name}
+                      valueOne={playerOne.fours}
+                      valueTwo={playerTwo.fours}
+                    />
 
-                      ) : Number(playerTwo.runs || 0) >
-                        Number(playerOne.runs || 0) ? (
 
-                        <>
-                          {playerTwo.name}
-                          <span className="text-slate-500 mx-1">
-                            leads by
-                          </span>
+                    <ComparisonStat
+                      label="Sixes"
+                      icon="🚀"
+                      playerOne={playerOne.name}
+                      playerTwo={playerTwo.name}
+                      valueOne={playerOne.sixes}
+                      valueTwo={playerTwo.sixes}
+                    />
 
-                          <span className="text-emerald-400">
-                            {Math.abs(
-                              Number(playerTwo.runs || 0) -
-                              Number(playerOne.runs || 0)
-                            )}{' '}
-                            runs
-                          </span>
-                        </>
 
-                      ) : (
+                    <ComparisonStat
+                      label="Strike Rate"
+                      icon="⚡"
+                      playerOne={playerOne.name}
+                      playerTwo={playerTwo.name}
+                      valueOne={playerOne.strike_rate}
+                      valueTwo={playerTwo.strike_rate}
+                      decimals={2}
+                    />
 
-                        <span className="text-slate-400">
-                          Both players have equal runs
-                        </span>
 
-                      )}
-
-                    </span>
+                    <ComparisonStat
+                      label="Economy"
+                      icon="🛡️"
+                      playerOne={playerOne.name}
+                      playerTwo={playerTwo.name}
+                      valueOne={playerOne.economy}
+                      valueTwo={playerTwo.economy}
+                      decimals={2}
+                      lowerIsBetter
+                    />
 
                   </div>
 
 
-                  {/* WICKETS SUMMARY */}
+                  {/* SUMMARY */}
 
                   <div
                     className="
-                      flex
-                      items-center
-                      gap-2
-                      text-xs
-                      sm:text-sm
-                      font-bold
-                      mt-3
+                      mt-4
+                      rounded-2xl
+                      bg-emerald-500/[0.04]
+                      border border-emerald-500/15
+                      p-4
+                      transition-all
+                      duration-300
+                      hover:border-emerald-500/25
+                      hover:bg-emerald-500/[0.06]
                     "
                   >
 
-                    <span className="shrink-0">
-                      🎯
-                    </span>
+                    <div
+                      className="
+                        text-[9px]
+                        uppercase
+                        tracking-widest
+                        text-slate-500
+                        text-center
+                        mb-3
+                      "
+                    >
+                      Head-to-Head Summary
+                    </div>
 
-                    <span className="min-w-0">
 
-                      {Number(playerOne.wickets || 0) >
-                      Number(playerTwo.wickets || 0) ? (
+                    {/* RUNS SUMMARY */}
 
-                        <>
-                          {playerOne.name}
-                          <span className="text-slate-500 mx-1">
-                            leads by
+                    <div
+                      className="
+                        flex
+                        items-center
+                        gap-2
+                        text-xs
+                        sm:text-sm
+                        font-bold
+                      "
+                    >
+
+                      <span className="shrink-0">
+                        🏏
+                      </span>
+
+                      <span className="min-w-0">
+
+                        {Number(playerOne.runs || 0) >
+                        Number(playerTwo.runs || 0) ? (
+
+                          <>
+                            {playerOne.name}
+                            <span className="text-slate-500 mx-1">
+                              leads by
+                            </span>
+
+                            <span className="text-emerald-400">
+                              {Math.abs(
+                                Number(playerOne.runs || 0) -
+                                Number(playerTwo.runs || 0)
+                              )}{' '}
+                              runs
+                            </span>
+                          </>
+
+                        ) : Number(playerTwo.runs || 0) >
+                          Number(playerOne.runs || 0) ? (
+
+                          <>
+                            {playerTwo.name}
+                            <span className="text-slate-500 mx-1">
+                              leads by
+                            </span>
+
+                            <span className="text-emerald-400">
+                              {Math.abs(
+                                Number(playerTwo.runs || 0) -
+                                Number(playerOne.runs || 0)
+                              )}{' '}
+                              runs
+                            </span>
+                          </>
+
+                        ) : (
+
+                          <span className="text-slate-400">
+                            Both players have equal runs
                           </span>
 
-                          <span className="text-emerald-400">
-                            {Math.abs(
-                              Number(playerOne.wickets || 0) -
-                              Number(playerTwo.wickets || 0)
-                            )}{' '}
-                            wickets
+                        )}
+
+                      </span>
+
+                    </div>
+
+
+                    {/* WICKETS SUMMARY */}
+
+                    <div
+                      className="
+                        flex
+                        items-center
+                        gap-2
+                        text-xs
+                        sm:text-sm
+                        font-bold
+                        mt-3
+                      "
+                    >
+
+                      <span className="shrink-0">
+                        🎯
+                      </span>
+
+                      <span className="min-w-0">
+
+                        {Number(playerOne.wickets || 0) >
+                        Number(playerTwo.wickets || 0) ? (
+
+                          <>
+                            {playerOne.name}
+                            <span className="text-slate-500 mx-1">
+                              leads by
+                            </span>
+
+                            <span className="text-emerald-400">
+                              {Math.abs(
+                                Number(playerOne.wickets || 0) -
+                                Number(playerTwo.wickets || 0)
+                              )}{' '}
+                              wickets
+                            </span>
+                          </>
+
+                        ) : Number(playerTwo.wickets || 0) >
+                          Number(playerOne.wickets || 0) ? (
+
+                          <>
+                            {playerTwo.name}
+                            <span className="text-slate-500 mx-1">
+                              leads by
+                            </span>
+
+                            <span className="text-emerald-400">
+                              {Math.abs(
+                                Number(playerTwo.wickets || 0) -
+                                Number(playerOne.wickets || 0)
+                              )}{' '}
+                              wickets
+                            </span>
+                          </>
+
+                        ) : (
+
+                          <span className="text-slate-400">
+                            Both players have equal wickets
                           </span>
-                        </>
 
-                      ) : Number(playerTwo.wickets || 0) >
-                        Number(playerOne.wickets || 0) ? (
+                        )}
 
-                        <>
-                          {playerTwo.name}
-                          <span className="text-slate-500 mx-1">
-                            leads by
-                          </span>
+                      </span>
 
-                          <span className="text-emerald-400">
-                            {Math.abs(
-                              Number(playerTwo.wickets || 0) -
-                              Number(playerOne.wickets || 0)
-                            )}{' '}
-                            wickets
-                          </span>
-                        </>
-
-                      ) : (
-
-                        <span className="text-slate-400">
-                          Both players have equal wickets
-                        </span>
-
-                      )}
-
-                    </span>
+                    </div>
 
                   </div>
 
                 </div>
 
-              </div>
+              )}
 
-            )}
+            </div>
 
-          </div>
-
-        </section>
+          </section>
 
 
-        {/* =================================================
-            FOOTER
-        ================================================= */}
-
-        <div
-          className="
-            text-center
-            px-4
-            pt-2
-            pb-4
-          "
-        >
+          {/* =================================================
+              FOOTER
+          ================================================= */}
 
           <div
             className="
-              inline-flex
-              items-center
-              gap-2
-              px-3
-              py-2
-              rounded-full
-              bg-slate-900
-              border border-slate-800
-              text-[9px]
-              uppercase
-              tracking-widest
-              font-bold
-              text-slate-500
+              text-center
+              px-4
+              pt-2
+              pb-4
             "
           >
-            🏏 GCC • All-Time Records
+
+            <div
+              className="
+                inline-flex
+                items-center
+                gap-2
+                px-3
+                py-2
+                rounded-full
+                bg-slate-900
+                border border-slate-800
+                text-[9px]
+                uppercase
+                tracking-widest
+                font-bold
+                text-slate-500
+                transition-all
+                duration-300
+                hover:border-emerald-500/20
+                hover:text-slate-400
+              "
+            >
+              🏏 GCC • All-Time Records
+            </div>
+
           </div>
 
         </div>
