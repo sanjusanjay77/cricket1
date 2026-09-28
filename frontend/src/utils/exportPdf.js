@@ -1,203 +1,227 @@
-
 /**
- * Builds and downloads a clean, user-friendly cricket scorecard PDF.
+ * Builds and downloads a professional cricket scorecard PDF.
  *
- * PDF libraries are loaded only when this function is called.
- * This keeps the main application fast.
+ * Design:
+ * - Clean white background
+ * - Dark green primary color
+ * - Neutral gray tables
+ * - Minimal accent colors
+ * - Professional tournament-style layout
+ *
+ * PDF libraries are loaded only when the user exports.
  */
-export async function exportMatchPdf({ match, innings, players }) {
-  // Load PDF libraries only when the user actually exports a PDF.
+export async function exportMatchPdf({
+  match,
+  innings,
+  players,
+}) {
+  // Load PDF libraries only when required.
   const [{ default: jsPDF }, { default: autoTable }] =
     await Promise.all([
       import('jspdf'),
       import('jspdf-autotable'),
     ]);
 
-  const safePlayers = Array.isArray(players) ? players : [];
-  const safeInnings = Array.isArray(innings) ? innings : [];
+  const safePlayers = Array.isArray(players)
+    ? players
+    : [];
 
-  const name = (id) => {
-    if (!id) return '—';
+  const safeInnings = Array.isArray(innings)
+    ? innings
+    : [];
 
-    return (
-      safePlayers.find((p) => p.id === id)?.name ||
-      '—'
+  /*
+   * ============================================================
+   * HELPERS
+   * ============================================================
+   */
+
+  const findPlayer = (id) => {
+    if (!id) return null;
+
+    return safePlayers.find(
+      (player) =>
+        String(player.id) === String(id)
     );
   };
 
-  const shortName = (id) => {
-    if (!id) return '—';
+  const name = (id) => {
+    const player = findPlayer(id);
 
-    const player = safePlayers.find((p) => p.id === id);
+    return player?.name || '—';
+  };
+
+  const shortName = (id) => {
+    const player = findPlayer(id);
 
     if (!player?.name) return '—';
 
-    const parts = player.name.trim().split(/\s+/);
+    const parts = player.name
+      .trim()
+      .split(/\s+/);
 
-    if (parts.length === 1) return parts[0];
+    if (parts.length === 1) {
+      return parts[0];
+    }
 
     return `${parts[0]} ${parts[parts.length - 1]}`;
   };
 
-  const doc = new jsPDF('p', 'mm', 'a4');
+  const safeNumber = (value, fallback = 0) => {
+    const number = Number(value);
 
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
+    return Number.isFinite(number)
+      ? number
+      : fallback;
+  };
+
+  const formatNumber = (value) => {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+      return '0';
+    }
+
+    return Number.isInteger(number)
+      ? String(number)
+      : number.toFixed(2);
+  };
+
+  /*
+   * ============================================================
+   * PDF
+   * ============================================================
+   */
+
+  const doc = new jsPDF(
+    'p',
+    'mm',
+    'a4'
+  );
+
+  const pageWidth =
+    doc.internal.pageSize.getWidth();
+
+  const pageHeight =
+    doc.internal.pageSize.getHeight();
 
   const margin = 14;
-  const contentWidth = pageWidth - margin * 2;
+
+  const contentWidth =
+    pageWidth - margin * 2;
+
+  /*
+   * ============================================================
+   * PROFESSIONAL COLOR PALETTE
+   * ============================================================
+   *
+   * Only a few colors are used.
+   */
 
   const COLORS = {
-    green: [15, 81, 50],
-    lightGreen: [232, 247, 239],
-    darkGreen: [16, 110, 67],
+    primary: [25, 82, 55],
+    primaryDark: [18, 63, 42],
+    primaryLight: [239, 246, 242],
 
-    blue: [30, 58, 138],
-    lightBlue: [238, 243, 255],
+    text: [35, 35, 35],
+    textSecondary: [105, 105, 105],
 
-    orange: [234, 119, 24],
-    lightOrange: [255, 245, 230],
+    gray: [115, 115, 115],
+    lightGray: [246, 247, 247],
+    border: [218, 222, 220],
 
-    red: [185, 28, 28],
-    lightRed: [254, 242, 242],
-
-    dark: [30, 30, 30],
-    gray: [100, 100, 100],
-    lightGray: [245, 247, 248],
-    border: [220, 225, 228],
     white: [255, 255, 255],
+
+    red: [170, 45, 45],
+    redLight: [252, 244, 244],
   };
 
-  const setText = (size, color = COLORS.dark) => {
+  /*
+   * ============================================================
+   * BASIC TEXT HELPERS
+   * ============================================================
+   */
+
+  const setText = (
+    size = 9,
+    color = COLORS.text,
+    style = 'normal'
+  ) => {
     doc.setFontSize(size);
     doc.setTextColor(...color);
+    doc.setFont(
+      'helvetica',
+      style
+    );
   };
 
-  const drawSectionTitle = (
-    title,
-    y,
-    color = COLORS.green,
-    subtitle = null
-  ) => {
-    const height = subtitle ? 15 : 11;
-
-    doc.setFillColor(...color);
-
-    doc.roundedRect(
-      margin,
-      y,
-      contentWidth,
-      height,
-      2,
-      2,
-      'F'
-    );
-
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.white);
-
-    doc.text(
-      title,
-      margin + 5,
-      y + 7
-    );
-
-    if (subtitle) {
-      doc.setFontSize(7.5);
-      doc.setFont('helvetica', 'normal');
-
-      doc.text(
-        subtitle,
-        margin + 5,
-        y + 12
-      );
-    }
-
-    return y + height + 4;
-  };
-
-  const drawInfoBox = (
-    label,
-    value,
-    x,
-    y,
-    width,
-    height = 18
-  ) => {
-    doc.setFillColor(...COLORS.lightGray);
-    doc.setDrawColor(...COLORS.border);
-
-    doc.roundedRect(
-      x,
-      y,
-      width,
-      height,
-      2,
-      2,
-      'FD'
-    );
-
-    setText(7.5, COLORS.gray);
-
-    doc.text(
-      label.toUpperCase(),
-      x + 4,
-      y + 6
-    );
-
-    setText(10, COLORS.dark);
-
-    doc.setFont('helvetica', 'bold');
-
-    const textValue = String(value ?? '—');
-
-    doc.text(
-      textValue,
-      x + 4,
-      y + 13
-    );
-
-    doc.setFont('helvetica', 'normal');
-  };
-
-  const ensureSpace = (requiredHeight) => {
-    if (y + requiredHeight > pageHeight - 18) {
-      doc.addPage();
-      y = 18;
-
-      drawPageHeader();
-    }
-  };
+  /*
+   * ============================================================
+   * PAGE HEADER
+   * ============================================================
+   */
 
   const drawPageHeader = () => {
-    if (doc.internal.getNumberOfPages() === 1) {
+    if (
+      doc.internal.getNumberOfPages() === 1
+    ) {
       return;
     }
 
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.green);
+    const team1 =
+      match.team1_short ||
+      match.team1_name ||
+      'Team 1';
 
-    doc.text(
-      `${match.team1_short || match.team1_name} vs ${
-        match.team2_short || match.team2_name
-      }`,
-      margin,
-      10
+    const team2 =
+      match.team2_short ||
+      match.team2_name ||
+      'Team 2';
+
+    setText(
+      8,
+      COLORS.primary,
+      'bold'
     );
 
-    doc.setDrawColor(...COLORS.border);
+    doc.text(
+      `${team1}  vs  ${team2}`,
+      margin,
+      9
+    );
+
+    setText(
+      7,
+      COLORS.gray,
+      'normal'
+    );
+
+    doc.text(
+      'CRICKET SCORECARD',
+      pageWidth - margin,
+      9,
+      {
+        align: 'right',
+      }
+    );
+
+    doc.setDrawColor(
+      ...COLORS.border
+    );
 
     doc.line(
       margin,
-      12,
+      11,
       pageWidth - margin,
-      12
+      11
     );
-
-    doc.setFont('helvetica', 'normal');
   };
+
+  /*
+   * ============================================================
+   * FOOTER
+   * ============================================================
+   */
 
   const addFooter = () => {
     const totalPages =
@@ -210,7 +234,9 @@ export async function exportMatchPdf({ match, innings, players }) {
     ) {
       doc.setPage(page);
 
-      doc.setDrawColor(...COLORS.border);
+      doc.setDrawColor(
+        ...COLORS.border
+      );
 
       doc.line(
         margin,
@@ -219,8 +245,11 @@ export async function exportMatchPdf({ match, innings, players }) {
         pageHeight - 12
       );
 
-      doc.setFontSize(7);
-      doc.setTextColor(...COLORS.gray);
+      setText(
+        7,
+        COLORS.gray,
+        'normal'
+      );
 
       doc.text(
         'Cricket Scorecard',
@@ -232,79 +261,312 @@ export async function exportMatchPdf({ match, innings, players }) {
         `Page ${page} of ${totalPages}`,
         pageWidth - margin,
         pageHeight - 7,
-        { align: 'right' }
+        {
+          align: 'right',
+        }
       );
     }
   };
 
-  let y = 18;
-
   /*
-   * MAIN MATCH HEADER
+   * ============================================================
+   * SPACE MANAGEMENT
+   * ============================================================
    */
 
-  doc.setFillColor(...COLORS.green);
+  let y = 18;
 
-  doc.roundedRect(
-    margin,
-    y,
-    contentWidth,
-    38,
-    4,
-    4,
-    'F'
-  );
+  const ensureSpace = (
+    requiredHeight
+  ) => {
+    if (
+      y + requiredHeight >
+      pageHeight - 18
+    ) {
+      doc.addPage();
 
-  setText(19, COLORS.white);
+      y = 18;
 
-  doc.setFont('helvetica', 'bold');
-
-  doc.text(
-    `${match.team1_name || 'Team 1'} vs ${
-      match.team2_name || 'Team 2'
-    }`,
-    pageWidth / 2,
-    y + 12,
-    { align: 'center' }
-  );
-
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-
-  doc.text(
-    `${match.overs_limit || '—'}-over match`,
-    pageWidth / 2,
-    y + 19,
-    { align: 'center' }
-  );
-
-  if (match.venue) {
-    doc.text(
-      match.venue,
-      pageWidth / 2,
-      y + 25,
-      { align: 'center' }
-    );
-  }
-
-  if (match.result_text) {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-
-    doc.text(
-      match.result_text,
-      pageWidth / 2,
-      y + 32,
-      { align: 'center' }
-    );
-
-    doc.setFont('helvetica', 'normal');
-  }
-
-  y += 45;
+      drawPageHeader();
+    }
+  };
 
   /*
+   * ============================================================
+   * SECTION HEADER
+   * ============================================================
+   *
+   * Clean green line + title instead of large colored box.
+   */
+
+  const drawSectionTitle = (
+    title,
+    subtitle = null
+  ) => {
+    ensureSpace(
+      subtitle ? 18 : 14
+    );
+
+    doc.setFillColor(
+      ...COLORS.primary
+    );
+
+    doc.rect(
+      margin,
+      y,
+      2.5,
+      subtitle ? 13 : 10,
+      'F'
+    );
+
+    setText(
+      11,
+      COLORS.text,
+      'bold'
+    );
+
+    doc.text(
+      title,
+      margin + 6,
+      y + 6.5
+    );
+
+    if (subtitle) {
+      setText(
+        7.5,
+        COLORS.gray,
+        'normal'
+      );
+
+      doc.text(
+        subtitle,
+        margin + 6,
+        y + 11.5
+      );
+    }
+
+    y += subtitle
+      ? 18
+      : 14;
+  };
+
+  /*
+   * ============================================================
+   * INFORMATION BOX
+   * ============================================================
+   */
+
+  const drawInfoBox = (
+    label,
+    value,
+    x,
+    width
+  ) => {
+    doc.setFillColor(
+      ...COLORS.lightGray
+    );
+
+    doc.setDrawColor(
+      ...COLORS.border
+    );
+
+    doc.roundedRect(
+      x,
+      y,
+      width,
+      17,
+      1.5,
+      1.5,
+      'FD'
+    );
+
+    setText(
+      6.8,
+      COLORS.gray,
+      'bold'
+    );
+
+    doc.text(
+      String(label).toUpperCase(),
+      x + 4,
+      y + 5.5
+    );
+
+    setText(
+      9,
+      COLORS.text,
+      'bold'
+    );
+
+    const displayValue =
+      String(value ?? '—');
+
+    const maxWidth =
+      width - 8;
+
+    const lines =
+      doc.splitTextToSize(
+        displayValue,
+        maxWidth
+      );
+
+    doc.text(
+      lines.slice(0, 1),
+      x + 4,
+      y + 12
+    );
+  };
+
+  /*
+   * ============================================================
+   * MAIN MATCH HEADER
+   * ============================================================
+   */
+
+  const team1 =
+    match.team1_name ||
+    match.team1_short ||
+    'Team 1';
+
+  const team2 =
+    match.team2_name ||
+    match.team2_short ||
+    'Team 2';
+
+  /*
+   * Small top label
+   */
+
+  setText(
+    8,
+    COLORS.primary,
+    'bold'
+  );
+
+  doc.text(
+    'CRICKET SCORECARD',
+    margin,
+    y
+  );
+
+  y += 5;
+
+  /*
+   * Main title
+   */
+
+  setText(
+    20,
+    COLORS.text,
+    'bold'
+  );
+
+  const matchTitle =
+    `${team1}  vs  ${team2}`;
+
+  doc.text(
+    matchTitle,
+    pageWidth / 2,
+    y + 9,
+    {
+      align: 'center',
+    }
+  );
+
+  y += 15;
+
+  /*
+   * Match details line
+   */
+
+  const matchType =
+    match.match_type ||
+    'Cricket';
+
+  const oversText =
+    match.overs_limit
+      ? `${match.overs_limit} overs`
+      : 'Overs —';
+
+  const venueText =
+    match.venue ||
+    'Venue not specified';
+
+  setText(
+    8.5,
+    COLORS.gray,
+    'normal'
+  );
+
+  doc.text(
+    `${matchType}  •  ${oversText}  •  ${venueText}`,
+    pageWidth / 2,
+    y,
+    {
+      align: 'center',
+      maxWidth: contentWidth,
+    }
+  );
+
+  y += 6;
+
+  /*
+   * Result
+   */
+
+  if (match.result_text) {
+    setText(
+      10,
+      COLORS.primary,
+      'bold'
+    );
+
+    const resultLines =
+      doc.splitTextToSize(
+        match.result_text,
+        contentWidth - 20
+      );
+
+    doc.text(
+      resultLines,
+      pageWidth / 2,
+      y + 2,
+      {
+        align: 'center',
+      }
+    );
+
+    y +=
+      resultLines.length * 4.5;
+  }
+
+  /*
+   * Header separator
+   */
+
+  y += 5;
+
+  doc.setDrawColor(
+    ...COLORS.primary
+  );
+
+  doc.setLineWidth(0.7);
+
+  doc.line(
+    margin,
+    y,
+    pageWidth - margin,
+    y
+  );
+
+  doc.setLineWidth(0.2);
+
+  y += 9;
+
+  /*
+   * ============================================================
    * MATCH INFORMATION
+   * ============================================================
    */
 
   const boxGap = 4;
@@ -313,10 +575,9 @@ export async function exportMatchPdf({ match, innings, players }) {
     (contentWidth - boxGap * 2) / 3;
 
   drawInfoBox(
-    'Match type',
-    match.match_type || 'Cricket',
+    'Match Type',
+    matchType,
     margin,
-    y,
     boxWidth
   );
 
@@ -324,722 +585,1186 @@ export async function exportMatchPdf({ match, innings, players }) {
     'Overs',
     match.overs_limit || '—',
     margin + boxWidth + boxGap,
-    y,
     boxWidth
   );
 
   drawInfoBox(
     'Venue',
     match.venue || '—',
-    margin + (boxWidth + boxGap) * 2,
-    y,
+    margin +
+      (boxWidth + boxGap) * 2,
     boxWidth
   );
 
-  y += 25;
+  y += 24;
 
   /*
-   * EACH INNINGS
+   * ============================================================
+   * INNINGS
+   * ============================================================
    */
 
-  safeInnings.forEach((inn, idx) => {
-    const inningsData = inn?.innings || {};
+  safeInnings.forEach(
+    (inn, idx) => {
+      const inningsData =
+        inn?.innings || {};
 
-    const totalRuns =
-      Number(inningsData.total_runs || 0);
+      const totalRuns =
+        safeNumber(
+          inningsData.total_runs
+        );
 
-    const totalWickets =
-      Number(inningsData.total_wickets || 0);
+      const totalWickets =
+        safeNumber(
+          inningsData.total_wickets
+        );
 
-    const overs =
-      inn?.overs ||
-      `${Math.floor(
-        Number(inningsData.total_balls || 0) / 6
-      )}.${Number(inningsData.total_balls || 0) % 6}`;
+      const totalBalls =
+        safeNumber(
+          inningsData.total_balls
+        );
 
-    const runRate =
-      inn?.runRate !== undefined &&
-      inn?.runRate !== null
-        ? Number(inn.runRate).toFixed(2)
-        : inningsData.total_balls > 0
-        ? (
+      const calculatedOvers =
+        `${Math.floor(
+          totalBalls / 6
+        )}.${totalBalls % 6}`;
+
+      const overs =
+        inn?.overs ||
+        calculatedOvers;
+
+      let runRate = '0.00';
+
+      if (
+        inn?.runRate !== undefined &&
+        inn?.runRate !== null
+      ) {
+        runRate =
+          safeNumber(
+            inn.runRate
+          ).toFixed(2);
+      } else if (
+        totalBalls > 0
+      ) {
+        runRate =
+          (
             totalRuns /
-            (Number(inningsData.total_balls) / 6)
-          ).toFixed(2)
-        : '0.00';
+            (totalBalls / 6)
+          ).toFixed(2);
+      }
 
-    const battingTeam =
-      inningsData.batting_team_id
-        ? name(inningsData.batting_team_id)
-        : `Innings ${idx + 1}`;
+      const battingTeam =
+        inningsData.batting_team_id
+          ? name(
+              inningsData.batting_team_id
+            )
+          : `Innings ${idx + 1}`;
 
-    /*
-     * INNINGS HEADER
-     */
+      /*
+       * ========================================================
+       * INNINGS TITLE
+       * ========================================================
+       */
 
-    ensureSpace(30);
+      ensureSpace(35);
 
-    y = drawSectionTitle(
-      `INNINGS ${idx + 1}`,
-      y,
-      COLORS.green,
-      battingTeam
-    );
-
-    /*
-     * SCORE SUMMARY
-     */
-
-    const scoreBoxWidth =
-      (contentWidth - 8) / 3;
-
-    doc.setFillColor(...COLORS.lightGreen);
-    doc.setDrawColor(...COLORS.border);
-
-    doc.roundedRect(
-      margin,
-      y,
-      scoreBoxWidth,
-      21,
-      2,
-      2,
-      'FD'
-    );
-
-    setText(7.5, COLORS.gray);
-
-    doc.text(
-      'SCORE',
-      margin + 5,
-      y + 7
-    );
-
-    setText(15, COLORS.green);
-
-    doc.setFont('helvetica', 'bold');
-
-    doc.text(
-      `${totalRuns}/${totalWickets}`,
-      margin + 5,
-      y + 16
-    );
-
-    doc.setFont('helvetica', 'normal');
-
-    doc.setFillColor(...COLORS.lightBlue);
-
-    doc.roundedRect(
-      margin + scoreBoxWidth + 4,
-      y,
-      scoreBoxWidth,
-      21,
-      2,
-      2,
-      'F'
-    );
-
-    setText(7.5, COLORS.gray);
-
-    doc.text(
-      'OVERS',
-      margin + scoreBoxWidth + 9,
-      y + 7
-    );
-
-    setText(15, COLORS.blue);
-
-    doc.setFont('helvetica', 'bold');
-
-    doc.text(
-      String(overs),
-      margin + scoreBoxWidth + 9,
-      y + 16
-    );
-
-    doc.setFont('helvetica', 'normal');
-
-    doc.setFillColor(...COLORS.lightOrange);
-
-    doc.roundedRect(
-      margin + (scoreBoxWidth + 4) * 2,
-      y,
-      scoreBoxWidth,
-      21,
-      2,
-      2,
-      'F'
-    );
-
-    setText(7.5, COLORS.gray);
-
-    doc.text(
-      'RUN RATE',
-      margin + (scoreBoxWidth + 4) * 2 + 5,
-      y + 7
-    );
-
-    setText(15, COLORS.orange);
-
-    doc.setFont('helvetica', 'bold');
-
-    doc.text(
-      String(runRate),
-      margin + (scoreBoxWidth + 4) * 2 + 5,
-      y + 16
-    );
-
-    doc.setFont('helvetica', 'normal');
-
-    y += 27;
-
-    /*
-     * BATTING
-     */
-
-    ensureSpace(45);
-
-    y = drawSectionTitle(
-      'BATTING',
-      y,
-      COLORS.green,
-      'Batting scorecard'
-    );
-
-    const battingRows =
-      Array.isArray(inn?.battingCard)
-        ? inn.battingCard
-        : [];
-
-    if (battingRows.length > 0) {
-      autoTable(doc, {
-        startY: y,
-
-        head: [[
-          'Batsman',
-          'R',
-          'B',
-          '4s',
-          '6s',
-          'SR',
-          'Dismissal'
-        ]],
-
-        body: battingRows.map((b) => [
-          name(b.player_id),
-          b.runs ?? 0,
-          b.balls ?? 0,
-          b.fours ?? 0,
-          b.sixes ?? 0,
-          b.strike_rate ?? '0.00',
-          b.is_out
-            ? `${b.how_out || 'out'}${
-                b.fielder_id
-                  ? ` (${shortName(b.fielder_id)})`
-                  : ''
-              }`
-            : 'Not out',
-        ]),
-
-        margin: {
-          left: margin,
-          right: margin,
-        },
-
-        styles: {
-          fontSize: 8,
-          cellPadding: 2.5,
-          valign: 'middle',
-        },
-
-        headStyles: {
-          fillColor: COLORS.green,
-          textColor: COLORS.white,
-          fontStyle: 'bold',
-          fontSize: 8,
-        },
-
-        alternateRowStyles: {
-          fillColor: [248, 250, 249],
-        },
-
-        columnStyles: {
-          0: { cellWidth: 40 },
-          1: { halign: 'center', cellWidth: 12 },
-          2: { halign: 'center', cellWidth: 12 },
-          3: { halign: 'center', cellWidth: 12 },
-          4: { halign: 'center', cellWidth: 12 },
-          5: { halign: 'center', cellWidth: 17 },
-          6: { cellWidth: 'auto' },
-        },
-
-        theme: 'grid',
-      });
-
-      y = doc.lastAutoTable.finalY + 5;
-    } else {
-      setText(9, COLORS.gray);
-
-      doc.text(
-        'No batting data available.',
-        margin,
-        y + 5
+      drawSectionTitle(
+        `INNINGS ${idx + 1}`,
+        battingTeam
       );
 
-      y += 12;
-    }
+      /*
+       * ========================================================
+       * SCORE SUMMARY
+       * ========================================================
+       */
 
-    /*
-     * EXTRAS
-     */
+      const summaryGap = 4;
 
-    ensureSpace(24);
+      const summaryWidth =
+        (contentWidth -
+          summaryGap * 2) /
+        3;
 
-    const wide =
-      Number(inningsData.extras_wide || 0);
+      /*
+       * SCORE
+       */
 
-    const noball =
-      Number(inningsData.extras_noball || 0);
-
-    const bye =
-      Number(inningsData.extras_bye || 0);
-
-    const legbye =
-      Number(inningsData.extras_legbye || 0);
-
-    const penalty =
-      Number(inningsData.extras_penalty || 0);
-
-    const extrasTotal =
-      wide +
-      noball +
-      bye +
-      legbye +
-      penalty;
-
-    doc.setFillColor(...COLORS.lightOrange);
-    doc.setDrawColor(...COLORS.border);
-
-    doc.roundedRect(
-      margin,
-      y,
-      contentWidth,
-      19,
-      2,
-      2,
-      'FD'
-    );
-
-    setText(9, COLORS.orange);
-
-    doc.setFont('helvetica', 'bold');
-
-    doc.text(
-      `EXTRAS  ${extrasTotal}`,
-      margin + 5,
-      y + 7
-    );
-
-    setText(8.5, COLORS.gray);
-
-    doc.setFont('helvetica', 'normal');
-
-    doc.text(
-      `Wd ${wide}   ·   Nb ${noball}   ·   B ${bye}   ·   Lb ${legbye}${
-        penalty ? `   ·   P ${penalty}` : ''
-      }`,
-      margin + 5,
-      y + 14
-    );
-
-    y += 25;
-
-    /*
-     * BOWLING
-     */
-
-    ensureSpace(45);
-
-    y = drawSectionTitle(
-      'BOWLING',
-      y,
-      COLORS.blue,
-      'Bowling scorecard'
-    );
-
-    const bowlingRows =
-      Array.isArray(inn?.bowlingCard)
-        ? inn.bowlingCard
-        : [];
-
-    if (bowlingRows.length > 0) {
-      autoTable(doc, {
-        startY: y,
-
-        head: [[
-          'Bowler',
-          'O',
-          'M',
-          'R',
-          'W',
-          'Econ'
-        ]],
-
-        body: bowlingRows.map((b) => [
-          name(b.player_id),
-          b.overs ?? '0.0',
-          b.maidens ?? 0,
-          b.runs ?? 0,
-          b.wickets ?? 0,
-          b.economy ?? '0.00',
-        ]),
-
-        margin: {
-          left: margin,
-          right: margin,
-        },
-
-        styles: {
-          fontSize: 8.5,
-          cellPadding: 2.5,
-          valign: 'middle',
-        },
-
-        headStyles: {
-          fillColor: COLORS.blue,
-          textColor: COLORS.white,
-          fontStyle: 'bold',
-        },
-
-        alternateRowStyles: {
-          fillColor: [248, 249, 253],
-        },
-
-        columnStyles: {
-          0: { cellWidth: 65 },
-          1: { halign: 'center' },
-          2: { halign: 'center' },
-          3: { halign: 'center' },
-          4: { halign: 'center' },
-          5: { halign: 'center' },
-        },
-
-        theme: 'grid',
-      });
-
-      y = doc.lastAutoTable.finalY + 6;
-    } else {
-      setText(9, COLORS.gray);
-
-      doc.text(
-        'No bowling data available.',
-        margin,
-        y + 5
+      doc.setFillColor(
+        ...COLORS.primaryLight
       );
 
-      y += 12;
-    }
+      doc.setDrawColor(
+        ...COLORS.border
+      );
 
-    /*
-     * PARTNERSHIPS
-     */
+      doc.roundedRect(
+        margin,
+        y,
+        summaryWidth,
+        20,
+        1.5,
+        1.5,
+        'FD'
+      );
 
-    ensureSpace(45);
+      setText(
+        6.8,
+        COLORS.gray,
+        'bold'
+      );
 
-    y = drawSectionTitle(
-      'PARTNERSHIPS',
-      y,
-      COLORS.orange,
-      'Batting partnerships'
-    );
+      doc.text(
+        'SCORE',
+        margin + 4,
+        y + 6
+      );
 
-    const partnerships =
-      Array.isArray(inn?.partnerships)
-        ? inn.partnerships
-        : [];
+      setText(
+        14,
+        COLORS.primary,
+        'bold'
+      );
 
-    if (partnerships.length > 0) {
-      autoTable(doc, {
-        startY: y,
+      doc.text(
+        `${totalRuns}/${totalWickets}`,
+        margin + 4,
+        y + 15
+      );
 
-        head: [[
-          '#',
-          'Batsman 1',
-          'Batsman 2',
-          'Runs',
-          'Balls',
-          'Status'
-        ]],
+      /*
+       * OVERS
+       */
 
-        body: partnerships.map((p) => [
-          p.partnership_no ?? '—',
-          name(p.batsman1_id),
-          name(p.batsman2_id),
-          p.runs ?? 0,
-          p.balls ?? 0,
-          p.is_current
-            ? 'Current'
-            : 'Completed',
-        ]),
+      const secondX =
+        margin +
+        summaryWidth +
+        summaryGap;
 
-        margin: {
-          left: margin,
-          right: margin,
-        },
+      doc.setFillColor(
+        ...COLORS.lightGray
+      );
 
-        styles: {
-          fontSize: 8.5,
-          cellPadding: 2.5,
-          valign: 'middle',
-        },
+      doc.roundedRect(
+        secondX,
+        y,
+        summaryWidth,
+        20,
+        1.5,
+        1.5,
+        'F'
+      );
 
-        headStyles: {
-          fillColor: COLORS.orange,
-          textColor: COLORS.white,
-          fontStyle: 'bold',
-        },
+      setText(
+        6.8,
+        COLORS.gray,
+        'bold'
+      );
 
-        alternateRowStyles: {
-          fillColor: [255, 250, 243],
-        },
+      doc.text(
+        'OVERS',
+        secondX + 4,
+        y + 6
+      );
 
-        columnStyles: {
-          0: { halign: 'center', cellWidth: 12 },
-          1: { cellWidth: 45 },
-          2: { cellWidth: 45 },
-          3: { halign: 'center', cellWidth: 18 },
-          4: { halign: 'center', cellWidth: 18 },
-          5: { halign: 'center' },
-        },
+      setText(
+        14,
+        COLORS.text,
+        'bold'
+      );
 
-        theme: 'grid',
-      });
+      doc.text(
+        String(overs),
+        secondX + 4,
+        y + 15
+      );
 
-      y = doc.lastAutoTable.finalY + 6;
-    } else {
-      doc.setFillColor(...COLORS.lightGray);
-      doc.setDrawColor(...COLORS.border);
+      /*
+       * RUN RATE
+       */
+
+      const thirdX =
+        secondX +
+        summaryWidth +
+        summaryGap;
+
+      doc.setFillColor(
+        ...COLORS.lightGray
+      );
+
+      doc.roundedRect(
+        thirdX,
+        y,
+        summaryWidth,
+        20,
+        1.5,
+        1.5,
+        'F'
+      );
+
+      setText(
+        6.8,
+        COLORS.gray,
+        'bold'
+      );
+
+      doc.text(
+        'RUN RATE',
+        thirdX + 4,
+        y + 6
+      );
+
+      setText(
+        14,
+        COLORS.text,
+        'bold'
+      );
+
+      doc.text(
+        String(runRate),
+        thirdX + 4,
+        y + 15
+      );
+
+      y += 27;
+
+      /*
+       * ========================================================
+       * BATTING
+       * ========================================================
+       */
+
+      ensureSpace(45);
+
+      drawSectionTitle(
+        'BATTING',
+        'Batting scorecard'
+      );
+
+      const battingRows =
+        Array.isArray(
+          inn?.battingCard
+        )
+          ? inn.battingCard
+          : [];
+
+      if (
+        battingRows.length > 0
+      ) {
+        autoTable(doc, {
+          startY: y,
+
+          head: [[
+            'Batsman',
+            'R',
+            'B',
+            '4s',
+            '6s',
+            'SR',
+            'Dismissal',
+          ]],
+
+          body:
+            battingRows.map(
+              (b) => [
+                name(
+                  b.player_id
+                ),
+
+                b.runs ?? 0,
+
+                b.balls ?? 0,
+
+                b.fours ?? 0,
+
+                b.sixes ?? 0,
+
+                b.strike_rate ??
+                  '0.00',
+
+                b.is_out
+                  ? `${b.how_out || 'out'}${
+                      b.fielder_id
+                        ? ` (${shortName(
+                            b.fielder_id
+                          )})`
+                        : ''
+                    }`
+                  : 'Not out',
+              ]
+            ),
+
+          margin: {
+            left: margin,
+            right: margin,
+          },
+
+          styles: {
+            fontSize: 8,
+            cellPadding: 2.6,
+            valign: 'middle',
+            textColor:
+              COLORS.text,
+            lineColor:
+              COLORS.border,
+            lineWidth: 0.2,
+          },
+
+          headStyles: {
+            fillColor:
+              COLORS.primary,
+            textColor:
+              COLORS.white,
+            fontStyle:
+              'bold',
+            fontSize: 8,
+            halign: 'center',
+          },
+
+          bodyStyles: {
+            fillColor:
+              COLORS.white,
+          },
+
+          alternateRowStyles: {
+            fillColor:
+              COLORS.lightGray,
+          },
+
+          columnStyles: {
+            0: {
+              cellWidth: 40,
+              fontStyle:
+                'bold',
+            },
+
+            1: {
+              halign: 'center',
+              cellWidth: 12,
+            },
+
+            2: {
+              halign: 'center',
+              cellWidth: 12,
+            },
+
+            3: {
+              halign: 'center',
+              cellWidth: 12,
+            },
+
+            4: {
+              halign: 'center',
+              cellWidth: 12,
+            },
+
+            5: {
+              halign: 'center',
+              cellWidth: 17,
+            },
+
+            6: {
+              cellWidth: 'auto',
+            },
+          },
+
+          theme: 'grid',
+
+          didParseCell: (
+            data
+          ) => {
+            /*
+             * Highlight runs slightly.
+             */
+
+            if (
+              data.section ===
+                'body' &&
+              data.column.index === 1
+            ) {
+              data.cell.styles.fontStyle =
+                'bold';
+            }
+          },
+        });
+
+        y =
+          doc.lastAutoTable
+            .finalY + 6;
+      } else {
+        setText(
+          8.5,
+          COLORS.gray
+        );
+
+        doc.text(
+          'No batting data available.',
+          margin,
+          y + 5
+        );
+
+        y += 12;
+      }
+
+      /*
+       * ========================================================
+       * EXTRAS
+       * ========================================================
+       */
+
+      ensureSpace(25);
+
+      const wide =
+        safeNumber(
+          inningsData.extras_wide
+        );
+
+      const noball =
+        safeNumber(
+          inningsData.extras_noball
+        );
+
+      const bye =
+        safeNumber(
+          inningsData.extras_bye
+        );
+
+      const legbye =
+        safeNumber(
+          inningsData.extras_legbye
+        );
+
+      const penalty =
+        safeNumber(
+          inningsData.extras_penalty
+        );
+
+      const extrasTotal =
+        wide +
+        noball +
+        bye +
+        legbye +
+        penalty;
+
+      /*
+       * Thin extras strip.
+       */
+
+      doc.setFillColor(
+        ...COLORS.lightGray
+      );
+
+      doc.setDrawColor(
+        ...COLORS.border
+      );
 
       doc.roundedRect(
         margin,
         y,
         contentWidth,
-        15,
-        2,
-        2,
+        18,
+        1.5,
+        1.5,
         'FD'
       );
 
-      setText(8.5, COLORS.gray);
+      setText(
+        8,
+        COLORS.primary,
+        'bold'
+      );
 
       doc.text(
-        totalRuns > 0
-          ? 'Partnership information is not available for this innings.'
-          : 'No partnerships recorded.',
+        `EXTRAS  ${extrasTotal}`,
         margin + 5,
-        y + 9
+        y + 6.5
       );
 
-      y += 21;
-    }
-
-    /*
-     * FALL OF WICKETS
-     */
-
-    ensureSpace(45);
-
-    y = drawSectionTitle(
-      'FALL OF WICKETS',
-      y,
-      COLORS.red,
-      'Wickets lost during the innings'
-    );
-
-    const fallOfWickets =
-      Array.isArray(inn?.fallOfWickets)
-        ? inn.fallOfWickets
-        : [];
-
-    if (fallOfWickets.length > 0) {
-      autoTable(doc, {
-        startY: y,
-
-        head: [[
-          'Wicket',
-          'Score',
-          'Over',
-          'Batsman',
-          'How Out'
-        ]],
-
-        body: fallOfWickets.map((w) => [
-          w.wicket_no ?? '—',
-          w.score ?? 0,
-          w.overs ?? '—',
-          name(w.player_id),
-          `${w.how_out || 'out'}${
-            w.fielder_id
-              ? ` (${shortName(w.fielder_id)})`
-              : ''
-          }`,
-        ]),
-
-        margin: {
-          left: margin,
-          right: margin,
-        },
-
-        styles: {
-          fontSize: 8.5,
-          cellPadding: 2.5,
-          valign: 'middle',
-        },
-
-        headStyles: {
-          fillColor: COLORS.red,
-          textColor: COLORS.white,
-          fontStyle: 'bold',
-        },
-
-        alternateRowStyles: {
-          fillColor: [255, 248, 248],
-        },
-
-        columnStyles: {
-          0: { halign: 'center', cellWidth: 18 },
-          1: { halign: 'center', cellWidth: 22 },
-          2: { halign: 'center', cellWidth: 25 },
-          3: { cellWidth: 48 },
-          4: { cellWidth: 'auto' },
-        },
-
-        theme: 'grid',
-      });
-
-      y = doc.lastAutoTable.finalY + 8;
-    } else {
-      doc.setFillColor(...COLORS.lightGreen);
-      doc.setDrawColor(...COLORS.border);
-
-      doc.roundedRect(
-        margin,
-        y,
-        contentWidth,
-        15,
-        2,
-        2,
-        'FD'
+      setText(
+        7.5,
+        COLORS.gray,
+        'normal'
       );
-
-      setText(9, COLORS.darkGreen);
-
-      doc.setFont('helvetica', 'bold');
 
       doc.text(
-        totalWickets === 0
-          ? '✓ No wickets lost'
-          : 'No fall-of-wickets data available.',
+        `Wd ${wide}   •   Nb ${noball}   •   B ${bye}   •   Lb ${legbye}${
+          penalty
+            ? `   •   P ${penalty}`
+            : ''
+        }`,
         margin + 5,
-        y + 9
+        y + 13
       );
 
-      doc.setFont('helvetica', 'normal');
+      y += 24;
 
-      y += 21;
-    }
+      /*
+       * ========================================================
+       * BOWLING
+       * ========================================================
+       */
 
-    /*
-     * SPACE BETWEEN INNINGS
-     */
+      ensureSpace(45);
 
-    if (idx < safeInnings.length - 1) {
-      ensureSpace(15);
+      drawSectionTitle(
+        'BOWLING',
+        'Bowling scorecard'
+      );
 
-      doc.setDrawColor(...COLORS.border);
+      const bowlingRows =
+        Array.isArray(
+          inn?.bowlingCard
+        )
+          ? inn.bowlingCard
+          : [];
 
-      doc.line(
+      if (
+        bowlingRows.length > 0
+      ) {
+        autoTable(doc, {
+          startY: y,
+
+          head: [[
+            'Bowler',
+            'O',
+            'M',
+            'R',
+            'W',
+            'Econ',
+          ]],
+
+          body:
+            bowlingRows.map(
+              (b) => [
+                name(
+                  b.player_id
+                ),
+
+                b.overs ??
+                  '0.0',
+
+                b.maidens ??
+                  0,
+
+                b.runs ??
+                  0,
+
+                b.wickets ??
+                  0,
+
+                b.economy ??
+                  '0.00',
+              ]
+            ),
+
+          margin: {
+            left: margin,
+            right: margin,
+          },
+
+          styles: {
+            fontSize: 8.5,
+            cellPadding: 2.7,
+            valign: 'middle',
+            textColor:
+              COLORS.text,
+            lineColor:
+              COLORS.border,
+            lineWidth: 0.2,
+          },
+
+          headStyles: {
+            fillColor:
+              COLORS.primary,
+            textColor:
+              COLORS.white,
+            fontStyle:
+              'bold',
+            fontSize: 8,
+            halign: 'center',
+          },
+
+          bodyStyles: {
+            fillColor:
+              COLORS.white,
+          },
+
+          alternateRowStyles: {
+            fillColor:
+              COLORS.lightGray,
+          },
+
+          columnStyles: {
+            0: {
+              cellWidth: 65,
+              fontStyle:
+                'bold',
+            },
+
+            1: {
+              halign: 'center',
+            },
+
+            2: {
+              halign: 'center',
+            },
+
+            3: {
+              halign: 'center',
+            },
+
+            4: {
+              halign: 'center',
+            },
+
+            5: {
+              halign: 'center',
+            },
+          },
+
+          theme: 'grid',
+
+          didParseCell: (
+            data
+          ) => {
+            if (
+              data.section ===
+                'body' &&
+              data.column.index === 4
+            ) {
+              data.cell.styles.fontStyle =
+                'bold';
+            }
+          },
+        });
+
+        y =
+          doc.lastAutoTable
+            .finalY + 6;
+      } else {
+        setText(
+          8.5,
+          COLORS.gray
+        );
+
+        doc.text(
+          'No bowling data available.',
+          margin,
+          y + 5
+        );
+
+        y += 12;
+      }
+
+      /*
+       * ========================================================
+       * PARTNERSHIPS
+       * ========================================================
+       */
+
+      ensureSpace(45);
+
+      drawSectionTitle(
+        'PARTNERSHIPS',
+        'Batting partnerships'
+      );
+
+      const partnerships =
+        Array.isArray(
+          inn?.partnerships
+        )
+          ? inn.partnerships
+          : [];
+
+      if (
+        partnerships.length > 0
+      ) {
+        autoTable(doc, {
+          startY: y,
+
+          head: [[
+            '#',
+            'Batsman 1',
+            'Batsman 2',
+            'Runs',
+            'Balls',
+            'Status',
+          ]],
+
+          body:
+            partnerships.map(
+              (p) => [
+                p.partnership_no ??
+                  '—',
+
+                name(
+                  p.batsman1_id
+                ),
+
+                name(
+                  p.batsman2_id
+                ),
+
+                p.runs ??
+                  0,
+
+                p.balls ??
+                  0,
+
+                p.is_current
+                  ? 'Current'
+                  : 'Completed',
+              ]
+            ),
+
+          margin: {
+            left: margin,
+            right: margin,
+          },
+
+          styles: {
+            fontSize: 8.5,
+            cellPadding: 2.6,
+            valign: 'middle',
+            textColor:
+              COLORS.text,
+            lineColor:
+              COLORS.border,
+            lineWidth: 0.2,
+          },
+
+          headStyles: {
+            fillColor:
+              COLORS.primary,
+            textColor:
+              COLORS.white,
+            fontStyle:
+              'bold',
+            halign: 'center',
+          },
+
+          bodyStyles: {
+            fillColor:
+              COLORS.white,
+          },
+
+          alternateRowStyles: {
+            fillColor:
+              COLORS.lightGray,
+          },
+
+          columnStyles: {
+            0: {
+              halign: 'center',
+              cellWidth: 12,
+            },
+
+            1: {
+              cellWidth: 45,
+            },
+
+            2: {
+              cellWidth: 45,
+            },
+
+            3: {
+              halign: 'center',
+              cellWidth: 18,
+            },
+
+            4: {
+              halign: 'center',
+              cellWidth: 18,
+            },
+
+            5: {
+              halign: 'center',
+            },
+          },
+
+          theme: 'grid',
+        });
+
+        y =
+          doc.lastAutoTable
+            .finalY + 6;
+      } else {
+        doc.setFillColor(
+          ...COLORS.lightGray
+        );
+
+        doc.setDrawColor(
+          ...COLORS.border
+        );
+
+        doc.roundedRect(
+          margin,
+          y,
+          contentWidth,
+          15,
+          1.5,
+          1.5,
+          'FD'
+        );
+
+        setText(
+          8.5,
+          COLORS.gray
+        );
+
+        doc.text(
+          totalRuns > 0
+            ? 'Partnership information is not available for this innings.'
+            : 'No partnerships recorded.',
+          margin + 5,
+          y + 9
+        );
+
+        y += 21;
+      }
+
+      /*
+       * ========================================================
+       * FALL OF WICKETS
+       * ========================================================
+       */
+
+      ensureSpace(45);
+
+      /*
+       * Red is used ONLY here.
+       */
+
+      doc.setFillColor(
+        ...COLORS.red
+      );
+
+      doc.rect(
         margin,
         y,
-        pageWidth - margin,
-        y
+        2.5,
+        13,
+        'F'
       );
 
-      y += 10;
+      setText(
+        11,
+        COLORS.text,
+        'bold'
+      );
+
+      doc.text(
+        'FALL OF WICKETS',
+        margin + 6,
+        y + 6.5
+      );
+
+      setText(
+        7.5,
+        COLORS.gray
+      );
+
+      doc.text(
+        'Wickets lost during the innings',
+        margin + 6,
+        y + 11.5
+      );
+
+      y += 18;
+
+      const fallOfWickets =
+        Array.isArray(
+          inn?.fallOfWickets
+        )
+          ? inn.fallOfWickets
+          : [];
+
+      if (
+        fallOfWickets.length > 0
+      ) {
+        autoTable(doc, {
+          startY: y,
+
+          head: [[
+            'Wkt',
+            'Score',
+            'Over',
+            'Batsman',
+            'How Out',
+          ]],
+
+          body:
+            fallOfWickets.map(
+              (w) => [
+                w.wicket_no ??
+                  '—',
+
+                w.score ??
+                  0,
+
+                w.overs ??
+                  '—',
+
+                name(
+                  w.player_id
+                ),
+
+                `${w.how_out || 'out'}${
+                  w.fielder_id
+                    ? ` (${shortName(
+                        w.fielder_id
+                      )})`
+                    : ''
+                }`,
+              ]
+            ),
+
+          margin: {
+            left: margin,
+            right: margin,
+          },
+
+          styles: {
+            fontSize: 8.5,
+            cellPadding: 2.6,
+            valign: 'middle',
+            textColor:
+              COLORS.text,
+            lineColor:
+              COLORS.border,
+            lineWidth: 0.2,
+          },
+
+          headStyles: {
+            fillColor:
+              COLORS.red,
+            textColor:
+              COLORS.white,
+            fontStyle:
+              'bold',
+            halign: 'center',
+          },
+
+          bodyStyles: {
+            fillColor:
+              COLORS.white,
+          },
+
+          alternateRowStyles: {
+            fillColor:
+              COLORS.redLight,
+          },
+
+          columnStyles: {
+            0: {
+              halign: 'center',
+              cellWidth: 18,
+            },
+
+            1: {
+              halign: 'center',
+              cellWidth: 22,
+            },
+
+            2: {
+              halign: 'center',
+              cellWidth: 25,
+            },
+
+            3: {
+              cellWidth: 48,
+              fontStyle:
+                'bold',
+            },
+
+            4: {
+              cellWidth: 'auto',
+            },
+          },
+
+          theme: 'grid',
+        });
+
+        y =
+          doc.lastAutoTable
+            .finalY + 8;
+      } else {
+        doc.setFillColor(
+          ...COLORS.lightGray
+        );
+
+        doc.setDrawColor(
+          ...COLORS.border
+        );
+
+        doc.roundedRect(
+          margin,
+          y,
+          contentWidth,
+          15,
+          1.5,
+          1.5,
+          'FD'
+        );
+
+        setText(
+          8.5,
+          totalWickets === 0
+            ? COLORS.primary
+            : COLORS.gray,
+          'bold'
+        );
+
+        doc.text(
+          totalWickets === 0
+            ? 'No wickets lost'
+            : 'No fall-of-wickets data available.',
+          margin + 5,
+          y + 9
+        );
+
+        y += 21;
+      }
+
+      /*
+       * ========================================================
+       * BETWEEN INNINGS
+       * ========================================================
+       */
+
+      if (
+        idx <
+        safeInnings.length - 1
+      ) {
+        ensureSpace(15);
+
+        y += 2;
+
+        doc.setDrawColor(
+          ...COLORS.border
+        );
+
+        doc.setLineWidth(0.5);
+
+        doc.line(
+          margin,
+          y,
+          pageWidth - margin,
+          y
+        );
+
+        doc.setLineWidth(0.2);
+
+        y += 10;
+      }
     }
-  });
+  );
 
   /*
+   * ============================================================
    * FINAL MATCH RESULT
+   * ============================================================
    */
 
   if (match.result_text) {
     ensureSpace(35);
 
-    y = drawSectionTitle(
-      'MATCH RESULT',
-      y,
-      COLORS.darkGreen
+    /*
+     * Clean result section.
+     */
+
+    drawSectionTitle(
+      'MATCH RESULT'
     );
 
-    doc.setFillColor(...COLORS.lightGreen);
-    doc.setDrawColor(...COLORS.border);
+    doc.setFillColor(
+      ...COLORS.primaryLight
+    );
+
+    doc.setDrawColor(
+      ...COLORS.border
+    );
 
     doc.roundedRect(
       margin,
       y,
       contentWidth,
       22,
-      3,
-      3,
+      2,
+      2,
       'FD'
     );
 
-    setText(12, COLORS.darkGreen);
-
-    doc.setFont('helvetica', 'bold');
-
-    const resultLines = doc.splitTextToSize(
-      match.result_text,
-      contentWidth - 10
+    setText(
+      11,
+      COLORS.primary,
+      'bold'
     );
+
+    const resultLines =
+      doc.splitTextToSize(
+        match.result_text,
+        contentWidth - 16
+      );
 
     doc.text(
       resultLines,
       pageWidth / 2,
       y + 9,
-      { align: 'center' }
+      {
+        align: 'center',
+      }
     );
-
-    doc.setFont('helvetica', 'normal');
 
     y += 29;
   }
 
   /*
+   * ============================================================
    * FOOTER
+   * ============================================================
    */
 
   addFooter();
 
   /*
-   * DOWNLOAD
+   * ============================================================
+   * FILE NAME
+   * ============================================================
    */
 
-  const team1 =
+  const fileTeam1 =
     match.team1_short ||
     match.team1_name ||
     'Team1';
 
-  const team2 =
+  const fileTeam2 =
     match.team2_short ||
     match.team2_name ||
     'Team2';
 
   const cleanFileName =
-    `${team1}-vs-${team2}-scorecard`
-      .replace(/[^a-zA-Z0-9-_]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
+    `${fileTeam1}-vs-${fileTeam2}-scorecard`
+      .replace(
+        /[^a-zA-Z0-9-_]+/g,
+        '-'
+      )
+      .replace(
+        /-+/g,
+        '-'
+      )
+      .replace(
+        /^-|-$/g,
+        ''
+      );
 
-  doc.save(`${cleanFileName}.pdf`);
+  /*
+   * ============================================================
+   * SAVE
+   * ============================================================
+   */
+
+  doc.save(
+    `${cleanFileName}.pdf`
+  );
 }
