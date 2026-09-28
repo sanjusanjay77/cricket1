@@ -23,6 +23,10 @@ const MATCHES_CACHE_KEY =
   'gcc_matches_cache_v1';
 
 
+/* =========================================================
+   STATUS BADGES
+========================================================= */
+
 const statusBadge = {
   upcoming:
     'bg-amber-500/10 text-amber-400 border border-amber-500/20',
@@ -43,10 +47,12 @@ const statusBadge = {
 ========================================================= */
 
 function showDeleteError(error) {
+
   console.error(
     '❌ Delete match failed:',
     error
   );
+
 
   const message =
     getApiErrorMessage?.(error) ||
@@ -54,9 +60,11 @@ function showDeleteError(error) {
     error?.message ||
     'Unable to delete this match.';
 
+
   alert(
     `Delete failed:\n\n${message}`
   );
+
 }
 
 
@@ -65,47 +73,246 @@ function showDeleteError(error) {
 ========================================================= */
 
 function readMatchesCache() {
+
   try {
+
     const cached =
       localStorage.getItem(
         MATCHES_CACHE_KEY
       );
 
+
     if (!cached) {
       return [];
     }
 
+
     const parsed =
       JSON.parse(cached);
+
 
     return Array.isArray(parsed)
       ? parsed
       : [];
 
   } catch (error) {
+
     console.warn(
       'Failed to read matches cache:',
       error
     );
 
+
     return [];
+
   }
+
 }
 
 
 function writeMatchesCache(matches) {
+
   try {
+
     localStorage.setItem(
       MATCHES_CACHE_KEY,
       JSON.stringify(matches)
     );
 
   } catch (error) {
+
     console.warn(
       'Failed to save matches cache:',
       error
     );
+
   }
+
+}
+
+
+/* =========================================================
+   LOADING SKELETON
+========================================================= */
+
+function MatchSkeleton({
+  index = 0,
+}) {
+
+  return (
+
+    <div
+      className="
+        overflow-hidden
+        rounded-2xl
+        border
+        border-slate-800
+        bg-slate-900/70
+        p-3
+        animate-pulse
+      "
+      style={{
+        animationDelay:
+          `${index * 70}ms`,
+      }}
+    >
+
+      <div className="flex items-center justify-between gap-3">
+
+        <div className="flex items-center gap-2 min-w-0">
+
+          <div className="h-4 w-14 rounded bg-slate-800" />
+
+          <div className="h-2 w-5 rounded bg-slate-800" />
+
+          <div className="h-4 w-14 rounded bg-slate-800" />
+
+        </div>
+
+
+        <div className="h-5 w-16 rounded-full bg-slate-800" />
+
+      </div>
+
+
+      <div className="mt-4 h-7 w-28 rounded bg-slate-800" />
+
+      <div className="mt-2 h-3 w-20 rounded bg-slate-800" />
+
+
+      <div className="mt-4 h-px bg-slate-800" />
+
+
+      <div className="mt-2 grid grid-cols-2 gap-2">
+
+        <div className="h-9 rounded-lg bg-slate-800" />
+
+        <div className="h-9 rounded-lg bg-slate-800" />
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
+
+/* =========================================================
+   LOADING SCREEN
+========================================================= */
+
+function HomeLoading() {
+
+  return (
+
+    <div
+      className="
+        mx-auto
+        w-full
+        max-w-3xl
+        overflow-hidden
+        pb-6
+      "
+    >
+
+      <div className="mb-5 flex items-center justify-between gap-3">
+
+        <div className="min-w-0">
+
+          <div className="h-6 w-24 rounded-lg bg-slate-800 animate-pulse" />
+
+          <div className="mt-2 h-3 w-36 rounded bg-slate-900 animate-pulse" />
+
+        </div>
+
+
+        <div className="h-9 w-28 rounded-lg bg-slate-800 animate-pulse" />
+
+      </div>
+
+
+      <div className="mb-4">
+
+        <div className="mb-2 h-3 w-20 rounded bg-slate-800 animate-pulse" />
+
+        <div className="h-48 rounded-2xl bg-slate-900 animate-pulse" />
+
+      </div>
+
+
+      <div className="mb-2 h-3 w-24 rounded bg-slate-800 animate-pulse" />
+
+
+      <div className="grid gap-2">
+
+        {[0, 1, 2].map(
+          (index) => (
+
+            <MatchSkeleton
+              key={index}
+              index={index}
+            />
+
+          )
+        )}
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
+
+/* =========================================================
+   SCORE UPDATE EFFECT
+========================================================= */
+
+function useScoreFlash(
+  innings
+) {
+
+  const [flash, setFlash] =
+    useState(false);
+
+
+  useEffect(() => {
+
+    if (!innings) {
+      return undefined;
+    }
+
+
+    setFlash(true);
+
+
+    const timer =
+      window.setTimeout(() => {
+
+        setFlash(false);
+
+      }, 550);
+
+
+    return () => {
+
+      window.clearTimeout(
+        timer
+      );
+
+    };
+
+  }, [
+    innings?.innings?.total_runs,
+    innings?.innings?.total_wickets,
+    innings?.overs,
+  ]);
+
+
+  return flash;
+
 }
 
 
@@ -118,43 +325,9 @@ const LiveHero = memo(function LiveHero({
   onDeleted,
 }) {
 
-  /*
-   * IMPORTANT PERFORMANCE CHANGE:
-   *
-   * Home already loads detailed live-match data
-   * inside loadMatches().
-   *
-   * Therefore LiveHero does NOT call Matches.get()
-   * again when it mounts.
-   *
-   * This removes one duplicate API request per
-   * live match.
-   */
+  const [data, setData] =
+    useState(() => ({
 
-  const [data, setData] = useState(() => ({
-    match,
-    innings:
-      Array.isArray(match?.innings)
-        ? match.innings
-        : [],
-    players:
-      Array.isArray(match?.players)
-        ? match.players
-        : [],
-  }));
-
-
-  const [deleting, setDeleting] =
-    useState(false);
-
-
-  /* =======================================================
-     SYNC PROPS INTO LOCAL STATE
-  ======================================================= */
-
-  useEffect(() => {
-
-    setData({
       match,
 
       innings:
@@ -166,6 +339,50 @@ const LiveHero = memo(function LiveHero({
         Array.isArray(match?.players)
           ? match.players
           : [],
+
+    }));
+
+
+  const [deleting, setDeleting] =
+    useState(false);
+
+
+  /* =======================================================
+     SCORE FLASH
+  ======================================================= */
+
+  const currentInnings =
+    data?.innings?.[
+      data.innings.length - 1
+    ];
+
+
+  const scoreFlash =
+    useScoreFlash(
+      currentInnings
+    );
+
+
+  /* =======================================================
+     SYNC PROPS
+  ======================================================= */
+
+  useEffect(() => {
+
+    setData({
+
+      match,
+
+      innings:
+        Array.isArray(match?.innings)
+          ? match.innings
+          : [],
+
+      players:
+        Array.isArray(match?.players)
+          ? match.players
+          : [],
+
     });
 
   }, [match]);
@@ -193,20 +410,22 @@ const LiveHero = memo(function LiveHero({
       innings,
     }) => {
 
-      setData((current) => ({
+      setData(
+        (current) => ({
 
-        ...current,
+          ...current,
 
-        match:
-          updatedMatch ||
-          current.match,
+          match:
+            updatedMatch ||
+            current.match,
 
-        innings:
-          Array.isArray(innings)
-            ? innings
-            : current.innings,
+          innings:
+            Array.isArray(innings)
+              ? innings
+              : current.innings,
 
-      }));
+        })
+      );
 
     };
 
@@ -223,6 +442,7 @@ const LiveHero = memo(function LiveHero({
         'leave-match',
         match.id
       );
+
 
       socket.off(
         'score-update',
@@ -321,6 +541,7 @@ const LiveHero = memo(function LiveHero({
         error
       );
 
+
       alert(
         'Unable to create PDF. Please try again.'
       );
@@ -359,19 +580,7 @@ const LiveHero = memo(function LiveHero({
 
     try {
 
-      console.log(
-        '🗑️ Deleting live match:',
-        currentMatch.id
-      );
-
-
       await Matches.remove(
-        currentMatch.id
-      );
-
-
-      console.log(
-        '✅ Live match deleted:',
         currentMatch.id
       );
 
@@ -384,12 +593,12 @@ const LiveHero = memo(function LiveHero({
 
       }
 
-
     } catch (error) {
 
       showDeleteError(
         error
       );
+
 
       setDeleting(false);
 
@@ -399,7 +608,25 @@ const LiveHero = memo(function LiveHero({
 
 
   return (
-    <div className="mb-4 overflow-hidden rounded-xl border border-red-500/25 bg-slate-900 shadow-md shadow-black/10">
+
+    <div
+      className="
+        group
+        mb-4
+        overflow-hidden
+        rounded-2xl
+        border
+        border-red-500/25
+        bg-slate-900
+        shadow-lg
+        shadow-black/20
+        transition-all
+        duration-300
+        hover:border-red-500/40
+        hover:shadow-red-950/20
+        active:scale-[0.99]
+      "
+    >
 
       {/* =================================================
           LIVE HEADER
@@ -410,30 +637,82 @@ const LiveHero = memo(function LiveHero({
         state={{
           match: currentMatch,
         }}
-        className="block"
+        className="
+          block
+          transition
+          active:bg-slate-800/30
+        "
       >
 
-        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+        <div
+          className="
+            flex
+            items-center
+            justify-between
+            border-b
+            border-slate-800
+            px-3
+            py-2.5
+          "
+        >
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
 
-            <span className="relative flex h-2 w-2">
+            <span className="relative flex h-2.5 w-2.5">
 
-              <span className="absolute h-full w-full animate-ping rounded-full bg-red-400 opacity-70" />
+              <span
+                className="
+                  absolute
+                  h-full
+                  w-full
+                  animate-ping
+                  rounded-full
+                  bg-red-400
+                  opacity-70
+                "
+              />
 
-              <span className="relative h-2 w-2 rounded-full bg-red-500" />
+              <span
+                className="
+                  relative
+                  h-2.5
+                  w-2.5
+                  rounded-full
+                  bg-red-500
+                  shadow-sm
+                  shadow-red-500
+                "
+              />
 
             </span>
 
 
-            <span className="text-[10px] font-bold uppercase tracking-widest text-red-400">
-              Live
+            <span
+              className="
+                text-[10px]
+                font-black
+                uppercase
+                tracking-[0.18em]
+                text-red-400
+              "
+            >
+              Live Now
             </span>
 
           </div>
 
 
-          <div className="text-[10px] text-slate-600">
+          <div
+            className="
+              rounded-full
+              bg-slate-800
+              px-2
+              py-0.5
+              text-[9px]
+              font-semibold
+              text-slate-500
+            "
+          >
             {currentMatch.overs_limit} overs
           </div>
 
@@ -444,27 +723,64 @@ const LiveHero = memo(function LiveHero({
             TEAMS
         ================================================= */}
 
-        <div className="px-3 pt-3">
+        <div className="px-3 pt-4">
 
-          <div className="flex items-center justify-center gap-2">
+          <div
+            className="
+              flex
+              items-center
+              justify-center
+              gap-3
+            "
+          >
 
             <div className="min-w-0 flex-1 text-right">
 
-              <div className="truncate text-sm font-bold text-white">
+              <div
+                className="
+                  truncate
+                  text-base
+                  font-black
+                  text-white
+                "
+              >
                 {currentMatch.team1_short}
               </div>
 
             </div>
 
 
-            <div className="shrink-0 text-[9px] font-bold text-slate-600">
+            <div
+              className="
+                flex
+                h-6
+                w-6
+                shrink-0
+                items-center
+                justify-center
+                rounded-full
+                border
+                border-slate-800
+                bg-slate-950
+                text-[8px]
+                font-black
+                text-slate-600
+              "
+            >
               VS
             </div>
 
 
             <div className="min-w-0 flex-1 text-left">
 
-              <div className="truncate text-sm font-bold text-white">
+              <div
+                className="
+                  truncate
+                  text-base
+                  font-black
+                  text-white
+                "
+              >
                 {currentMatch.team2_short}
               </div>
 
@@ -479,29 +795,77 @@ const LiveHero = memo(function LiveHero({
             SCORE
         ================================================= */}
 
-        <div className="px-3 pb-3 pt-2 text-center">
+        <div className="px-3 pb-4 pt-3 text-center">
 
           {innings ? (
 
             <>
 
-              <div className="mb-0.5 text-[9px] uppercase tracking-wider text-slate-600">
+              <div
+                className="
+                  mb-1
+                  text-[9px]
+                  font-bold
+                  uppercase
+                  tracking-[0.16em]
+                  text-slate-600
+                "
+              >
                 {battingShort} batting
               </div>
 
 
-              <div className="text-[38px] font-black leading-none tracking-tight text-white">
+              <div
+                className={`
+                  inline-block
+                  rounded-2xl
+                  px-3
+                  py-1
+                  transition-all
+                  duration-300
+                  ${
+                    scoreFlash
+                      ? 'scale-105 bg-red-500/10'
+                      : ''
+                  }
+                `}
+              >
 
-                {innings.innings.total_runs}
+                <div
+                  className={`
+                    text-[42px]
+                    font-black
+                    leading-none
+                    tracking-tight
+                    transition-all
+                    duration-300
+                    ${
+                      scoreFlash
+                        ? 'text-red-300'
+                        : 'text-white'
+                    }
+                  `}
+                >
 
-                <span className="text-slate-500">
-                  /{innings.innings.total_wickets}
-                </span>
+                  {innings.innings.total_runs}
+
+                  <span className="text-slate-500">
+                    /{innings.innings.total_wickets}
+                  </span>
+
+                </div>
 
               </div>
 
 
-              <div className="mt-1 text-[11px] text-slate-500">
+              <div
+                className="
+                  mt-2
+                  text-[11px]
+                  font-medium
+                  text-slate-500
+                "
+              >
 
                 {innings.overs}
 
@@ -532,7 +896,7 @@ const LiveHero = memo(function LiveHero({
 
           ) : (
 
-            <div className="py-3 text-[11px] text-slate-500">
+            <div className="py-4 text-[11px] text-slate-500">
               Live match
             </div>
 
@@ -547,10 +911,32 @@ const LiveHero = memo(function LiveHero({
 
         {battingTeam && (
 
-          <div className="px-3 pb-3 text-center">
+          <div className="px-3 pb-4 text-center">
 
-            <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-medium text-slate-500">
-              {battingTeam}
+            <span
+              className="
+                inline-flex
+                max-w-full
+                items-center
+                rounded-full
+                border
+                border-slate-800
+                bg-slate-950
+                px-3
+                py-1
+                text-[9px]
+                font-semibold
+                text-slate-500
+              "
+            >
+              <span className="mr-1 text-emerald-500">
+                ●
+              </span>
+
+              <span className="truncate">
+                {battingTeam}
+              </span>
+
             </span>
 
           </div>
@@ -564,44 +950,101 @@ const LiveHero = memo(function LiveHero({
           ACTION BAR
       ================================================= */}
 
-      <div className="grid grid-cols-3 gap-1.5 border-t border-slate-800 p-2">
+      <div
+        className="
+          grid
+          grid-cols-3
+          gap-1.5
+          border-t
+          border-slate-800
+          bg-slate-950/40
+          p-2
+        "
+      >
 
         <Link
           to={`/match/${currentMatch.id}/live`}
           state={{
             match: currentMatch,
           }}
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
+          className="
+            flex
+            min-h-[40px]
+            items-center
+            justify-center
+            rounded-xl
+            bg-slate-800
+            text-[11px]
+            font-bold
+            text-slate-300
+            transition
+            active:scale-95
+            active:bg-slate-700
+            hover:bg-slate-700
+          "
         >
-          View
+          👁 View
         </Link>
 
 
         <button
           type="button"
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-700"
+          className="
+            flex
+            min-h-[40px]
+            items-center
+            justify-center
+            rounded-xl
+            bg-slate-800
+            text-[11px]
+            font-bold
+            text-slate-300
+            transition
+            active:scale-95
+            active:bg-slate-700
+            hover:bg-slate-700
+            disabled:opacity-50
+          "
           onClick={downloadPdf}
           disabled={deleting}
         >
-          PDF
+          📄 PDF
         </button>
 
 
         <button
           type="button"
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-red-500/10 text-[11px] font-semibold text-red-400 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          className="
+            flex
+            min-h-[40px]
+            items-center
+            justify-center
+            rounded-xl
+            bg-red-500/10
+            text-[11px]
+            font-bold
+            text-red-400
+            transition
+            active:scale-95
+            active:bg-red-500/20
+            hover:bg-red-500/20
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
           disabled={deleting}
           onClick={deleteMatch}
         >
           {deleting
             ? 'Deleting...'
-            : 'Delete'}
+            : '🗑 Delete'}
         </button>
 
       </div>
 
     </div>
+
   );
+
 });
 
 
@@ -614,6 +1057,7 @@ const MatchCard = memo(function MatchCard({
   onDelete,
   onDownload,
   deletingId,
+  index = 0,
 }) {
 
   const statusText =
@@ -627,9 +1071,32 @@ const MatchCard = memo(function MatchCard({
 
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70">
 
-      <div className="px-3 py-3">
+    <div
+      className="
+        group
+        overflow-hidden
+        rounded-2xl
+        border
+        border-slate-800
+        bg-slate-900/70
+        shadow-sm
+        shadow-black/10
+        transition-all
+        duration-300
+        hover:border-slate-700
+        hover:bg-slate-900
+        hover:shadow-lg
+        active:scale-[0.99]
+        animate-[fadeSlideUp_0.35s_ease-out_both]
+      "
+      style={{
+        animationDelay:
+          `${Math.min(index, 8) * 45}ms`,
+      }}
+    >
+
+      <div className="px-3 py-3.5">
 
         {/* =================================================
             TOP ROW
@@ -637,19 +1104,33 @@ const MatchCard = memo(function MatchCard({
 
         <div className="flex items-center justify-between gap-2">
 
-          <div className="flex min-w-0 items-center gap-2">
+          <div
+            className="
+              flex
+              min-w-0
+              items-center
+              gap-2
+            "
+          >
 
-            <span className="text-sm font-bold text-white">
+            <span className="truncate text-sm font-black text-white">
               {match.team1_short}
             </span>
 
 
-            <span className="text-[9px] font-bold text-slate-600">
+            <span
+              className="
+                shrink-0
+                text-[8px]
+                font-black
+                text-slate-700
+              "
+            >
               VS
             </span>
 
 
-            <span className="text-sm font-bold text-white">
+            <span className="truncate text-sm font-black text-white">
               {match.team2_short}
             </span>
 
@@ -657,10 +1138,20 @@ const MatchCard = memo(function MatchCard({
 
 
           <span
-            className={`shrink-0 rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${
-              statusBadge[match.status] ||
-              statusBadge.completed
-            }`}
+            className={`
+              shrink-0
+              rounded-full
+              px-2
+              py-1
+              text-[8px]
+              font-black
+              uppercase
+              tracking-wide
+              ${
+                statusBadge[match.status] ||
+                statusBadge.completed
+              }
+            `}
           >
             {statusText}
           </span>
@@ -672,8 +1163,29 @@ const MatchCard = memo(function MatchCard({
             MATCH INFO
         ================================================= */}
 
-        <div className="mt-1 text-[10px] text-slate-600">
-          {match.overs_limit} overs
+        <div
+          className="
+            mt-1.5
+            flex
+            items-center
+            gap-2
+            text-[10px]
+            text-slate-600
+          "
+        >
+
+          <span>
+            {match.overs_limit} overs
+          </span>
+
+          <span className="text-slate-800">
+            •
+          </span>
+
+          <span>
+            Match #{match.id}
+          </span>
+
         </div>
 
 
@@ -683,14 +1195,35 @@ const MatchCard = memo(function MatchCard({
 
         {match.result_text && (
 
-          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-emerald-500/5 px-2 py-1.5">
+          <div
+            className="
+              mt-3
+              flex
+              min-w-0
+              items-center
+              gap-2
+              rounded-xl
+              border
+              border-emerald-500/10
+              bg-emerald-500/5
+              px-3
+              py-2
+            "
+          >
 
-            <span className="text-xs">
+            <span className="shrink-0 text-sm">
               🏆
             </span>
 
 
-            <span className="truncate text-[11px] font-medium text-emerald-400">
+            <span
+              className="
+                truncate
+                text-[11px]
+                font-semibold
+                text-emerald-400
+              "
+            >
               {match.result_text}
             </span>
 
@@ -705,13 +1238,37 @@ const MatchCard = memo(function MatchCard({
           BUTTONS
       ================================================= */}
 
-      <div className="grid grid-cols-2 gap-1.5 border-t border-slate-800 p-2">
+      <div
+        className="
+          grid
+          grid-cols-2
+          gap-1.5
+          border-t
+          border-slate-800
+          bg-slate-950/30
+          p-2
+        "
+      >
 
         {match.status === 'upcoming' && (
 
           <Link
             to={`/match/${match.id}/setup`}
-            className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
+            className="
+              flex
+              min-h-[40px]
+              items-center
+              justify-center
+              rounded-xl
+              bg-slate-800
+              text-[11px]
+              font-bold
+              text-slate-300
+              transition
+              active:scale-95
+              active:bg-slate-700
+              hover:bg-slate-700
+            "
           >
             🏏 Start Toss
           </Link>
@@ -723,7 +1280,21 @@ const MatchCard = memo(function MatchCard({
 
           <Link
             to={`/match/${match.id}/score`}
-            className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
+            className="
+              flex
+              min-h-[40px]
+              items-center
+              justify-center
+              rounded-xl
+              bg-slate-800
+              text-[11px]
+              font-bold
+              text-slate-300
+              transition
+              active:scale-95
+              active:bg-slate-700
+              hover:bg-slate-700
+            "
           >
             ▶ Continue
           </Link>
@@ -736,27 +1307,72 @@ const MatchCard = memo(function MatchCard({
           state={{
             match,
           }}
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700"
+          className="
+            flex
+            min-h-[40px]
+            items-center
+            justify-center
+            rounded-xl
+            bg-slate-800
+            text-[11px]
+            font-bold
+            text-slate-300
+            transition
+            active:scale-95
+            active:bg-slate-700
+            hover:bg-slate-700
+          "
         >
-          View
+          👁 View
         </Link>
 
 
         <button
           type="button"
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-slate-800 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+          className="
+            flex
+            min-h-[40px]
+            items-center
+            justify-center
+            rounded-xl
+            bg-slate-800
+            text-[11px]
+            font-bold
+            text-slate-300
+            transition
+            active:scale-95
+            active:bg-slate-700
+            hover:bg-slate-700
+            disabled:opacity-50
+          "
           onClick={() =>
             onDownload(match.id)
           }
           disabled={isDeleting}
         >
-          PDF
+          📄 PDF
         </button>
 
 
         <button
           type="button"
-          className="flex min-h-[36px] items-center justify-center rounded-lg bg-red-500/10 text-[11px] font-semibold text-red-400 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          className="
+            flex
+            min-h-[40px]
+            items-center
+            justify-center
+            rounded-xl
+            bg-red-500/10
+            text-[11px]
+            font-bold
+            text-red-400
+            transition
+            active:scale-95
+            active:bg-red-500/20
+            hover:bg-red-500/20
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
           onClick={() =>
             onDelete(match.id)
           }
@@ -764,13 +1380,15 @@ const MatchCard = memo(function MatchCard({
         >
           {isDeleting
             ? 'Deleting...'
-            : 'Delete'}
+            : '🗑 Delete'}
         </button>
 
       </div>
 
     </div>
+
   );
+
 });
 
 
@@ -780,25 +1398,15 @@ const MatchCard = memo(function MatchCard({
 
 export default function Home() {
 
-  /*
-   * IMPORTANT PERFORMANCE CHANGE:
-   *
-   * The cache is now read lazily only during
-   * the initial state creation.
-   *
-   * It is not parsed again on every render.
-   */
+  /* =======================================================
+     CACHE
+  ======================================================= */
 
   const [matches, setMatches] =
     useState(() =>
       readMatchesCache()
     );
 
-
-  /*
-   * Show the loading screen only when
-   * there is no cached match data.
-   */
 
   const [loading, setLoading] =
     useState(() => {
@@ -824,10 +1432,6 @@ export default function Home() {
 
       try {
 
-        /*
-         * First load the normal match list.
-         */
-
         const data =
           await Matches.list();
 
@@ -837,13 +1441,6 @@ export default function Home() {
             ? data
             : [];
 
-
-        /*
-         * Only live matches need detailed
-         * scoreboard information.
-         *
-         * These requests happen in parallel.
-         */
 
         const liveMatches =
           matchList.filter(
@@ -857,21 +1454,10 @@ export default function Home() {
 
         if (liveMatches.length === 0) {
 
-          /*
-           * No live matches.
-           *
-           * No additional API requests needed.
-           */
-
           enrichedMatches =
             matchList;
 
         } else {
-
-          /*
-           * Fetch all live match details
-           * simultaneously.
-           */
 
           const liveDetails =
             await Promise.all(
@@ -925,14 +1511,10 @@ export default function Home() {
 
 
                     return {
+
                       ...match,
 
                       ...detailedMatch,
-
-                      /*
-                       * Always preserve ID/status
-                       * from the main match list.
-                       */
 
                       id:
                         match.id,
@@ -955,6 +1537,7 @@ export default function Home() {
                       error
                     );
 
+
                     return match;
 
                   }
@@ -963,11 +1546,6 @@ export default function Home() {
               )
             );
 
-
-          /*
-           * Create a lookup table so we don't
-           * repeatedly search the live details array.
-           */
 
           const liveDetailMap =
             new Map(
@@ -979,10 +1557,6 @@ export default function Home() {
               )
             );
 
-
-          /*
-           * Rebuild the original match order.
-           */
 
           enrichedMatches =
             matchList.map(
@@ -999,18 +1573,10 @@ export default function Home() {
         }
 
 
-        /*
-         * Update Home immediately.
-         */
-
         setMatches(
           enrichedMatches
         );
 
-
-        /*
-         * Save latest data in cache.
-         */
 
         writeMatchesCache(
           enrichedMatches
@@ -1024,11 +1590,6 @@ export default function Home() {
           error
         );
 
-
-        /*
-         * Keep existing cached data if
-         * the server temporarily fails.
-         */
 
         setMatches((current) =>
           current.length > 0
@@ -1049,7 +1610,7 @@ export default function Home() {
 
 
   /* =======================================================
-     LOAD MATCHES ON MOUNT
+     LOAD ON MOUNT
   ======================================================= */
 
   useEffect(() => {
@@ -1074,6 +1635,7 @@ export default function Home() {
           );
 
           return;
+
         }
 
 
@@ -1102,26 +1664,14 @@ export default function Home() {
 
         try {
 
-          console.log(
-            '🗑️ Deleting match:',
-            matchId
-          );
-
-
           await Matches.remove(
             matchId
           );
 
 
-          console.log(
-            '✅ Match deleted:',
-            matchId
-          );
-
-
-          /*
-           * Remove immediately from UI.
-           */
+          /* ---------------------------------------------
+             REMOVE IMMEDIATELY
+          --------------------------------------------- */
 
           setMatches((current) => {
 
@@ -1142,10 +1692,9 @@ export default function Home() {
           });
 
 
-          /*
-           * Reload once from server to guarantee
-           * synchronization.
-           */
+          /* ---------------------------------------------
+             BACKGROUND SYNC
+          --------------------------------------------- */
 
           try {
 
@@ -1168,7 +1717,6 @@ export default function Home() {
               latestMatches
             );
 
-
           } catch (reloadError) {
 
             console.warn(
@@ -1177,7 +1725,6 @@ export default function Home() {
             );
 
           }
-
 
         } catch (error) {
 
@@ -1227,7 +1774,6 @@ export default function Home() {
 
           });
 
-
         } catch (error) {
 
           console.error(
@@ -1257,22 +1803,14 @@ export default function Home() {
   ) {
 
     return (
-
-      <div className="flex min-h-[30vh] items-center justify-center">
-
-        <div className="text-xs text-slate-500">
-          Loading matches…
-        </div>
-
-      </div>
-
+      <HomeLoading />
     );
 
   }
 
 
   /* =======================================================
-     FILTER MATCHES
+     SPLIT MATCHES
   ======================================================= */
 
   const liveMatches = [];
@@ -1308,31 +1846,110 @@ export default function Home() {
 
   return (
 
-    <div className="fade-in mx-auto w-full max-w-3xl pb-5">
+    <div
+      className="
+        fade-in
+        mx-auto
+        w-full
+        max-w-3xl
+        min-w-0
+        overflow-hidden
+        pb-6
+      "
+    >
 
       {/* =================================================
           HEADER
       ================================================= */}
 
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div
+        className="
+          mb-5
+          flex
+          items-center
+          justify-between
+          gap-3
+          animate-[fadeSlideUp_0.35s_ease-out_both]
+        "
+      >
 
         <div className="min-w-0">
 
-          <h1 className="text-xl font-bold tracking-tight text-white">
-            Matches
-          </h1>
+          <div className="flex items-center gap-2">
+
+            <div
+              className="
+                flex
+                h-9
+                w-9
+                shrink-0
+                items-center
+                justify-center
+                rounded-xl
+                border
+                border-emerald-500/15
+                bg-emerald-500/10
+                text-lg
+              "
+            >
+              🏏
+            </div>
 
 
-          <p className="mt-0.5 text-[10px] text-slate-600">
-            Scores & match records
-          </p>
+            <div className="min-w-0">
+
+              <h1
+                className="
+                  truncate
+                  text-xl
+                  font-black
+                  tracking-tight
+                  text-white
+                "
+              >
+                Matches
+              </h1>
+
+
+              <p
+                className="
+                  mt-0.5
+                  text-[10px]
+                  font-medium
+                  text-slate-600
+                "
+              >
+                Scores & match records
+              </p>
+
+            </div>
+
+          </div>
 
         </div>
 
 
         <Link
           to="/create-match"
-          className="flex min-h-[36px] shrink-0 items-center justify-center rounded-lg bg-white px-3 text-[11px] font-bold text-slate-950 transition hover:bg-slate-200"
+          className="
+            flex
+            min-h-[40px]
+            shrink-0
+            items-center
+            justify-center
+            rounded-xl
+            bg-white
+            px-3.5
+            text-[11px]
+            font-black
+            text-slate-950
+            shadow-sm
+            shadow-white/5
+            transition-all
+            duration-200
+            hover:bg-slate-200
+            active:scale-95
+          "
         >
           + New Match
         </Link>
@@ -1346,22 +1963,81 @@ export default function Home() {
 
       {liveMatches.length > 0 && (
 
-        <section className="mb-5">
+        <section
+          className="
+            mb-6
+            animate-[fadeSlideUp_0.4s_ease-out_both]
+          "
+        >
 
-          <div className="mb-2 flex items-center gap-1.5">
+          <div
+            className="
+              mb-2.5
+              flex
+              items-center
+              justify-between
+            "
+          >
 
-            <span className="relative flex h-2 w-2">
+            <div className="flex items-center gap-2">
 
-              <span className="absolute h-full w-full animate-ping rounded-full bg-red-400 opacity-60" />
+              <span className="relative flex h-2.5 w-2.5">
 
-              <span className="relative h-2 w-2 rounded-full bg-red-500" />
+                <span
+                  className="
+                    absolute
+                    h-full
+                    w-full
+                    animate-ping
+                    rounded-full
+                    bg-red-400
+                    opacity-60
+                  "
+                />
 
+                <span
+                  className="
+                    relative
+                    h-2.5
+                    w-2.5
+                    rounded-full
+                    bg-red-500
+                  "
+                />
+
+              </span>
+
+
+              <h2
+                className="
+                  text-[10px]
+                  font-black
+                  uppercase
+                  tracking-[0.18em]
+                  text-slate-500
+                "
+              >
+                Live now
+              </h2>
+
+            </div>
+
+
+            <span
+              className="
+                rounded-full
+                border
+                border-red-500/10
+                bg-red-500/5
+                px-2
+                py-0.5
+                text-[9px]
+                font-bold
+                text-red-400
+              "
+            >
+              {liveMatches.length}
             </span>
-
-
-            <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              Live now
-            </h2>
 
           </div>
 
@@ -1411,19 +2087,63 @@ export default function Home() {
 
       {matches.length === 0 && (
 
-        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center">
+        <div
+          className="
+            overflow-hidden
+            rounded-2xl
+            border
+            border-dashed
+            border-slate-800
+            bg-slate-900/40
+            px-4
+            py-10
+            text-center
+            animate-[fadeSlideUp_0.4s_ease-out_both]
+          "
+        >
 
-          <div className="text-3xl">
+          <div
+            className="
+              mx-auto
+              flex
+              h-16
+              w-16
+              items-center
+              justify-center
+              rounded-2xl
+              border
+              border-emerald-500/10
+              bg-emerald-500/5
+              text-4xl
+              animate-[floatBall_2.5s_ease-in-out_infinite]
+            "
+          >
             🏏
           </div>
 
 
-          <h2 className="mt-2 text-sm font-semibold text-white">
+          <h2
+            className="
+              mt-4
+              text-base
+              font-black
+              text-white
+            "
+          >
             No matches yet
           </h2>
 
 
-          <p className="mx-auto mt-1 max-w-xs text-[11px] leading-relaxed text-slate-600">
+          <p
+            className="
+              mx-auto
+              mt-1.5
+              max-w-xs
+              text-[11px]
+              leading-relaxed
+              text-slate-600
+            "
+          >
             Create your first scoreboard
             to start recording a match.
           </p>
@@ -1431,7 +2151,22 @@ export default function Home() {
 
           <Link
             to="/create-match"
-            className="mt-4 inline-flex min-h-[36px] items-center justify-center rounded-lg bg-white px-4 text-[11px] font-bold text-slate-950"
+            className="
+              mt-5
+              inline-flex
+              min-h-[42px]
+              items-center
+              justify-center
+              rounded-xl
+              bg-white
+              px-5
+              text-[11px]
+              font-black
+              text-slate-950
+              transition
+              active:scale-95
+              hover:bg-slate-200
+            "
           >
             + Create Match
           </Link>
@@ -1449,14 +2184,46 @@ export default function Home() {
 
         <section>
 
-          <div className="mb-2 flex items-center justify-between">
+          <div
+            className="
+              mb-2.5
+              flex
+              items-center
+              justify-between
+              animate-[fadeSlideUp_0.4s_ease-out_both]
+            "
+          >
 
-            <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              All matches
-            </h2>
+            <div>
+
+              <h2
+                className="
+                  text-[10px]
+                  font-black
+                  uppercase
+                  tracking-[0.18em]
+                  text-slate-500
+                "
+              >
+                All matches
+              </h2>
+
+            </div>
 
 
-            <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[9px] text-slate-600">
+            <span
+              className="
+                rounded-full
+                border
+                border-slate-800
+                bg-slate-900
+                px-2.5
+                py-1
+                text-[9px]
+                font-bold
+                text-slate-500
+              "
+            >
               {others.length}
             </span>
 
@@ -1466,11 +2233,12 @@ export default function Home() {
           <div className="grid gap-2">
 
             {others.map(
-              (match) => (
+              (match, index) => (
 
                 <MatchCard
                   key={match.id}
                   match={match}
+                  index={index}
                   onDelete={
                     deleteMatch
                   }
