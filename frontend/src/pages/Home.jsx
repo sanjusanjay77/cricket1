@@ -3,6 +3,7 @@ import {
   useState,
   useCallback,
   memo,
+  useMemo,
 } from 'react';
 
 import { Link } from 'react-router-dom';
@@ -72,7 +73,7 @@ function showDeleteError(error) {
 
 
 /* =========================================================
-   CACHE HELPERS
+   CACHE
 ========================================================= */
 
 function readMatchesCache() {
@@ -166,7 +167,7 @@ function HomeIntro({
 
         onFinished();
 
-      }, 850);
+      }, 700);
 
 
     return () => {
@@ -184,6 +185,7 @@ function HomeIntro({
 
     <div
       className="
+        home-intro
         fixed
         inset-0
         z-[9999]
@@ -194,40 +196,26 @@ function HomeIntro({
         bg-slate-950
         px-5
       "
-      style={{
-        animation:
-          'homeIntroOut 0.35s ease-out 0.5s both',
-      }}
     >
 
-      {/* ===============================================
-          BACKGROUND GLOW
-      =============================================== */}
+      {/* =================================================
+          BACKGROUND
+      ================================================= */}
 
-      <div
-        className="
-          pointer-events-none
-          absolute
-          left-1/2
-          top-1/2
-          h-72
-          w-72
-          -translate-x-1/2
-          -translate-y-1/2
-          rounded-full
-          bg-emerald-500/10
-          blur-3xl
-        "
-        style={{
-          animation:
-            'homeGlow 2s ease-in-out infinite',
-        }}
-      />
+      <div className="home-intro-bg">
+
+        <div className="home-orb home-orb-one" />
+
+        <div className="home-orb home-orb-two" />
+
+        <div className="home-orb home-orb-three" />
+
+      </div>
 
 
-      {/* ===============================================
+      {/* =================================================
           CONTENT
-      =============================================== */}
+      ================================================= */}
 
       <div
         className="
@@ -241,144 +229,235 @@ function HomeIntro({
         "
       >
 
-        {/* Cricket icon */}
-
         <div
           className="
+            home-logo-animation
             flex
-            h-24
-            w-24
+            h-20
+            w-20
             items-center
             justify-center
-            rounded-[28px]
+            rounded-[24px]
             border
             border-emerald-400/20
             bg-emerald-500/10
-            text-5xl
+            text-4xl
             shadow-2xl
             shadow-emerald-950/40
           "
-          style={{
-            animation:
-              'homeBallIn 0.65s cubic-bezier(.2,.8,.2,1) both',
-          }}
         >
           🏏
         </div>
 
 
-        {/* Small label */}
-
         <div
           className="
-            mt-6
+            home-intro-label
+            mt-5
             text-[9px]
             font-black
             uppercase
             tracking-[0.35em]
             text-emerald-400
           "
-          style={{
-            animation:
-              'homeTextIn 0.5s ease-out 0.15s both',
-          }}
         >
           GCC Cricket
         </div>
 
 
-        {/* Main title */}
-
         <h1
           className="
+            home-intro-title
             mt-2
             text-3xl
             font-black
             tracking-tight
             text-white
           "
-          style={{
-            animation:
-              'homeTextIn 0.5s ease-out 0.25s both',
-          }}
         >
           Live Scoreboard
         </h1>
 
 
-        {/* Subtitle */}
-
         <p
           className="
+            home-intro-subtitle
             mt-2
             text-[11px]
             font-medium
             text-slate-500
           "
-          style={{
-            animation:
-              'homeTextIn 0.5s ease-out 0.35s both',
-          }}
         >
           Your matches. Your records.
         </p>
 
 
-        {/* Loading line */}
-
         <div
           className="
-            mt-7
+            home-loading-line
+            mt-6
             h-1
-            w-32
+            w-28
             overflow-hidden
             rounded-full
             bg-slate-800
           "
-          style={{
-            animation:
-              'homeTextIn 0.5s ease-out 0.4s both',
-          }}
         >
 
-          <div
-            className="
-              h-full
-              w-1/2
-              rounded-full
-              bg-emerald-500
-            "
-            style={{
-              animation:
-                'homeProgress 0.8s ease-in-out infinite',
-            }}
-          />
+          <div className="home-loading-progress" />
 
         </div>
 
       </div>
 
 
-      {/* ===============================================
-          INLINE ANIMATION STYLES
-      =============================================== */}
-
       <style>{`
 
-        @keyframes homeBallIn {
+        .home-intro {
+          animation:
+            homeIntroExit
+            0.35s
+            ease-out
+            0.42s
+            forwards;
+        }
+
+
+        .home-intro-bg {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          pointer-events: none;
+        }
+
+
+        .home-orb {
+          position: absolute;
+          border-radius: 9999px;
+          filter: blur(60px);
+          opacity: 0.18;
+          will-change: transform;
+        }
+
+
+        .home-orb-one {
+          width: 220px;
+          height: 220px;
+          left: 15%;
+          top: 25%;
+          background: rgba(16,185,129,0.35);
+          animation:
+            homeOrbOne
+            4s
+            ease-in-out
+            infinite;
+        }
+
+
+        .home-orb-two {
+          width: 180px;
+          height: 180px;
+          right: 10%;
+          bottom: 20%;
+          background: rgba(20,184,166,0.25);
+          animation:
+            homeOrbTwo
+            5s
+            ease-in-out
+            infinite;
+        }
+
+
+        .home-orb-three {
+          width: 140px;
+          height: 140px;
+          left: 45%;
+          top: 55%;
+          background: rgba(59,130,246,0.12);
+          animation:
+            homeOrbThree
+            4.5s
+            ease-in-out
+            infinite;
+        }
+
+
+        .home-logo-animation {
+          animation:
+            homeLogoIn
+            0.55s
+            cubic-bezier(.2,.8,.2,1)
+            both;
+        }
+
+
+        .home-intro-label {
+          animation:
+            homeTextIn
+            0.45s
+            ease-out
+            0.08s
+            both;
+        }
+
+
+        .home-intro-title {
+          animation:
+            homeTextIn
+            0.45s
+            ease-out
+            0.14s
+            both;
+        }
+
+
+        .home-intro-subtitle {
+          animation:
+            homeTextIn
+            0.45s
+            ease-out
+            0.2s
+            both;
+        }
+
+
+        .home-loading-line {
+          animation:
+            homeTextIn
+            0.4s
+            ease-out
+            0.25s
+            both;
+        }
+
+
+        .home-loading-progress {
+          height: 100%;
+          width: 45%;
+          border-radius: 9999px;
+          background: rgb(16,185,129);
+          animation:
+            homeProgress
+            0.65s
+            ease-in-out
+            infinite;
+        }
+
+
+        @keyframes homeLogoIn {
 
           0% {
             opacity: 0;
             transform:
-              translateY(24px)
-              scale(0.65)
-              rotate(-12deg);
+              translateY(20px)
+              scale(0.7)
+              rotate(-10deg);
           }
 
           70% {
             opacity: 1;
             transform:
-              translateY(-5px)
+              translateY(-3px)
               scale(1.04)
               rotate(2deg);
           }
@@ -398,7 +477,7 @@ function HomeIntro({
 
           from {
             opacity: 0;
-            transform: translateY(12px);
+            transform: translateY(8px);
           }
 
           to {
@@ -409,61 +488,89 @@ function HomeIntro({
         }
 
 
-        @keyframes homeGlow {
-
-          0%,
-          100% {
-            opacity: 0.45;
-            transform:
-              translate(-50%, -50%)
-              scale(0.9);
-          }
-
-          50% {
-            opacity: 0.8;
-            transform:
-              translate(-50%, -50%)
-              scale(1.08);
-          }
-
-        }
-
-
         @keyframes homeProgress {
 
           0% {
-            transform: translateX(-100%);
+            transform: translateX(-130%);
           }
 
           100% {
-            transform: translateX(200%);
+            transform: translateX(270%);
           }
 
         }
 
 
-        @keyframes homeIntroOut {
+        @keyframes homeOrbOne {
 
-          0% {
+          0%,
+          100% {
+            transform: translate3d(0,0,0) scale(1);
+          }
+
+          50% {
+            transform: translate3d(20px,-15px,0) scale(1.08);
+          }
+
+        }
+
+
+        @keyframes homeOrbTwo {
+
+          0%,
+          100% {
+            transform: translate3d(0,0,0);
+          }
+
+          50% {
+            transform: translate3d(-18px,15px,0);
+          }
+
+        }
+
+
+        @keyframes homeOrbThree {
+
+          0%,
+          100% {
+            transform: scale(0.9);
+          }
+
+          50% {
+            transform: scale(1.1);
+          }
+
+        }
+
+
+        @keyframes homeIntroExit {
+
+          from {
             opacity: 1;
           }
 
-          100% {
+          to {
             opacity: 0;
             visibility: hidden;
+            pointer-events: none;
           }
 
         }
 
 
-        @media (prefers-reduced-motion: reduce) {
+        @media (
+          prefers-reduced-motion: reduce
+        ) {
 
-          *,
-          *::before,
-          *::after {
-            animation-duration: 0.01ms !important;
-            animation-iteration-count: 1 !important;
-            scroll-behavior: auto !important;
+          .home-intro,
+          .home-logo-animation,
+          .home-intro-label,
+          .home-intro-title,
+          .home-intro-subtitle,
+          .home-loading-line,
+          .home-loading-progress,
+          .home-orb {
+            animation: none !important;
           }
 
         }
@@ -499,7 +606,7 @@ function MatchSkeleton({
       "
       style={{
         animationDelay:
-          `${index * 70}ms`,
+          `${index * 50}ms`,
       }}
     >
 
@@ -545,7 +652,7 @@ function MatchSkeleton({
 
 
 /* =========================================================
-   LOADING SCREEN
+   LOADING
 ========================================================= */
 
 function HomeLoading() {
@@ -613,7 +720,7 @@ function HomeLoading() {
 
 
 /* =========================================================
-   SCORE UPDATE EFFECT
+   SCORE FLASH
 ========================================================= */
 
 function useScoreFlash(
@@ -639,7 +746,7 @@ function useScoreFlash(
 
         setFlash(false);
 
-      }, 550);
+      }, 450);
 
 
     return () => {
@@ -693,10 +800,6 @@ const LiveHero = memo(function LiveHero({
     useState(false);
 
 
-  /* =======================================================
-     SCORE FLASH
-  ======================================================= */
-
   const currentInnings =
     data?.innings?.[
       data.innings.length - 1
@@ -735,7 +838,7 @@ const LiveHero = memo(function LiveHero({
 
 
   /* =======================================================
-     REALTIME SOCKET
+     SOCKET
   ======================================================= */
 
   useEffect(() => {
@@ -756,10 +859,6 @@ const LiveHero = memo(function LiveHero({
       innings,
     }) => {
 
-      /*
-       * Ignore updates belonging to
-       * another match.
-       */
       if (
         updatedMatch?.id &&
         String(updatedMatch.id) !==
@@ -770,7 +869,7 @@ const LiveHero = memo(function LiveHero({
 
 
       setData(
-        (current) => ({
+        current => ({
 
           ...current,
 
@@ -867,7 +966,7 @@ const LiveHero = memo(function LiveHero({
 
 
   /* =======================================================
-     DOWNLOAD PDF
+     PDF
   ======================================================= */
 
   const downloadPdf = async () => {
@@ -911,7 +1010,7 @@ const LiveHero = memo(function LiveHero({
 
 
   /* =======================================================
-     DELETE LIVE MATCH
+     DELETE
   ======================================================= */
 
   const deleteMatch = async () => {
@@ -970,21 +1069,16 @@ const LiveHero = memo(function LiveHero({
 
     <div
       className="
+        live-card
         group
         mb-4
         overflow-hidden
         rounded-2xl
         border
-        border-red-500/25
+        border-red-500/20
         bg-slate-900
         shadow-lg
         shadow-black/20
-        transition-all
-        duration-300
-        hover:-translate-y-0.5
-        hover:border-red-500/40
-        hover:shadow-red-950/30
-        active:scale-[0.99]
       "
     >
 
@@ -999,7 +1093,6 @@ const LiveHero = memo(function LiveHero({
         }}
         className="
           block
-          transition
           active:bg-slate-800/30
         "
       >
@@ -1028,7 +1121,7 @@ const LiveHero = memo(function LiveHero({
                   animate-ping
                   rounded-full
                   bg-red-400
-                  opacity-70
+                  opacity-60
                 "
               />
 
@@ -1039,8 +1132,6 @@ const LiveHero = memo(function LiveHero({
                   w-2.5
                   rounded-full
                   bg-red-500
-                  shadow-sm
-                  shadow-red-500
                 "
               />
 
@@ -1181,11 +1272,11 @@ const LiveHero = memo(function LiveHero({
                   rounded-2xl
                   px-3
                   py-1
-                  transition-all
-                  duration-300
+                  transition-transform
+                  duration-200
                   ${
                     scoreFlash
-                      ? 'scale-105 bg-red-500/10'
+                      ? 'score-pop bg-red-500/10'
                       : ''
                   }
                 `}
@@ -1197,8 +1288,8 @@ const LiveHero = memo(function LiveHero({
                     font-black
                     leading-none
                     tracking-tight
-                    transition-all
-                    duration-300
+                    transition-colors
+                    duration-200
                     ${
                       scoreFlash
                         ? 'text-red-300'
@@ -1265,10 +1356,6 @@ const LiveHero = memo(function LiveHero({
         </div>
 
 
-        {/* =================================================
-            BATTING TEAM
-        ================================================= */}
-
         {battingTeam && (
 
           <div className="px-3 pb-4 text-center">
@@ -1308,7 +1395,7 @@ const LiveHero = memo(function LiveHero({
 
 
       {/* =================================================
-          ACTION BAR
+          ACTIONS
       ================================================= */}
 
       <div
@@ -1329,6 +1416,7 @@ const LiveHero = memo(function LiveHero({
             match: currentMatch,
           }}
           className="
+            home-action
             flex
             min-h-[40px]
             items-center
@@ -1338,12 +1426,6 @@ const LiveHero = memo(function LiveHero({
             text-[11px]
             font-bold
             text-slate-300
-            transition-all
-            duration-150
-            hover:bg-slate-700
-            hover:-translate-y-px
-            active:scale-95
-            active:bg-slate-700
           "
         >
           👁 View
@@ -1353,6 +1435,7 @@ const LiveHero = memo(function LiveHero({
         <button
           type="button"
           className="
+            home-action
             flex
             min-h-[40px]
             items-center
@@ -1362,12 +1445,6 @@ const LiveHero = memo(function LiveHero({
             text-[11px]
             font-bold
             text-slate-300
-            transition-all
-            duration-150
-            hover:bg-slate-700
-            hover:-translate-y-px
-            active:scale-95
-            active:bg-slate-700
             disabled:opacity-50
           "
           onClick={downloadPdf}
@@ -1380,6 +1457,7 @@ const LiveHero = memo(function LiveHero({
         <button
           type="button"
           className="
+            home-action
             flex
             min-h-[40px]
             items-center
@@ -1389,12 +1467,6 @@ const LiveHero = memo(function LiveHero({
             text-[11px]
             font-bold
             text-red-400
-            transition-all
-            duration-150
-            hover:bg-red-500/20
-            hover:-translate-y-px
-            active:scale-95
-            active:bg-red-500/20
             disabled:cursor-not-allowed
             disabled:opacity-50
           "
@@ -1441,6 +1513,7 @@ const MatchCard = memo(function MatchCard({
 
     <div
       className="
+        match-card
         group
         overflow-hidden
         rounded-2xl
@@ -1449,19 +1522,11 @@ const MatchCard = memo(function MatchCard({
         bg-slate-900/70
         shadow-sm
         shadow-black/10
-        transition-all
-        duration-300
-        hover:-translate-y-0.5
-        hover:border-slate-700
-        hover:bg-slate-900
-        hover:shadow-lg
-        hover:shadow-black/20
-        active:scale-[0.985]
-        animate-[fadeSlideUp_0.35s_ease-out_both]
+        animate-[homeCardIn_0.38s_ease-out_both]
       "
       style={{
         animationDelay:
-          `${Math.min(index, 8) * 45}ms`,
+          `${Math.min(index, 8) * 40}ms`,
       }}
     >
 
@@ -1529,7 +1594,7 @@ const MatchCard = memo(function MatchCard({
 
 
         {/* =================================================
-            MATCH INFO
+            INFO
         ================================================= */}
 
         <div
@@ -1577,10 +1642,6 @@ const MatchCard = memo(function MatchCard({
               bg-emerald-500/5
               px-3
               py-2
-              transition-all
-              duration-200
-              group-hover:border-emerald-500/20
-              group-hover:bg-emerald-500/10
             "
           >
 
@@ -1628,6 +1689,7 @@ const MatchCard = memo(function MatchCard({
           <Link
             to={`/match/${match.id}/setup`}
             className="
+              home-action
               flex
               min-h-[40px]
               items-center
@@ -1637,12 +1699,6 @@ const MatchCard = memo(function MatchCard({
               text-[11px]
               font-bold
               text-slate-300
-              transition-all
-              duration-150
-              hover:-translate-y-px
-              hover:bg-slate-700
-              active:scale-95
-              active:bg-slate-700
             "
           >
             🏏 Start Toss
@@ -1656,6 +1712,7 @@ const MatchCard = memo(function MatchCard({
           <Link
             to={`/match/${match.id}/score`}
             className="
+              home-action
               flex
               min-h-[40px]
               items-center
@@ -1665,12 +1722,6 @@ const MatchCard = memo(function MatchCard({
               text-[11px]
               font-bold
               text-slate-300
-              transition-all
-              duration-150
-              hover:-translate-y-px
-              hover:bg-slate-700
-              active:scale-95
-              active:bg-slate-700
             "
           >
             ▶ Continue
@@ -1685,6 +1736,7 @@ const MatchCard = memo(function MatchCard({
             match,
           }}
           className="
+            home-action
             flex
             min-h-[40px]
             items-center
@@ -1694,12 +1746,6 @@ const MatchCard = memo(function MatchCard({
             text-[11px]
             font-bold
             text-slate-300
-            transition-all
-            duration-150
-            hover:-translate-y-px
-            hover:bg-slate-700
-            active:scale-95
-            active:bg-slate-700
           "
         >
           👁 View
@@ -1709,6 +1755,7 @@ const MatchCard = memo(function MatchCard({
         <button
           type="button"
           className="
+            home-action
             flex
             min-h-[40px]
             items-center
@@ -1718,12 +1765,6 @@ const MatchCard = memo(function MatchCard({
             text-[11px]
             font-bold
             text-slate-300
-            transition-all
-            duration-150
-            hover:-translate-y-px
-            hover:bg-slate-700
-            active:scale-95
-            active:bg-slate-700
             disabled:opacity-50
           "
           onClick={() =>
@@ -1738,6 +1779,7 @@ const MatchCard = memo(function MatchCard({
         <button
           type="button"
           className="
+            home-action
             flex
             min-h-[40px]
             items-center
@@ -1747,12 +1789,6 @@ const MatchCard = memo(function MatchCard({
             text-[11px]
             font-bold
             text-red-400
-            transition-all
-            duration-150
-            hover:-translate-y-px
-            hover:bg-red-500/20
-            active:scale-95
-            active:bg-red-500/20
             disabled:cursor-not-allowed
             disabled:opacity-50
           "
@@ -1782,7 +1818,7 @@ const MatchCard = memo(function MatchCard({
 export default function Home() {
 
   /* =======================================================
-     WELCOME INTRO
+     INTRO
   ======================================================= */
 
   const [showIntro, setShowIntro] =
@@ -1857,135 +1893,144 @@ export default function Home() {
             : [];
 
 
+        /*
+         * Only fetch detailed information
+         * for live matches.
+         */
+
         const liveMatches =
           matchList.filter(
-            (match) =>
+            match =>
               match?.status === 'live'
           );
 
 
-        let enrichedMatches;
+        if (
+          liveMatches.length === 0
+        ) {
+
+          setMatches(
+            matchList
+          );
 
 
-        if (liveMatches.length === 0) {
-
-          enrichedMatches =
-            matchList;
-
-        } else {
-
-          const liveDetails =
-            await Promise.all(
-              liveMatches.map(
-                async (match) => {
-
-                  try {
-
-                    const detail =
-                      await Matches.get(
-                        match.id
-                      );
+          writeMatchesCache(
+            matchList
+          );
 
 
-                    const detailedMatch =
-                      detail?.match ||
-                      detail ||
-                      {};
+          return;
+
+        }
 
 
-                    const detailedInnings =
-                      Array.isArray(
-                        detail?.innings
-                      )
+        /*
+         * Fetch live match details
+         * in parallel.
+         */
 
-                        ? detail.innings
+        const liveDetails =
+          await Promise.all(
+            liveMatches.map(
+              async match => {
 
-                        : Array.isArray(
-                            detailedMatch?.innings
-                          )
+                try {
 
-                          ? detailedMatch.innings
-
-                          : [];
-
-
-                    const detailedPlayers =
-                      Array.isArray(
-                        detail?.players
-                      )
-
-                        ? detail.players
-
-                        : Array.isArray(
-                            detailedMatch?.players
-                          )
-
-                          ? detailedMatch.players
-
-                          : [];
-
-
-                    return {
-
-                      ...match,
-
-                      ...detailedMatch,
-
-                      id:
-                        match.id,
-
-                      status:
-                        match.status,
-
-                      innings:
-                        detailedInnings,
-
-                      players:
-                        detailedPlayers,
-
-                    };
-
-                  } catch (error) {
-
-                    console.error(
-                      `Failed to load live match details for ${match.id}:`,
-                      error
+                  const detail =
+                    await Matches.get(
+                      match.id
                     );
 
 
-                    return match;
+                  const detailedMatch =
+                    detail?.match ||
+                    detail ||
+                    {};
 
-                  }
+
+                  const detailedInnings =
+                    Array.isArray(
+                      detail?.innings
+                    )
+                      ? detail.innings
+                      : Array.isArray(
+                          detailedMatch?.innings
+                        )
+                        ? detailedMatch.innings
+                        : [];
+
+
+                  const detailedPlayers =
+                    Array.isArray(
+                      detail?.players
+                    )
+                      ? detail.players
+                      : Array.isArray(
+                          detailedMatch?.players
+                        )
+                        ? detailedMatch.players
+                        : [];
+
+
+                  return {
+
+                    ...match,
+
+                    ...detailedMatch,
+
+                    id:
+                      match.id,
+
+                    status:
+                      match.status,
+
+                    innings:
+                      detailedInnings,
+
+                    players:
+                      detailedPlayers,
+
+                  };
+
+                } catch (error) {
+
+                  console.error(
+                    `Failed to load live match details for ${match.id}:`,
+                    error
+                  );
+
+
+                  return match;
 
                 }
-              )
-            );
+
+              }
+            )
+          );
 
 
-          const liveDetailMap =
-            new Map(
-              liveDetails.map(
-                (match) => [
-                  match.id,
-                  match,
-                ]
-              )
-            );
+        const liveDetailMap =
+          new Map(
+            liveDetails.map(
+              match => [
+                match.id,
+                match,
+              ]
+            )
+          );
 
 
-          enrichedMatches =
-            matchList.map(
-              (match) =>
-                match?.status === 'live'
-                  ? (
-                      liveDetailMap.get(
-                        match.id
-                      ) || match
-                    )
-                  : match
-            );
-
-        }
+        const enrichedMatches =
+          matchList.map(
+            match =>
+              match?.status === 'live'
+                ? (
+                    liveDetailMap.get(
+                      match.id
+                    ) || match
+                  )
+                : match
+          );
 
 
         setMatches(
@@ -1997,7 +2042,6 @@ export default function Home() {
           enrichedMatches
         );
 
-
       } catch (error) {
 
         console.error(
@@ -2006,12 +2050,16 @@ export default function Home() {
         );
 
 
-        setMatches((current) =>
-          current.length > 0
-            ? current
-            : []
-        );
+        /*
+         * Cached matches remain visible.
+         */
 
+        setMatches(
+          current =>
+            current.length > 0
+              ? current
+              : []
+        );
 
       } finally {
 
@@ -2036,12 +2084,12 @@ export default function Home() {
 
 
   /* =======================================================
-     DELETE NORMAL MATCH
+     DELETE
   ======================================================= */
 
   const deleteMatch =
     useCallback(
-      async (matchId) => {
+      async matchId => {
 
         if (!matchId) {
 
@@ -2084,32 +2132,35 @@ export default function Home() {
           );
 
 
-          /* ---------------------------------------------
-             REMOVE IMMEDIATELY
-          --------------------------------------------- */
+          /*
+           * Remove immediately.
+           */
 
-          setMatches((current) => {
+          setMatches(
+            current => {
 
-            const next =
-              current.filter(
-                (match) =>
-                  match.id !== matchId
+              const next =
+                current.filter(
+                  match =>
+                    match.id !==
+                    matchId
+                );
+
+
+              writeMatchesCache(
+                next
               );
 
 
-            writeMatchesCache(
-              next
-            );
+              return next;
+
+            }
+          );
 
 
-            return next;
-
-          });
-
-
-          /* ---------------------------------------------
-             BACKGROUND SYNC
-          --------------------------------------------- */
+          /*
+           * Refresh in background.
+           */
 
           try {
 
@@ -2161,12 +2212,12 @@ export default function Home() {
 
 
   /* =======================================================
-     DOWNLOAD PDF
+     PDF
   ======================================================= */
 
   const downloadPdf =
     useCallback(
-      async (matchId) => {
+      async matchId => {
 
         try {
 
@@ -2220,14 +2271,17 @@ export default function Home() {
     return (
       <>
         {showIntro && (
+
           <HomeIntro
             onFinished={
               finishIntro
             }
           />
+
         )}
 
         <HomeLoading />
+
       </>
     );
 
@@ -2266,12 +2320,24 @@ export default function Home() {
 
 
   /* =======================================================
+     MEMOIZED COUNTS
+  ======================================================= */
+
+  const totalMatches =
+    matches.length;
+
+  const liveCount =
+    liveMatches.length;
+
+
+  /* =======================================================
      RENDER
   ======================================================= */
 
   return (
 
     <>
+
       {showIntro && (
 
         <HomeIntro
@@ -2285,15 +2351,37 @@ export default function Home() {
 
       <div
         className="
+          home-page
           fade-in
           mx-auto
           w-full
           max-w-3xl
           min-w-0
           overflow-hidden
-          pb-6
+          pb-8
         "
       >
+
+        {/* =================================================
+            BACKGROUND DECORATION
+        ================================================= */}
+
+        <div
+          className="
+            pointer-events-none
+            fixed
+            left-1/2
+            top-20
+            -z-10
+            h-64
+            w-64
+            -translate-x-1/2
+            rounded-full
+            bg-emerald-500/[0.025]
+            blur-3xl
+          "
+        />
+
 
         {/* =================================================
             HEADER
@@ -2301,24 +2389,25 @@ export default function Home() {
 
         <div
           className="
+            home-header
             mb-5
             flex
             items-center
             justify-between
             gap-3
-            animate-[fadeSlideUp_0.35s_ease-out_both]
           "
         >
 
           <div className="min-w-0">
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
 
               <div
                 className="
+                  home-header-icon
                   flex
-                  h-9
-                  w-9
+                  h-10
+                  w-10
                   shrink-0
                   items-center
                   justify-center
@@ -2327,10 +2416,6 @@ export default function Home() {
                   border-emerald-500/15
                   bg-emerald-500/10
                   text-lg
-                  transition-all
-                  duration-300
-                  hover:scale-105
-                  hover:rotate-3
                 "
               >
                 🏏
@@ -2339,28 +2424,66 @@ export default function Home() {
 
               <div className="min-w-0">
 
-                <h1
-                  className="
-                    truncate
-                    text-xl
-                    font-black
-                    tracking-tight
-                    text-white
-                  "
-                >
-                  Matches
-                </h1>
+                <div className="flex items-center gap-2">
+
+                  <h1
+                    className="
+                      truncate
+                      text-xl
+                      font-black
+                      tracking-tight
+                      text-white
+                    "
+                  >
+                    Matches
+                  </h1>
+
+
+                  {liveCount > 0 && (
+
+                    <span
+                      className="
+                        hidden
+                        xs:inline-flex
+                        items-center
+                        gap-1
+                        rounded-full
+                        border
+                        border-red-500/15
+                        bg-red-500/5
+                        px-2
+                        py-0.5
+                        text-[8px]
+                        font-black
+                        uppercase
+                        tracking-wider
+                        text-red-400
+                      "
+                    >
+
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+
+                      LIVE
+
+                    </span>
+
+                  )}
+
+                </div>
 
 
                 <p
                   className="
                     mt-0.5
+                    truncate
                     text-[10px]
                     font-medium
                     text-slate-600
                   "
                 >
-                  Scores & match records
+                  {totalMatches === 0
+                    ? 'Start your first match'
+                    : `${totalMatches} match${totalMatches === 1 ? '' : 'es'} • Scores & records`}
                 </p>
 
               </div>
@@ -2371,12 +2494,13 @@ export default function Home() {
 
 
           {/* =================================================
-              PREMIUM NEW MATCH BUTTON
+              NEW MATCH
           ================================================= */}
 
           <Link
             to="/create-match"
             className="
+              home-new-match
               group/new
               relative
               flex
@@ -2391,30 +2515,18 @@ export default function Home() {
               text-[11px]
               font-black
               text-slate-950
-              shadow-sm
-              shadow-white/5
-              transition-all
-              duration-200
-              hover:-translate-y-0.5
-              hover:bg-slate-100
-              hover:shadow-lg
-              hover:shadow-white/10
-              active:translate-y-0
-              active:scale-95
             "
           >
-
-            {/* Shine */}
 
             <span
               className="
                 pointer-events-none
                 absolute
                 inset-y-0
-                -left-8
+                -left-10
                 w-6
                 rotate-[20deg]
-                bg-white/60
+                bg-white/70
                 blur-sm
                 transition-transform
                 duration-500
@@ -2423,15 +2535,7 @@ export default function Home() {
             />
 
 
-            <span
-              className="
-                relative
-                z-10
-                transition-transform
-                duration-200
-                group-hover/new:scale-105
-              "
-            >
+            <span className="relative z-10">
               + New Match
             </span>
 
@@ -2449,7 +2553,7 @@ export default function Home() {
           <section
             className="
               mb-6
-              animate-[fadeSlideUp_0.4s_ease-out_both]
+              animate-[homeSectionIn_0.4s_ease-out_both]
             "
           >
 
@@ -2526,20 +2630,20 @@ export default function Home() {
 
 
             {liveMatches.map(
-              (match) => (
+              match => (
 
                 <LiveHero
                   key={match.id}
                   match={match}
-                  onDeleted={(id) => {
+                  onDeleted={id => {
 
                     setMatches(
-                      (current) => {
+                      current => {
 
                         const next =
                           current.filter(
-                            (match) =>
-                              match.id !== id
+                            item =>
+                              item.id !== id
                           );
 
 
@@ -2583,27 +2687,22 @@ export default function Home() {
               px-4
               py-10
               text-center
-              animate-[fadeSlideUp_0.4s_ease-out_both]
+              animate-[homeSectionIn_0.45s_ease-out_both]
             "
           >
-
-            {/* Soft background glow */}
 
             <div
               className="
                 pointer-events-none
                 absolute
                 left-1/2
-                top-10
+                top-8
                 h-28
                 w-28
                 -translate-x-1/2
                 rounded-full
                 bg-emerald-500/5
                 blur-3xl
-                transition-all
-                duration-500
-                group-hover/empty:bg-emerald-500/10
               "
             />
 
@@ -2622,15 +2721,8 @@ export default function Home() {
                 border-emerald-500/10
                 bg-emerald-500/5
                 text-4xl
-                transition-all
-                duration-300
-                group-hover/empty:scale-105
-                group-hover/empty:border-emerald-500/20
+                animate-[homeFloat_2.5s_ease-in-out_infinite]
               "
-              style={{
-                animation:
-                  'floatBall 2.5s ease-in-out infinite',
-              }}
             >
               🏏
             </div>
@@ -2665,13 +2757,10 @@ export default function Home() {
             </p>
 
 
-            {/* =================================================
-                EMPTY STATE BUTTON
-            ================================================= */}
-
             <Link
               to="/create-match"
               className="
+                home-new-match
                 group/create
                 relative
                 mt-5
@@ -2686,16 +2775,6 @@ export default function Home() {
                 text-[11px]
                 font-black
                 text-slate-950
-                shadow-sm
-                shadow-white/5
-                transition-all
-                duration-200
-                hover:-translate-y-0.5
-                hover:bg-slate-100
-                hover:shadow-lg
-                hover:shadow-white/10
-                active:translate-y-0
-                active:scale-95
               "
             >
 
@@ -2707,7 +2786,7 @@ export default function Home() {
                   -left-8
                   w-6
                   rotate-[20deg]
-                  bg-white/60
+                  bg-white/70
                   blur-sm
                   transition-transform
                   duration-500
@@ -2716,12 +2795,7 @@ export default function Home() {
               />
 
 
-              <span
-                className="
-                  relative
-                  z-10
-                "
-              >
+              <span className="relative z-10">
                 + Create Match
               </span>
 
@@ -2746,7 +2820,7 @@ export default function Home() {
                 flex
                 items-center
                 justify-between
-                animate-[fadeSlideUp_0.4s_ease-out_both]
+                animate-[homeSectionIn_0.4s_ease-out_both]
               "
             >
 
@@ -2815,7 +2889,290 @@ export default function Home() {
 
         )}
 
+
+        {/* =================================================
+            FOOTER
+        ================================================= */}
+
+        {matches.length > 0 && (
+
+          <div
+            className="
+              mt-6
+              flex
+              items-center
+              justify-center
+              gap-2
+              text-[8px]
+              font-bold
+              uppercase
+              tracking-[0.2em]
+              text-slate-700
+            "
+          >
+
+            <span>
+              🏏
+            </span>
+
+            GCC Cricket
+
+            <span>
+              •
+            </span>
+
+            Live scoring
+
+          </div>
+
+        )}
+
       </div>
+
+
+      {/* ===================================================
+          HOME EFFECTS
+      =================================================== */}
+
+      <style>{`
+
+        .home-page {
+          position: relative;
+        }
+
+
+        .home-header {
+          animation:
+            homeSectionIn
+            0.35s
+            ease-out
+            both;
+        }
+
+
+        .home-header-icon {
+          transition:
+            transform 220ms ease,
+            border-color 220ms ease,
+            background-color 220ms ease;
+        }
+
+
+        .home-header-icon:hover {
+          transform:
+            translateY(-2px)
+            rotate(4deg)
+            scale(1.04);
+
+          border-color:
+            rgba(16,185,129,0.35);
+
+          background-color:
+            rgba(16,185,129,0.15);
+        }
+
+
+        .home-new-match {
+          transition:
+            transform 180ms ease,
+            box-shadow 180ms ease,
+            background-color 180ms ease;
+        }
+
+
+        .home-new-match:hover {
+          transform:
+            translateY(-2px);
+
+          box-shadow:
+            0 10px 25px
+            rgba(255,255,255,0.07);
+        }
+
+
+        .home-new-match:active {
+          transform:
+            translateY(0)
+            scale(0.96);
+        }
+
+
+        .home-action {
+          transition:
+            transform 150ms ease,
+            background-color 150ms ease,
+            color 150ms ease,
+            border-color 150ms ease;
+        }
+
+
+        .home-action:hover {
+          transform:
+            translateY(-1px);
+
+          background-color:
+            rgb(51,65,85);
+
+          color:
+            white;
+        }
+
+
+        .home-action:active {
+          transform:
+            scale(0.96);
+        }
+
+
+        .match-card {
+          transition:
+            transform 220ms ease,
+            border-color 220ms ease,
+            background-color 220ms ease,
+            box-shadow 220ms ease;
+        }
+
+
+        .match-card:hover {
+          transform:
+            translateY(-2px);
+
+          border-color:
+            rgb(51,65,85);
+
+          background-color:
+            rgba(15,23,42,0.95);
+
+          box-shadow:
+            0 12px 28px
+            rgba(0,0,0,0.18);
+        }
+
+
+        .live-card {
+          transition:
+            transform 220ms ease,
+            border-color 220ms ease,
+            box-shadow 220ms ease;
+        }
+
+
+        .live-card:hover {
+          transform:
+            translateY(-2px);
+
+          border-color:
+            rgba(239,68,68,0.38);
+
+          box-shadow:
+            0 14px 32px
+            rgba(127,29,29,0.18);
+        }
+
+
+        .score-pop {
+          animation:
+            scorePop
+            0.42s
+            cubic-bezier(.2,.8,.2,1);
+        }
+
+
+        @keyframes scorePop {
+
+          0% {
+            transform: scale(1);
+          }
+
+          45% {
+            transform: scale(1.06);
+          }
+
+          100% {
+            transform: scale(1);
+          }
+
+        }
+
+
+        @keyframes homeCardIn {
+
+          from {
+            opacity: 0;
+            transform:
+              translateY(10px);
+          }
+
+          to {
+            opacity: 1;
+            transform:
+              translateY(0);
+          }
+
+        }
+
+
+        @keyframes homeSectionIn {
+
+          from {
+            opacity: 0;
+            transform:
+              translateY(8px);
+          }
+
+          to {
+            opacity: 1;
+            transform:
+              translateY(0);
+          }
+
+        }
+
+
+        @keyframes homeFloat {
+
+          0%,
+          100% {
+            transform:
+              translateY(0);
+          }
+
+          50% {
+            transform:
+              translateY(-5px);
+          }
+
+        }
+
+
+        @media (
+          prefers-reduced-motion: reduce
+        ) {
+
+          .home-header,
+          .match-card,
+          .live-card,
+          .score-pop,
+          .home-page *,
+          .home-page::before,
+          .home-page::after {
+            animation: none !important;
+            transition: none !important;
+          }
+
+        }
+
+
+        @media (max-width: 420px) {
+
+          .home-new-match {
+            padding-left: 11px;
+            padding-right: 11px;
+          }
+
+        }
+
+      `}</style>
 
     </>
 
