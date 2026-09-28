@@ -95,18 +95,20 @@ export default function Navbar() {
               min-w-0
               flex-1
               items-center
-              gap-2
+              gap-2.5
               sm:gap-3
               group
             "
           >
 
-            {/* LOGO */}
+            {/* =================================================
+                LARGER LOGO
+            ================================================== */}
 
             <div
               className="
-                h-11
-                w-11
+                h-[52px]
+                w-[52px]
                 shrink-0
                 overflow-hidden
                 rounded-full
@@ -115,8 +117,8 @@ export default function Navbar() {
                 bg-black
                 shadow-lg
                 shadow-yellow-500/20
-                sm:h-14
-                sm:w-14
+                sm:h-16
+                sm:w-16
               "
             >
               <img
@@ -130,7 +132,9 @@ export default function Navbar() {
               />
             </div>
 
-            {/* CLUB NAME */}
+            {/* =================================================
+                LARGER CLUB NAME
+            ================================================== */}
 
             <div className="min-w-0 flex-1">
 
@@ -138,30 +142,34 @@ export default function Navbar() {
                 className="
                   max-w-full
                   truncate
-                  text-[13px]
+                  text-[16px]
                   font-black
                   leading-tight
                   tracking-wide
                   text-yellow-300
-                  sm:text-lg
-                  md:text-xl
-                  lg:text-2xl
+                  sm:text-xl
+                  md:text-2xl
+                  lg:text-3xl
                 "
               >
                 GOLDEN CRICKET CLUB
               </div>
+
+              {/* =================================================
+                  SUBTITLE
+              ================================================== */}
 
               <div
                 className="
                   mt-0.5
                   max-w-full
                   truncate
-                  text-[7px]
+                  text-[8px]
                   font-bold
                   uppercase
                   tracking-[0.12em]
                   text-slate-500
-                  sm:text-[9px]
+                  sm:text-[10px]
                   sm:tracking-[0.2em]
                 "
               >
