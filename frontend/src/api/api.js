@@ -6,12 +6,382 @@ const API_URL =
 
 
 /* =========================================================
+   API CONFIGURATION
+========================================================= */
+
+const REQUEST_TIMEOUT = 30000;
+
+const MAX_RETRIES = 3;
+
+const RETRY_DELAYS = [
+  800,
+  1600,
+  3200,
+];
+
+
+/* =========================================================
    AXIOS
 ========================================================= */
 
 const api = axios.create({
   baseURL: API_URL,
+
+  timeout:
+    REQUEST_TIMEOUT,
+
+  headers: {
+    'Content-Type':
+      'application/json',
+  },
 });
+
+
+/* =========================================================
+   RETRY HELPERS
+========================================================= */
+
+/*
+ * Wait before retrying.
+ */
+
+function wait(ms) {
+
+  return new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  );
+
+}
+
+
+/*
+ * Determine whether a request
+ * is safe/useful to retry.
+ *
+ * We retry:
+ *
+ * - Network errors
+ * - Timeout
+ * - 408
+ * - 429
+ * - 500
+ * - 502
+ * - 503
+ * - 504
+ *
+ * We do NOT retry normal 400-level
+ * validation/authentication errors.
+ */
+
+function shouldRetry(
+  error
+) {
+
+  const status =
+    error?.response?.status;
+
+  /*
+   * No response normally means:
+   *
+   * - network failure
+   * - Render waking up
+   * - connection timeout
+   * - browser connection problem
+   */
+
+  if (!error?.response) {
+
+    return true;
+
+  }
+
+
+  /*
+   * Temporary server errors.
+   */
+
+  if (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+
+    return true;
+
+  }
+
+
+  return false;
+
+}
+
+
+/*
+ * Prevent dangerous automatic retries
+ * for operations where repeating the request
+ * could create duplicate database records.
+ *
+ * GET requests are always safe to retry.
+ *
+ * POST requests are retried only when there
+ * was no server response.
+ *
+ * This is especially important for:
+ *
+ * /innings/:id/ball
+ *
+ * because we don't want to accidentally
+ * record the same cricket ball twice.
+ */
+
+function isSafeToRetry(
+  error,
+  method
+) {
+
+  const normalizedMethod =
+    String(
+      method || 'get'
+    ).toLowerCase();
+
+
+  /*
+   * GET is safe.
+   */
+
+  if (
+    normalizedMethod ===
+    'get'
+  ) {
+
+    return true;
+
+  }
+
+
+  /*
+   * HEAD/OPTIONS are safe.
+   */
+
+  if (
+    normalizedMethod ===
+      'head' ||
+    normalizedMethod ===
+      'options'
+  ) {
+
+    return true;
+
+  }
+
+
+  /*
+   * For POST/PUT/PATCH/DELETE:
+   *
+   * only retry when the browser did not
+   * receive a server response.
+   *
+   * This avoids duplicate writes when the
+   * server already processed the request
+   * but the response was lost.
+   */
+
+  if (
+    !error?.response
+  ) {
+
+    return true;
+
+  }
+
+
+  return false;
+
+}
+
+
+/* =========================================================
+   REQUEST INTERCEPTOR
+========================================================= */
+
+/*
+ * Add a retry counter to every request.
+ */
+
+api.interceptors.request.use(
+  config => {
+
+    if (
+      typeof config._retryCount !==
+      'number'
+    ) {
+
+      config._retryCount = 0;
+
+    }
+
+    return config;
+
+  },
+
+  error =>
+    Promise.reject(error)
+);
+
+
+/* =========================================================
+   RESPONSE INTERCEPTOR
+========================================================= */
+
+api.interceptors.response.use(
+
+  /*
+   * Successful request.
+   */
+
+  response =>
+    response,
+
+  /*
+   * Failed request.
+   */
+
+  async error => {
+
+    const config =
+      error?.config;
+
+
+    /*
+     * If Axios does not have request
+     * configuration, return the error.
+     */
+
+    if (!config) {
+
+      return Promise.reject(
+        error
+      );
+
+    }
+
+
+    /*
+     * Current retry count.
+     */
+
+    const retryCount =
+      Number(
+        config._retryCount || 0
+      );
+
+
+    /*
+     * HTTP method.
+     */
+
+    const method =
+      String(
+        config.method || 'get'
+      ).toLowerCase();
+
+
+    /*
+     * Check retry conditions.
+     */
+
+    const retryAllowed =
+      shouldRetry(
+        error
+      );
+
+    const methodSafe =
+      isSafeToRetry(
+        error,
+        method
+      );
+
+
+    /*
+     * Stop after maximum retries.
+     */
+
+    if (
+      retryCount >=
+        MAX_RETRIES ||
+      !retryAllowed ||
+      !methodSafe
+    ) {
+
+      return Promise.reject(
+        error
+      );
+
+    }
+
+
+    /*
+     * Increase retry counter.
+     */
+
+    config._retryCount =
+      retryCount + 1;
+
+
+    /*
+     * Progressive delay.
+     */
+
+    const delay =
+      RETRY_DELAYS[
+        retryCount
+      ] ||
+      RETRY_DELAYS[
+        RETRY_DELAYS.length - 1
+      ];
+
+
+    console.warn(
+      `⚠️ API request failed. Retrying ${config._retryCount}/${MAX_RETRIES} in ${delay}ms...`,
+      {
+        method:
+          method.toUpperCase(),
+
+        url:
+          config.url,
+
+        status:
+          error?.response?.status,
+
+        message:
+          error?.message,
+      }
+    );
+
+
+    await wait(
+      delay
+    );
+
+
+    /*
+     * Try the exact same request again.
+     */
+
+    return api(
+      config
+    );
+
+  }
+
+);
 
 
 /* =========================================================
@@ -46,7 +416,10 @@ export const Teams = {
 
   create: (data) =>
     api
-      .post('/teams', data)
+      .post(
+        '/teams',
+        data
+      )
       .then(r => r.data),
 
 
@@ -56,7 +429,10 @@ export const Teams = {
 
   update: (id, data) =>
     api
-      .put(`/teams/${id}`, data)
+      .put(
+        `/teams/${id}`,
+        data
+      )
       .then(r => r.data),
 
 
@@ -66,7 +442,9 @@ export const Teams = {
 
   remove: (id) =>
     api
-      .delete(`/teams/${id}`)
+      .delete(
+        `/teams/${id}`
+      )
       .then(r => r.data),
 
 };
@@ -84,11 +462,14 @@ export const Players = {
 
   list: (team_id) =>
     api
-      .get('/players', {
-        params: {
-          team_id,
-        },
-      })
+      .get(
+        '/players',
+        {
+          params: {
+            team_id,
+          },
+        }
+      )
       .then(r => r.data),
 
 
@@ -98,7 +479,9 @@ export const Players = {
 
   listAll: () =>
     api
-      .get('/players/all/with-teams')
+      .get(
+        '/players/all/with-teams'
+      )
       .then(r => r.data),
 
 
@@ -108,7 +491,9 @@ export const Players = {
 
   allCareerStats: () =>
     api
-      .get('/players/all/career-stats')
+      .get(
+        '/players/all/career-stats'
+      )
       .then(r => r.data),
 
 
@@ -118,7 +503,9 @@ export const Players = {
 
   stats: (id) =>
     api
-      .get(`/players/${id}/stats`)
+      .get(
+        `/players/${id}/stats`
+      )
       .then(r => r.data),
 
 
@@ -128,7 +515,10 @@ export const Players = {
 
   create: (data) =>
     api
-      .post('/players', data)
+      .post(
+        '/players',
+        data
+      )
       .then(r => r.data),
 
 
@@ -138,7 +528,10 @@ export const Players = {
 
   update: (id, data) =>
     api
-      .put(`/players/${id}`, data)
+      .put(
+        `/players/${id}`,
+        data
+      )
       .then(r => r.data),
 
 
@@ -148,7 +541,9 @@ export const Players = {
 
   remove: (id) =>
     api
-      .delete(`/players/${id}`)
+      .delete(
+        `/players/${id}`
+      )
       .then(r => r.data),
 
 };
@@ -176,7 +571,9 @@ export const Matches = {
 
   get: (id) =>
     api
-      .get(`/matches/${id}`)
+      .get(
+        `/matches/${id}`
+      )
       .then(r => r.data),
 
 
@@ -186,7 +583,10 @@ export const Matches = {
 
   create: (data) =>
     api
-      .post('/matches', data)
+      .post(
+        '/matches',
+        data
+      )
       .then(r => r.data),
 
 
@@ -196,7 +596,10 @@ export const Matches = {
 
   setToss: (id, data) =>
     api
-      .post(`/matches/${id}/toss`, data)
+      .post(
+        `/matches/${id}/toss`,
+        data
+      )
       .then(r => r.data),
 
 
@@ -206,7 +609,9 @@ export const Matches = {
 
   startSecondInnings: (id) =>
     api
-      .post(`/matches/${id}/second-innings`)
+      .post(
+        `/matches/${id}/second-innings`
+      )
       .then(r => r.data),
 
 
@@ -216,7 +621,9 @@ export const Matches = {
 
   remove: (id) =>
     api
-      .delete(`/matches/${id}`)
+      .delete(
+        `/matches/${id}`
+      )
       .then(r => r.data),
 
 };
@@ -234,7 +641,9 @@ export const Innings = {
 
   scoreboard: (id) =>
     api
-      .get(`/innings/${id}/scoreboard`)
+      .get(
+        `/innings/${id}/scoreboard`
+      )
       .then(r => r.data),
 
 
@@ -244,7 +653,10 @@ export const Innings = {
 
   setBatsmen: (id, data) =>
     api
-      .post(`/innings/${id}/set-batsmen`, data)
+      .post(
+        `/innings/${id}/set-batsmen`,
+        data
+      )
       .then(r => r.data),
 
 
@@ -254,7 +666,9 @@ export const Innings = {
 
   swapStrike: (id) =>
     api
-      .post(`/innings/${id}/swap-batsmen`)
+      .post(
+        `/innings/${id}/swap-batsmen`
+      )
       .then(r => r.data),
 
 
@@ -264,7 +678,10 @@ export const Innings = {
 
   setBowler: (id, data) =>
     api
-      .post(`/innings/${id}/set-bowler`, data)
+      .post(
+        `/innings/${id}/set-bowler`,
+        data
+      )
       .then(r => r.data),
 
 
@@ -274,7 +691,10 @@ export const Innings = {
 
   ball: (id, data) =>
     api
-      .post(`/innings/${id}/ball`, data)
+      .post(
+        `/innings/${id}/ball`,
+        data
+      )
       .then(r => r.data),
 
 
@@ -284,7 +704,9 @@ export const Innings = {
 
   undo: (id) =>
     api
-      .post(`/innings/${id}/undo`)
+      .post(
+        `/innings/${id}/undo`
+      )
       .then(r => r.data),
 
 };
@@ -294,28 +716,22 @@ export const Innings = {
    RECORDS CACHE
 ========================================================= */
 
-/*
- * These caches live in memory while the website is open.
- *
- * This is faster than localStorage because React does not
- * need to repeatedly read and parse stored JSON.
- */
+let recordsMemoryCache =
+  null;
 
-let recordsMemoryCache = null;
-
-let playersMemoryCache = null;
+let playersMemoryCache =
+  null;
 
 
 /*
- * These promises prevent duplicate requests.
- *
- * If multiple pages request records at the same time,
- * they can share the same network request.
+ * Prevent duplicate requests.
  */
 
-let recordsRequestPromise = null;
+let recordsRequestPromise =
+  null;
 
-let playersRequestPromise = null;
+let playersRequestPromise =
+  null;
 
 
 /* =========================================================
@@ -331,10 +747,12 @@ export const Records = {
   get: () => {
 
     /*
-     * Reuse an existing request if one is already running.
+     * Reuse an existing request.
      */
 
-    if (recordsRequestPromise) {
+    if (
+      recordsRequestPromise
+    ) {
 
       return recordsRequestPromise;
 
@@ -379,13 +797,9 @@ export const Records = {
 
   preload: () => {
 
-    /*
-     * If records already exist in memory,
-     * return them immediately.
-     */
-
     if (
-      recordsMemoryCache !== null
+      recordsMemoryCache !==
+      null
     ) {
 
       return Promise.resolve(
@@ -419,7 +833,8 @@ export const CachedPlayers = {
      */
 
     if (
-      playersMemoryCache !== null
+      playersMemoryCache !==
+      null
     ) {
 
       return Promise.resolve(
@@ -430,10 +845,12 @@ export const CachedPlayers = {
 
 
     /*
-     * Reuse an existing request.
+     * Reuse existing request.
      */
 
-    if (playersRequestPromise) {
+    if (
+      playersRequestPromise
+    ) {
 
       return playersRequestPromise;
 
@@ -442,7 +859,9 @@ export const CachedPlayers = {
 
     playersRequestPromise =
       api
-        .get('/players/all/with-teams')
+        .get(
+          '/players/all/with-teams'
+        )
         .then(r => {
 
           playersMemoryCache =
@@ -499,7 +918,9 @@ export const Notifications = {
 
   getUser: (id) =>
     api
-      .get(`/notifications/${id}`)
+      .get(
+        `/notifications/${id}`
+      )
       .then(r => r.data),
 
 
@@ -519,6 +940,68 @@ export const Notifications = {
 
 
 /* =========================================================
+   HEALTH CHECK
+========================================================= */
+
+/*
+ * This does NOT modify the database.
+ *
+ * It simply checks whether the backend is reachable.
+ *
+ * NOTE:
+ * Your backend must have:
+ *
+ * GET /api/health
+ *
+ * for this function to return successfully.
+ */
+
+export async function healthCheck() {
+
+  try {
+
+    const response =
+      await api.get(
+        '/health',
+        {
+          timeout: 10000,
+        }
+      );
+
+    return {
+      online:
+        true,
+
+      status:
+        response.status,
+
+      data:
+        response.data,
+    };
+
+  } catch (error) {
+
+    return {
+      online:
+        false,
+
+      status:
+        error?.response?.status ||
+        null,
+
+      message:
+        getApiErrorMessage(
+          error,
+          'Server is currently unavailable'
+        ),
+    };
+
+  }
+
+}
+
+
+/* =========================================================
    ERROR MESSAGE
 ========================================================= */
 
@@ -527,12 +1010,96 @@ export function getApiErrorMessage(
   fallback = 'Something went wrong'
 ) {
 
-  return (
-    error?.response?.data?.message ||
-    error?.response?.data?.error ||
-    error?.message ||
-    fallback
-  );
+  /*
+   * Server returned an explicit message.
+   */
+
+  if (
+    error?.response?.data?.message
+  ) {
+
+    return String(
+      error.response.data.message
+    );
+
+  }
+
+
+  if (
+    error?.response?.data?.error
+  ) {
+
+    return String(
+      error.response.data.error
+    );
+
+  }
+
+
+  /*
+   * Network error.
+   */
+
+  if (
+    error?.code ===
+      'ERR_NETWORK'
+  ) {
+
+    return 'Unable to connect to the server. Retrying automatically...';
+
+  }
+
+
+  /*
+   * Timeout.
+   */
+
+  if (
+    error?.code ===
+      'ECONNABORTED' ||
+    error?.code ===
+      'ETIMEDOUT'
+  ) {
+
+    return 'Server is taking too long to respond. Please wait a moment and try again.';
+
+  }
+
+
+  /*
+   * 502 / 503 / 504.
+   */
+
+  const status =
+    error?.response?.status;
+
+  if (
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+
+    return 'Server is temporarily unavailable. Please wait a moment and try again.';
+
+  }
+
+
+  /*
+   * Axios message.
+   */
+
+  if (
+    error?.message
+  ) {
+
+    return String(
+      error.message
+    );
+
+  }
+
+
+  return fallback;
 
 }
 
