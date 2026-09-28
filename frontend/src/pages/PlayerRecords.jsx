@@ -52,6 +52,20 @@ function writeCache(key, value) {
 
 
 /* ============================================================
+   NUMBER HELPER
+============================================================ */
+
+function numberValue(value) {
+  const number =
+    Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : 0;
+}
+
+
+/* ============================================================
    PLAYER RECORDS
 ============================================================ */
 
@@ -107,6 +121,9 @@ export default function PlayerRecords() {
       !Array.isArray(cachedPlayers)
     );
 
+  const [refreshing, setRefreshing] =
+    useState(false);
+
   const [search, setSearch] =
     useState('');
 
@@ -115,6 +132,9 @@ export default function PlayerRecords() {
 
   const [activeTab, setActiveTab] =
     useState('batting');
+
+  const [sortBy, setSortBy] =
+    useState('runs');
 
   const [newPlayer, setNewPlayer] =
     useState({
@@ -245,6 +265,41 @@ export default function PlayerRecords() {
 
 
   /* ============================================================
+     REFRESH
+  ============================================================ */
+
+  const refreshPlayers =
+    useCallback(
+      async () => {
+
+        if (refreshing) {
+          return;
+        }
+
+        setRefreshing(true);
+
+        try {
+
+          await Promise.all([
+            loadPlayers(false),
+            loadTeams()
+          ]);
+
+        } finally {
+
+          setRefreshing(false);
+
+        }
+
+      },
+      [
+        refreshing,
+        loadPlayers
+      ]
+    );
+
+
+  /* ============================================================
      LOAD TEAMS
   ============================================================ */
 
@@ -316,8 +371,8 @@ export default function PlayerRecords() {
       (player) => {
 
         /*
-         * If the same player is clicked again,
-         * close the stats.
+         * If same player clicked again,
+         * close stats.
          */
         if (
           String(selected?.id) ===
@@ -331,10 +386,6 @@ export default function PlayerRecords() {
         }
 
 
-        /*
-         * Open this player directly below
-         * their name on mobile.
-         */
         setSelected(
           player
         );
@@ -489,10 +540,6 @@ export default function PlayerRecords() {
         }
 
 
-        /*
-         * Confirm fresh backend data
-         * in background.
-         */
         loadPlayers(
           false
         );
@@ -515,13 +562,14 @@ export default function PlayerRecords() {
         setDeletingId(
           null
         );
+
       }
 
     };
 
 
   /* ============================================================
-     SEARCH
+     SEARCH + SORT
   ============================================================ */
 
   const filtered =
@@ -533,23 +581,126 @@ export default function PlayerRecords() {
             .trim()
             .toLowerCase();
 
-        if (!query) {
-          return players;
+
+        let result =
+          Array.isArray(players)
+            ? [...players]
+            : [];
+
+
+        /* -----------------------------------------------
+           SEARCH
+        ----------------------------------------------- */
+
+        if (query) {
+
+          result =
+            result.filter(
+              player =>
+                String(
+                  player.name || ''
+                )
+                  .toLowerCase()
+                  .includes(query)
+            );
+
         }
 
-        return players.filter(
-          player =>
-            String(
-              player.name || ''
-            )
-              .toLowerCase()
-              .includes(query)
+
+        /* -----------------------------------------------
+           SORT
+        ----------------------------------------------- */
+
+        result.sort(
+          (a, b) => {
+
+            switch (sortBy) {
+
+              case 'runs':
+                return (
+                  numberValue(
+                    b?.batting?.runs
+                  ) -
+                  numberValue(
+                    a?.batting?.runs
+                  )
+                );
+
+
+              case 'wickets':
+                return (
+                  numberValue(
+                    b?.bowling?.wickets
+                  ) -
+                  numberValue(
+                    a?.bowling?.wickets
+                  )
+                );
+
+
+              case 'highest':
+                return (
+                  numberValue(
+                    b?.batting?.highest_score
+                  ) -
+                  numberValue(
+                    a?.batting?.highest_score
+                  )
+                );
+
+
+              case 'strike_rate':
+                return (
+                  numberValue(
+                    b?.batting?.strike_rate
+                  ) -
+                  numberValue(
+                    a?.batting?.strike_rate
+                  )
+                );
+
+
+              case 'economy':
+                return (
+                  numberValue(
+                    a?.bowling?.economy
+                  ) -
+                  numberValue(
+                    b?.bowling?.economy
+                  )
+                );
+
+
+              case 'name':
+                return String(
+                  a?.name || ''
+                ).localeCompare(
+                  String(
+                    b?.name || ''
+                  ),
+                  undefined,
+                  {
+                    sensitivity: 'base'
+                  }
+                );
+
+
+              default:
+                return 0;
+
+            }
+
+          }
         );
+
+
+        return result;
 
       },
       [
         players,
-        search
+        search,
+        sortBy
       ]
     );
 
@@ -592,15 +743,51 @@ export default function PlayerRecords() {
 
 
   /* ============================================================
+     SORT LABEL
+  ============================================================ */
+
+  const sortLabel =
+    useMemo(
+      () => {
+
+        const labels = {
+          runs:
+            'Runs ↓',
+          wickets:
+            'Wickets ↓',
+          highest:
+            'Highest Score ↓',
+          strike_rate:
+            'Strike Rate ↓',
+          economy:
+            'Economy ↑',
+          name:
+            'Name A–Z'
+        };
+
+        return (
+          labels[sortBy] ||
+          'Runs ↓'
+        );
+
+      },
+      [sortBy]
+    );
+
+
+  /* ============================================================
      PLAYER STATS CONTENT
-     
-     This is used INSIDE the selected player's card
-     on mobile and in the right panel on desktop.
   ============================================================ */
 
   const statsContent = (
 
-    <div className="space-y-3 min-w-0">
+    <div
+      className="
+        space-y-3
+        min-w-0
+        w-full
+      "
+    >
 
       {/* PLAYER INFO */}
 
@@ -610,6 +797,7 @@ export default function PlayerRecords() {
           !p-3
           sm:!p-5
           min-w-0
+          w-full
         "
       >
 
@@ -623,7 +811,12 @@ export default function PlayerRecords() {
           "
         >
 
-          <div className="min-w-0 flex-1">
+          <div
+            className="
+              min-w-0
+              flex-1
+            "
+          >
 
             <h2
               className="
@@ -661,8 +854,6 @@ export default function PlayerRecords() {
           </div>
 
 
-          {/* Close */}
-
           <button
             type="button"
             onClick={() => {
@@ -670,16 +861,19 @@ export default function PlayerRecords() {
               setStats(null);
             }}
             className="
-              min-w-[36px]
-              min-h-[36px]
+              w-9
+              h-9
+              min-w-9
               rounded-lg
               bg-slate-800
               text-slate-400
               hover:text-white
+              hover:bg-slate-700
               flex
               items-center
               justify-center
               shrink-0
+              transition
             "
             aria-label="Close player stats"
           >
@@ -702,6 +896,7 @@ export default function PlayerRecords() {
           bg-slate-900
           rounded-xl
           shadow-lg
+          w-full
         "
       >
 
@@ -792,6 +987,7 @@ export default function PlayerRecords() {
             !p-3
             sm:!p-5
             min-w-0
+            w-full
           "
         >
 
@@ -802,6 +998,7 @@ export default function PlayerRecords() {
               justify-between
               gap-2
               mb-3
+              min-w-0
             "
           >
 
@@ -811,6 +1008,7 @@ export default function PlayerRecords() {
                 text-emerald-400
                 text-sm
                 sm:text-base
+                min-w-0
               "
             >
               🏏 Batting Details
@@ -838,6 +1036,7 @@ export default function PlayerRecords() {
               gap-2
               sm:gap-3
               text-sm
+              min-w-0
             "
           >
 
@@ -855,6 +1054,7 @@ export default function PlayerRecords() {
                 stats?.batting
                   ?.runs
               }
+              highlight
             />
 
             <Stat
@@ -941,6 +1141,7 @@ export default function PlayerRecords() {
             !p-3
             sm:!p-5
             min-w-0
+            w-full
           "
         >
 
@@ -951,6 +1152,7 @@ export default function PlayerRecords() {
               justify-between
               gap-2
               mb-3
+              min-w-0
             "
           >
 
@@ -960,6 +1162,7 @@ export default function PlayerRecords() {
                 text-orange-400
                 text-sm
                 sm:text-base
+                min-w-0
               "
             >
               🎯 Bowling Details
@@ -987,6 +1190,7 @@ export default function PlayerRecords() {
               gap-2
               sm:gap-3
               text-sm
+              min-w-0
             "
           >
 
@@ -1028,6 +1232,7 @@ export default function PlayerRecords() {
                 stats?.bowling
                   ?.wickets
               }
+              highlight
             />
 
             <Stat
@@ -1066,10 +1271,6 @@ export default function PlayerRecords() {
 
   /* ============================================================
      PLAYER LIST
-     
-     IMPORTANT:
-     On mobile, stats are rendered immediately BELOW
-     the clicked player's row.
   ============================================================ */
 
   const playerList = (
@@ -1079,7 +1280,13 @@ export default function PlayerRecords() {
       {loadingStats &&
         players.length === 0 && (
 
-        <div className="card text-slate-400">
+        <div
+          className="
+            card
+            text-slate-400
+            min-w-0
+          "
+        >
           Loading player statistics...
         </div>
 
@@ -1089,8 +1296,28 @@ export default function PlayerRecords() {
       {!loadingStats &&
         Object.keys(grouped).length === 0 && (
 
-        <div className="card text-slate-400">
-          No players found. Add one above.
+        <div
+          className="
+            card
+            text-slate-400
+            min-w-0
+            text-center
+            py-8
+          "
+        >
+
+          <div className="text-3xl mb-2">
+            🔎
+          </div>
+
+          <div className="font-semibold text-slate-300">
+            No players found
+          </div>
+
+          <div className="text-xs text-slate-500 mt-1">
+            Try another search or add a new player.
+          </div>
+
         </div>
 
       )}
@@ -1108,36 +1335,90 @@ export default function PlayerRecords() {
 
           <div
             key={teamName}
-            className="mb-4 min-w-0"
+            className="
+              mb-4
+              min-w-0
+              w-full
+            "
           >
 
-            <h2
+            {/* TEAM HEADER */}
+
+            <div
               className="
-                text-sm
-                font-semibold
-                text-slate-400
+                flex
+                items-center
+                justify-between
+                gap-2
                 mb-2
                 px-1
+                min-w-0
               "
             >
-              {teamName}
-            </h2>
+
+              <h2
+                className="
+                  text-sm
+                  font-semibold
+                  text-slate-400
+                  truncate
+                "
+              >
+                {teamName}
+              </h2>
 
 
-            <div className="space-y-2 min-w-0">
+              <span
+                className="
+                  text-[11px]
+                  text-slate-600
+                  shrink-0
+                "
+              >
+                {teamPlayers.length}
+              </span>
+
+            </div>
+
+
+            <div
+              className="
+                space-y-2
+                min-w-0
+                w-full
+              "
+            >
 
               {teamPlayers.map(
-                player => {
+                (
+                  player,
+                  index
+                ) => {
 
                   const isSelected =
                     String(selected?.id) ===
                     String(player.id);
 
+
+                  const playerRuns =
+                    numberValue(
+                      player?.batting?.runs
+                    );
+
+                  const playerWickets =
+                    numberValue(
+                      player?.bowling?.wickets
+                    );
+
+
                   return (
 
                     <div
                       key={player.id}
-                      className="min-w-0"
+                      className="
+                        min-w-0
+                        w-full
+                      "
                     >
 
                       {/* PLAYER ROW */}
@@ -1153,10 +1434,11 @@ export default function PlayerRecords() {
                           flex
                           items-center
                           justify-between
-                          gap-3
-                          py-3
+                          gap-2
+                          py-2.5
                           px-3
                           min-w-0
+                          w-full
                           cursor-pointer
                           transition
                           hover:border-emerald-500
@@ -1169,51 +1451,191 @@ export default function PlayerRecords() {
                         `}
                       >
 
-                        <div className="min-w-0 flex-1">
-
-                          <div className="font-medium truncate">
-                            {player.name}
-                          </div>
-
-
-                          {/* Mobile role */}
-
-                          <div
-                            className="
-                              text-xs
-                              text-slate-500
-                              mt-0.5
-                              sm:hidden
-                            "
-                          >
-                            {player.role ||
-                              'Player'}
-                          </div>
-
-                        </div>
-
+                        {/* LEFT */}
 
                         <div
                           className="
                             flex
                             items-center
-                            gap-2
+                            gap-2.5
+                            min-w-0
+                            flex-1
+                          "
+                        >
+
+                          {/* RANK */}
+
+                          <div
+                            className="
+                              w-6
+                              min-w-6
+                              h-6
+                              rounded-full
+                              bg-slate-800
+                              text-slate-500
+                              text-[10px]
+                              font-bold
+                              flex
+                              items-center
+                              justify-center
+                              shrink-0
+                            "
+                          >
+                            {index + 1}
+                          </div>
+
+
+                          {/* PLAYER NAME */}
+
+                          <div
+                            className="
+                              min-w-0
+                              flex-1
+                            "
+                          >
+
+                            <div
+                              className="
+                                font-medium
+                                truncate
+                              "
+                            >
+                              {player.name}
+                            </div>
+
+
+                            <div
+                              className="
+                                text-xs
+                                text-slate-500
+                                mt-0.5
+                                truncate
+                              "
+                            >
+                              {player.role ||
+                                'Player'}
+                            </div>
+
+                          </div>
+
+                        </div>
+
+
+                        {/* RIGHT STATS */}
+
+                        <div
+                          className="
+                            flex
+                            items-center
+                            gap-1.5
                             shrink-0
                           "
                         >
 
-                          <span
+                          {/* RUNS */}
+
+                          <div
                             className="
-                              text-xs
-                              text-slate-400
                               hidden
-                              sm:block
+                              sm:flex
+                              flex-col
+                              items-center
+                              min-w-[42px]
                             "
                           >
-                            {player.role ||
-                              'Player'}
-                          </span>
 
+                            <span
+                              className="
+                                text-[9px]
+                                text-slate-600
+                                uppercase
+                              "
+                            >
+                              Runs
+                            </span>
+
+                            <span
+                              className="
+                                text-xs
+                                font-bold
+                                text-emerald-400
+                              "
+                            >
+                              {playerRuns}
+                            </span>
+
+                          </div>
+
+
+                          {/* WICKETS */}
+
+                          <div
+                            className="
+                              hidden
+                              sm:flex
+                              flex-col
+                              items-center
+                              min-w-[42px]
+                            "
+                          >
+
+                            <span
+                              className="
+                                text-[9px]
+                                text-slate-600
+                                uppercase
+                              "
+                            >
+                              Wkts
+                            </span>
+
+                            <span
+                              className="
+                                text-xs
+                                font-bold
+                                text-orange-400
+                              "
+                            >
+                              {playerWickets}
+                            </span>
+
+                          </div>
+
+
+                          {/* MOBILE RUNS */}
+
+                          <div
+                            className="
+                              sm:hidden
+                              min-w-[38px]
+                              text-center
+                            "
+                          >
+
+                            <div
+                              className="
+                                text-sm
+                                font-bold
+                                text-emerald-400
+                              "
+                            >
+                              {playerRuns}
+                            </div>
+
+                            <div
+                              className="
+                                text-[8px]
+                                text-slate-600
+                                uppercase
+                              "
+                            >
+                              Runs
+                            </div>
+
+                          </div>
+
+
+                          {/* DELETE */}
 
                           <button
                             type="button"
@@ -1228,16 +1650,21 @@ export default function PlayerRecords() {
                               player.id
                             }
                             className="
-                              min-w-[36px]
-                              min-h-[36px]
+                              w-9
+                              h-9
+                              min-w-9
+                              rounded-lg
                               flex
                               items-center
                               justify-center
-                              rounded-lg
                               text-red-400
                               hover:text-red-300
                               hover:bg-red-500/10
+                              active:scale-95
+                              transition
+                              shrink-0
                             "
+                            aria-label={`Remove ${player.name}`}
                           >
 
                             {deletingId ===
@@ -1254,9 +1681,6 @@ export default function PlayerRecords() {
 
                       {/* =================================================
                           MOBILE INLINE STATS
-
-                          Stats appear directly below the clicked
-                          player's name.
                       ================================================= */}
 
                       {isSelected &&
@@ -1272,6 +1696,8 @@ export default function PlayerRecords() {
                             border-t-0
                             border-emerald-500/50
                             p-2
+                            min-w-0
+                            w-full
                           "
                         >
 
@@ -1301,6 +1727,341 @@ export default function PlayerRecords() {
 
 
   /* ============================================================
+     ADD PLAYER FORM
+  ============================================================ */
+
+  const addPlayerForm = (
+
+    <form
+      onSubmit={addPlayer}
+      className="
+        card
+        space-y-3
+        mb-4
+        min-w-0
+        w-full
+      "
+    >
+
+      <div
+        className="
+          text-sm
+          font-semibold
+          text-emerald-400
+        "
+      >
+        ➕ Add New Player
+      </div>
+
+
+      <select
+        className="
+          input
+          min-h-[46px]
+          w-full
+        "
+        value={
+          newPlayer.team_id
+        }
+        onChange={(e) =>
+          setNewPlayer({
+            ...newPlayer,
+            team_id:
+              e.target.value
+          })
+        }
+      >
+
+        <option value="">
+          Select team
+        </option>
+
+        {teams.map(
+          team => (
+
+            <option
+              key={team.id}
+              value={team.id}
+            >
+              {team.name}
+            </option>
+
+          )
+        )}
+
+      </select>
+
+
+      <input
+        className="
+          input
+          min-h-[46px]
+          w-full
+        "
+        placeholder="Player name"
+        value={
+          newPlayer.name
+        }
+        onChange={(e) =>
+          setNewPlayer({
+            ...newPlayer,
+            name:
+              e.target.value
+          })
+        }
+      />
+
+
+      <select
+        className="
+          input
+          min-h-[46px]
+          w-full
+        "
+        value={
+          newPlayer.role
+        }
+        onChange={(e) =>
+          setNewPlayer({
+            ...newPlayer,
+            role:
+              e.target.value
+          })
+        }
+      >
+
+        <option value="batsman">
+          Batsman
+        </option>
+
+        <option value="bowler">
+          Bowler
+        </option>
+
+        <option value="all-rounder">
+          All-rounder
+        </option>
+
+        <option value="wicketkeeper">
+          Wicketkeeper
+        </option>
+
+      </select>
+
+
+      <button
+        type="submit"
+        className="
+          btn
+          btn-primary
+          w-full
+          min-h-[46px]
+        "
+      >
+        Add Player
+      </button>
+
+    </form>
+
+  );
+
+
+  /* ============================================================
+     SEARCH + FILTER BAR
+  ============================================================ */
+
+  const controls = (
+
+    <div
+      className="
+        space-y-2
+        mb-4
+        min-w-0
+      "
+    >
+
+      {/* SEARCH */}
+
+      <div
+        className="
+          relative
+          min-w-0
+        "
+      >
+
+        <span
+          className="
+            absolute
+            left-3
+            top-1/2
+            -translate-y-1/2
+            text-slate-500
+            pointer-events-none
+          "
+        >
+          🔍
+        </span>
+
+        <input
+          className="
+            input
+            min-h-[46px]
+            pl-10
+            pr-10
+            w-full
+          "
+          placeholder="Search player..."
+          value={search}
+          onChange={(e) =>
+            setSearch(
+              e.target.value
+            )
+          }
+        />
+
+
+        {search && (
+
+          <button
+            type="button"
+            onClick={() =>
+              setSearch('')
+            }
+            className="
+              absolute
+              right-2
+              top-1/2
+              -translate-y-1/2
+              w-8
+              h-8
+              rounded-lg
+              text-slate-500
+              hover:text-white
+              hover:bg-slate-800
+              flex
+              items-center
+              justify-center
+            "
+            aria-label="Clear search"
+          >
+            ✕
+          </button>
+
+        )}
+
+      </div>
+
+
+      {/* SORT */}
+
+      <div
+        className="
+          flex
+          items-center
+          gap-2
+          min-w-0
+        "
+      >
+
+        <div
+          className="
+            flex
+            items-center
+            gap-1.5
+            text-xs
+            text-slate-500
+            shrink-0
+          "
+        >
+          <span>↕️</span>
+          <span className="hidden sm:inline">
+            Sort
+          </span>
+        </div>
+
+
+        <select
+          value={sortBy}
+          onChange={(e) =>
+            setSortBy(
+              e.target.value
+            )
+          }
+          className="
+            input
+            min-h-[44px]
+            py-2
+            text-sm
+            flex-1
+            min-w-0
+            cursor-pointer
+          "
+          aria-label="Sort players"
+        >
+
+          <option value="runs">
+            Runs — Highest first
+          </option>
+
+          <option value="wickets">
+            Wickets — Highest first
+          </option>
+
+          <option value="highest">
+            Highest Score — Highest first
+          </option>
+
+          <option value="strike_rate">
+            Strike Rate — Highest first
+          </option>
+
+          <option value="economy">
+            Economy — Lowest first
+          </option>
+
+          <option value="name">
+            Name — A to Z
+          </option>
+
+        </select>
+
+      </div>
+
+
+      {/* ACTIVE SORT INDICATOR */}
+
+      <div
+        className="
+          flex
+          items-center
+          justify-between
+          px-1
+          text-[11px]
+          text-slate-500
+        "
+      >
+
+        <span>
+          Showing {filtered.length} player
+          {filtered.length !== 1 ? 's' : ''}
+        </span>
+
+        <span
+          className="
+            text-slate-600
+          "
+        >
+          {sortLabel}
+        </span>
+
+      </div>
+
+    </div>
+
+  );
+
+
+  /* ============================================================
      RENDER
   ============================================================ */
 
@@ -1310,6 +2071,7 @@ export default function PlayerRecords() {
       className="
         w-full
         min-w-0
+        overflow-x-hidden
         grid
         md:grid-cols-2
         gap-4
@@ -1320,14 +2082,158 @@ export default function PlayerRecords() {
 
       {/* =====================================================
           MOBILE
-          
-          Player stats appear directly under the clicked
-          player.
       ===================================================== */}
 
       <div
         className="
           md:hidden
+          min-w-0
+          w-full
+        "
+      >
+
+        {/* HEADER */}
+
+        <div
+          className="
+            flex
+            items-center
+            justify-between
+            gap-2
+            mb-1
+            min-w-0
+          "
+        >
+
+          <div
+            className="
+              min-w-0
+              flex-1
+            "
+          >
+
+            <h1
+              className="
+                text-2xl
+                font-bold
+                truncate
+              "
+            >
+              Player Stats
+            </h1>
+
+          </div>
+
+
+          <div
+            className="
+              flex
+              items-center
+              gap-1.5
+              shrink-0
+            "
+          >
+
+            {/* REFRESH */}
+
+            <button
+              type="button"
+              onClick={refreshPlayers}
+              disabled={refreshing}
+              className="
+                w-10
+                h-10
+                rounded-xl
+                bg-slate-800
+                border
+                border-slate-700
+                text-slate-300
+                flex
+                items-center
+                justify-center
+                active:scale-95
+                transition
+              "
+              aria-label="Refresh players"
+            >
+              {refreshing
+                ? '…'
+                : '↻'}
+            </button>
+
+
+            {/* ADD */}
+
+            <button
+              type="button"
+              className="
+                btn
+                btn-primary
+                text-sm
+                whitespace-nowrap
+                min-h-[44px]
+                px-3
+                shrink-0
+              "
+              onClick={() =>
+                setShowAdd(
+                  value => !value
+                )
+              }
+            >
+
+              {showAdd
+                ? 'Cancel'
+                : '+ Add'}
+
+            </button>
+
+          </div>
+
+        </div>
+
+
+        <p
+          className="
+            text-sm
+            text-slate-500
+            mb-4
+          "
+        >
+          Career records for your teams.
+        </p>
+
+
+        {/* ADD PLAYER */}
+
+        {showAdd &&
+          addPlayerForm}
+
+
+        {/* SEARCH + SORT */}
+
+        {controls}
+
+
+        {/* PLAYER LIST */}
+
+        <div>
+
+          {playerList}
+
+        </div>
+
+      </div>
+
+
+      {/* =====================================================
+          DESKTOP PLAYER LIST
+      ===================================================== */}
+
+      <div
+        className="
+          hidden
+          md:block
           min-w-0
           w-full
         "
@@ -1350,36 +2256,70 @@ export default function PlayerRecords() {
             className="
               text-2xl
               font-bold
-              min-w-0
             "
           >
             Player Stats
           </h1>
 
 
-          <button
-            type="button"
+          <div
             className="
-              btn
-              btn-primary
-              text-sm
-              whitespace-nowrap
-              min-h-[44px]
-              px-3
+              flex
+              items-center
+              gap-2
               shrink-0
             "
-            onClick={() =>
-              setShowAdd(
-                value => !value
-              )
-            }
           >
 
-            {showAdd
-              ? 'Cancel'
-              : '+ Add Player'}
+            <button
+              type="button"
+              onClick={refreshPlayers}
+              disabled={refreshing}
+              className="
+                w-11
+                h-11
+                rounded-xl
+                bg-slate-800
+                border
+                border-slate-700
+                text-slate-300
+                flex
+                items-center
+                justify-center
+                hover:bg-slate-700
+                transition
+              "
+              aria-label="Refresh players"
+            >
+              {refreshing
+                ? '…'
+                : '↻'}
+            </button>
 
-          </button>
+
+            <button
+              type="button"
+              className="
+                btn
+                btn-primary
+                text-sm
+                whitespace-nowrap
+                min-h-[44px]
+              "
+              onClick={() =>
+                setShowAdd(
+                  value => !value
+                )
+              }
+            >
+
+              {showAdd
+                ? 'Cancel'
+                : '+ Add Player'}
+
+            </button>
+
+          </div>
 
         </div>
 
@@ -1391,391 +2331,19 @@ export default function PlayerRecords() {
             mb-4
           "
         >
-          Career records for your teams.
-        </p>
-
-
-        {/* ADD PLAYER */}
-
-        {showAdd && (
-
-          <form
-            onSubmit={addPlayer}
-            className="
-              card
-              space-y-3
-              mb-4
-              min-w-0
-            "
-          >
-
-            <select
-              className="
-                input
-                min-h-[46px]
-              "
-              value={
-                newPlayer.team_id
-              }
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  team_id:
-                    e.target.value
-                })
-              }
-            >
-
-              <option value="">
-                Select team
-              </option>
-
-              {teams.map(
-                team => (
-
-                  <option
-                    key={team.id}
-                    value={team.id}
-                  >
-                    {team.name}
-                  </option>
-
-                )
-              )}
-
-            </select>
-
-
-            <input
-              className="
-                input
-                min-h-[46px]
-              "
-              placeholder="Player name"
-              value={
-                newPlayer.name
-              }
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  name:
-                    e.target.value
-                })
-              }
-            />
-
-
-            <select
-              className="
-                input
-                min-h-[46px]
-              "
-              value={
-                newPlayer.role
-              }
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  role:
-                    e.target.value
-                })
-              }
-            >
-
-              <option value="batsman">
-                Batsman
-              </option>
-
-              <option value="bowler">
-                Bowler
-              </option>
-
-              <option value="all-rounder">
-                All-rounder
-              </option>
-
-              <option value="wicketkeeper">
-                Wicketkeeper
-              </option>
-
-            </select>
-
-
-            <button
-              type="submit"
-              className="
-                btn
-                btn-primary
-                w-full
-                min-h-[46px]
-              "
-            >
-              Add Player
-            </button>
-
-          </form>
-
-        )}
-
-
-        {/* SEARCH */}
-
-        <input
-          className="
-            input
-            mb-4
-            min-h-[46px]
-          "
-          placeholder="Search player..."
-          value={search}
-          onChange={(e) =>
-            setSearch(
-              e.target.value
-            )
-          }
-        />
-
-
-        {/* PLAYER LIST */}
-
-        <div>
-
-          <div
-            className="
-              flex
-              items-center
-              justify-between
-              mb-2
-              px-1
-            "
-          >
-
-            <h2
-              className="
-                text-sm
-                font-semibold
-                text-slate-300
-              "
-            >
-              Players
-            </h2>
-
-
-            <span
-              className="
-                text-xs
-                text-slate-500
-              "
-            >
-              {filtered.length}
-            </span>
-
-          </div>
-
-
-          {playerList}
-
-        </div>
-
-      </div>
-
-
-      {/* =====================================================
-          DESKTOP PLAYER LIST
-      ===================================================== */}
-
-      <div
-        className="
-          hidden
-          md:block
-          min-w-0
-          w-full
-        "
-      >
-
-        <div
-          className="
-            flex
-            items-center
-            justify-between
-            gap-3
-            mb-1
-          "
-        >
-
-          <h1 className="text-2xl font-bold">
-            Player Stats
-          </h1>
-
-
-          <button
-            type="button"
-            className="
-              btn
-              btn-primary
-              text-sm
-              whitespace-nowrap
-              min-h-[44px]
-            "
-            onClick={() =>
-              setShowAdd(
-                value => !value
-              )
-            }
-          >
-
-            {showAdd
-              ? 'Cancel'
-              : '+ Add Player'}
-
-          </button>
-
-        </div>
-
-
-        <p className="text-sm text-slate-500 mb-4">
           Career records for players on your own teams only.
         </p>
 
 
         {/* ADD PLAYER */}
 
-        {showAdd && (
-
-          <form
-            onSubmit={addPlayer}
-            className="
-              card
-              space-y-3
-              mb-4
-            "
-          >
-
-            <select
-              className="
-                input
-                min-h-[46px]
-              "
-              value={
-                newPlayer.team_id
-              }
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  team_id:
-                    e.target.value
-                })
-              }
-            >
-
-              <option value="">
-                Select team
-              </option>
-
-              {teams.map(
-                team => (
-
-                  <option
-                    key={team.id}
-                    value={team.id}
-                  >
-                    {team.name}
-                  </option>
-
-                )
-              )}
-
-            </select>
+        {showAdd &&
+          addPlayerForm}
 
 
-            <input
-              className="
-                input
-                min-h-[46px]
-              "
-              placeholder="Player name"
-              value={
-                newPlayer.name
-              }
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  name:
-                    e.target.value
-                })
-              }
-            />
+        {/* SEARCH + SORT */}
 
-
-            <select
-              className="
-                input
-                min-h-[46px]
-              "
-              value={
-                newPlayer.role
-              }
-              onChange={(e) =>
-                setNewPlayer({
-                  ...newPlayer,
-                  role:
-                    e.target.value
-                })
-              }
-            >
-
-              <option value="batsman">
-                Batsman
-              </option>
-
-              <option value="bowler">
-                Bowler
-              </option>
-
-              <option value="all-rounder">
-                All-rounder
-              </option>
-
-              <option value="wicketkeeper">
-                Wicketkeeper
-              </option>
-
-            </select>
-
-
-            <button
-              type="submit"
-              className="
-                btn
-                btn-primary
-                w-full
-                min-h-[46px]
-              "
-            >
-              Add Player
-            </button>
-
-          </form>
-
-        )}
-
-
-        {/* SEARCH */}
-
-        <input
-          className="
-            input
-            mb-4
-            min-h-[46px]
-          "
-          placeholder="Search player..."
-          value={search}
-          onChange={(e) =>
-            setSearch(
-              e.target.value
-            )
-          }
-        />
+        {controls}
 
 
         {/* PLAYER LIST */}
@@ -1798,28 +2366,87 @@ export default function PlayerRecords() {
         "
       >
 
-        <h1
+        <div
           className="
-            text-2xl
-            font-bold
+            flex
+            items-center
+            justify-between
+            gap-2
             mb-4
           "
         >
-          Career Record
-        </h1>
+
+          <h1
+            className="
+              text-2xl
+              font-bold
+            "
+          >
+            Career Record
+          </h1>
+
+
+          {selected && (
+
+            <span
+              className="
+                text-xs
+                text-slate-500
+              "
+            >
+              {selected.name}
+            </span>
+
+          )}
+
+        </div>
+
 
         {stats && selected
           ? statsContent
           : (
-            <div className="card text-slate-400">
-              Select a player to see their full
-              batting and bowling record.
+
+            <div
+              className="
+                card
+                text-slate-400
+                text-center
+                py-10
+              "
+            >
+
+              <div className="text-4xl mb-3">
+                📊
+              </div>
+
+              <div
+                className="
+                  text-slate-300
+                  font-semibold
+                "
+              >
+                Select a player
+              </div>
+
+              <div
+                className="
+                  text-xs
+                  text-slate-500
+                  mt-1
+                "
+              >
+                View their complete batting
+                and bowling career.
+              </div>
+
             </div>
+
           )}
 
       </div>
 
     </div>
+
   );
 }
 
@@ -1830,13 +2457,14 @@ export default function PlayerRecords() {
 
 function Stat({
   label,
-  value
+  value,
+  highlight = false
 }) {
 
   return (
 
     <div
-      className="
+      className={`
         bg-slate-900
         rounded-xl
         p-3
@@ -1846,7 +2474,12 @@ function Stat({
         flex-col
         justify-center
         min-w-0
-      "
+        ${
+          highlight
+            ? 'ring-1 ring-emerald-500/20'
+            : ''
+        }
+      `}
     >
 
       <div
@@ -1862,12 +2495,17 @@ function Stat({
 
 
       <div
-        className="
+        className={`
           text-lg
           sm:text-xl
           font-bold
           mt-1
-        "
+          ${
+            highlight
+              ? 'text-emerald-400'
+              : 'text-white'
+          }
+        `}
       >
         {value ?? 0}
       </div>
@@ -1875,4 +2513,5 @@ function Stat({
     </div>
 
   );
+
 }
