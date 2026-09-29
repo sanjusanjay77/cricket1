@@ -7,40 +7,13 @@ const MAX_WICKETS = 10;
    INNINGS CONCURRENCY LOCK
 ========================================================= */
 
-/*
- * Prevents two scoring operations for the SAME innings
- * from running at the same time inside the same Node.js
- * process.
- *
- * Example:
- *
- * User A -> ball 21
- * User B -> ball 22
- *
- * A gets the lock first.
- * B waits until A completely finishes.
- *
- * This prevents:
- * - duplicate ball_sequence
- * - stale innings totals
- * - simultaneous striker updates
- * - simultaneous undo + ball recording
- *
- * IMPORTANT:
- * This lock is process-local.
- * If Render runs multiple backend instances, a database-level
- * transaction/idempotency mechanism is still recommended.
- */
-
 const inningsLocks = new Map();
 
 function withInningsLock(
   inningsId,
   operation
 ) {
-
-  const key =
-    String(inningsId);
+  const key = String(inningsId);
 
   const previous =
     inningsLocks.get(key) ||
@@ -57,12 +30,10 @@ function withInningsLock(
   );
 
   current.finally(() => {
-
     if (
       inningsLocks.get(key) ===
       current
     ) {
-
       inningsLocks.delete(key);
     }
   });
@@ -75,7 +46,6 @@ function withInningsLock(
 ========================================================= */
 
 function oversStr(totalBalls) {
-
   const balls =
     Number(totalBalls || 0);
 
@@ -83,7 +53,6 @@ function oversStr(totalBalls) {
 }
 
 async function getInnings(inningsId) {
-
   if (!inningsId) {
     return null;
   }
@@ -96,7 +65,6 @@ async function getInnings(inningsId) {
 }
 
 async function getMatch(matchId) {
-
   if (!matchId) {
     return null;
   }
@@ -117,7 +85,6 @@ function computeRunEffects({
   extra_type = null,
   extra_runs = 0
 }) {
-
   runs =
     Number(runs) || 0;
 
@@ -127,7 +94,6 @@ function computeRunEffects({
   switch (extra_type) {
 
     case 'wide': {
-
       const totalWideRuns =
         Math.max(
           1,
@@ -135,7 +101,6 @@ function computeRunEffects({
         );
 
       return {
-
         teamRuns:
           totalWideRuns,
 
@@ -151,7 +116,6 @@ function computeRunEffects({
     }
 
     case 'noball': {
-
       const noBallExtra =
         Math.max(
           1,
@@ -159,7 +123,6 @@ function computeRunEffects({
         );
 
       return {
-
         teamRuns:
           noBallExtra + runs,
 
@@ -175,7 +138,6 @@ function computeRunEffects({
     }
 
     case 'bye': {
-
       const byeRuns =
         Math.max(
           0,
@@ -183,7 +145,6 @@ function computeRunEffects({
         );
 
       return {
-
         teamRuns:
           byeRuns,
 
@@ -199,7 +160,6 @@ function computeRunEffects({
     }
 
     case 'legbye': {
-
       const legByeRuns =
         Math.max(
           0,
@@ -207,7 +167,6 @@ function computeRunEffects({
         );
 
       return {
-
         teamRuns:
           legByeRuns,
 
@@ -223,7 +182,6 @@ function computeRunEffects({
     }
 
     case 'penalty': {
-
       const penaltyRuns =
         Math.max(
           0,
@@ -231,7 +189,6 @@ function computeRunEffects({
         );
 
       return {
-
         teamRuns:
           penaltyRuns,
 
@@ -247,9 +204,7 @@ function computeRunEffects({
     }
 
     default:
-
       return {
-
         teamRuns:
           runs,
 
@@ -270,7 +225,6 @@ function computeRunEffects({
 ========================================================= */
 
 function getBallDisplay(ball) {
-
   if (!ball) {
     return '';
   }
@@ -278,7 +232,6 @@ function getBallDisplay(ball) {
   if (
     Number(ball.is_wicket) === 1
   ) {
-
     return 'W';
   }
 
@@ -298,7 +251,6 @@ function getBallDisplay(ball) {
   if (
     extraType === 'wide'
   ) {
-
     return extraRuns > 1
       ? `WD${extraRuns}`
       : 'WD';
@@ -307,7 +259,6 @@ function getBallDisplay(ball) {
   if (
     extraType === 'noball'
   ) {
-
     return batRuns > 0
       ? `NB+${batRuns}`
       : 'NB';
@@ -316,21 +267,18 @@ function getBallDisplay(ball) {
   if (
     extraType === 'bye'
   ) {
-
     return `B${extraRuns}`;
   }
 
   if (
     extraType === 'legbye'
   ) {
-
     return `LB${extraRuns}`;
   }
 
   if (
     extraType === 'penalty'
   ) {
-
     return `P${extraRuns}`;
   }
 
@@ -344,7 +292,6 @@ function getBallDisplay(ball) {
 async function getNextBallSequence(
   inningsId
 ) {
-
   const row =
     await db.prepare(`
       SELECT ball_sequence
@@ -369,18 +316,6 @@ async function recordBall(
   inningsId,
   payload = {}
 ) {
-
-  /*
-   * IMPORTANT:
-   *
-   * Everything from reading the innings state to inserting
-   * the ball and updating the innings is inside the same
-   * per-innings lock.
-   *
-   * This is the main protection against two scorer requests
-   * arriving at almost exactly the same time.
-   */
-
   return withInningsLock(
     inningsId,
     async () => {
@@ -391,18 +326,20 @@ async function recordBall(
         );
 
       if (!innings) {
-
         throw new Error(
           'Innings not found'
         );
       }
 
+      /*
+       * Never allow a ball after the innings
+       * has already been finalized.
+       */
       if (
         Number(
           innings.is_completed
-        )
+        ) === 1
       ) {
-
         throw new Error(
           'Innings is already completed'
         );
@@ -412,7 +349,6 @@ async function recordBall(
         !innings.striker_id ||
         !innings.non_striker_id
       ) {
-
         throw new Error(
           'Set both batsmen before recording a ball'
         );
@@ -421,7 +357,6 @@ async function recordBall(
       if (
         !innings.current_bowler_id
       ) {
-
         throw new Error(
           'Set the bowler before recording a ball'
         );
@@ -490,7 +425,6 @@ async function recordBall(
       if (is_wicket) {
 
         if (!dismissed_id) {
-
           throw new Error(
             'Dismissed player is required'
           );
@@ -504,7 +438,6 @@ async function recordBall(
             dismissed_id
           )
         ) {
-
           throw new Error(
             'Dismissed player must be the current striker or non-striker'
           );
@@ -514,12 +447,6 @@ async function recordBall(
       /* -----------------------------------------------------
          BALL NUMBER
       ----------------------------------------------------- */
-
-      /*
-       * Because this operation is locked, the sequence is
-       * calculated only after all previous scoring operations
-       * for this innings have completed.
-       */
 
       const ballSequence =
         await getNextBallSequence(
@@ -595,11 +522,9 @@ async function recordBall(
         commentary
       );
 
-      /*
-       * -----------------------------------------------------
-       * NEW TOTALS
-       * -----------------------------------------------------
-       */
+      /* -----------------------------------------------------
+         NEW TOTALS
+      ----------------------------------------------------- */
 
       const newTotalBalls =
         currentTotalBalls +
@@ -644,7 +569,6 @@ async function recordBall(
           dismissed_id ===
           newStriker
         ) {
-
           newStriker =
             null;
         }
@@ -653,7 +577,6 @@ async function recordBall(
           dismissed_id ===
           newNonStriker
         ) {
-
           newNonStriker =
             null;
         }
@@ -688,11 +611,15 @@ async function recordBall(
         overJustCompleted
       ) {
 
+        /*
+         * End-of-over strike rotation.
+         *
+         * Do this only when both batsmen still exist.
+         */
         if (
           newStriker &&
           newNonStriker
         ) {
-
           [
             newStriker,
             newNonStriker
@@ -702,6 +629,12 @@ async function recordBall(
           ];
         }
 
+        /*
+         * Normally a new bowler is required.
+         *
+         * If this is the final over, the innings
+         * will immediately be finalized below.
+         */
         newBowler =
           null;
       }
@@ -711,7 +644,6 @@ async function recordBall(
       ----------------------------------------------------- */
 
       const extraColumn = {
-
         wide:
           'extras_wide',
 
@@ -726,7 +658,6 @@ async function recordBall(
 
         penalty:
           'extras_penalty'
-
       }[extra_type];
 
       let updateSql = `
@@ -738,13 +669,9 @@ async function recordBall(
       `;
 
       const updateParams = [
-
         newTotalRuns,
-
         newTotalWickets,
-
         newTotalBalls
-
       ];
 
       if (
@@ -792,23 +719,6 @@ async function recordBall(
 
       } catch (error) {
 
-        /*
-         * IMPORTANT:
-         *
-         * If the ball was inserted successfully but the
-         * innings update fails, remove that ball.
-         *
-         * This prevents:
-         *
-         * balls table:
-         *   ball exists
-         *
-         * innings table:
-         *   ball does not exist in totals
-         *
-         * which would create inconsistent score data.
-         */
-
         try {
 
           await db.prepare(`
@@ -837,9 +747,26 @@ async function recordBall(
       }
 
       /* -----------------------------------------------------
-         FAST FINALIZATION
+         FINALIZATION CHECK
       ----------------------------------------------------- */
 
+      /*
+       * We only need the match when we need to determine
+       * the overs limit.
+       *
+       * This avoids an unnecessary matches query for
+       * every ordinary ball.
+       */
+      let match = null;
+
+      let maxBalls = 0;
+
+      let oversDone = false;
+
+      /*
+       * The following conditions can finish an innings
+       * without reaching the end of an over.
+       */
       const targetReached =
         innings.target != null &&
         newTotalRuns >=
@@ -851,9 +778,35 @@ async function recordBall(
         newTotalWickets >=
         MAX_WICKETS;
 
-      const needsFinalizationCheck =
+      if (
+        overJustCompleted ||
+        targetReached ||
+        allOut
+      ) {
+
+        match =
+          await getMatch(
+            innings.match_id
+          );
+
+        maxBalls =
+          Number(
+            match?.overs_limit || 0
+          ) * 6;
+
+        oversDone =
+          maxBalls > 0 &&
+          newTotalBalls >=
+            maxBalls;
+      }
+
+      const inningsCompleted =
         allOut ||
         targetReached ||
+        oversDone;
+
+      const needsFinalizationCheck =
+        inningsCompleted ||
         overJustCompleted;
 
       const updatedInnings = {
@@ -899,6 +852,10 @@ async function recordBall(
           extrasToAdd;
       }
 
+      /* -----------------------------------------------------
+         FINALIZE
+      ----------------------------------------------------- */
+
       if (
         needsFinalizationCheck
       ) {
@@ -906,18 +863,37 @@ async function recordBall(
         await checkAndFinalizeInnings(
           inningsId
         );
+      }
 
-        if (
-          allOut ||
-          targetReached
-        ) {
+      /*
+       * IMPORTANT FIX
+       *
+       * Previously is_completed was only returned for:
+       *
+       * - all out
+       * - target reached
+       *
+       * That caused the final over to look like:
+       *
+       * 20.0 overs
+       * bowler = null
+       *
+       * and the frontend opened:
+       *
+       * SELECT NEXT BOWLER
+       *
+       * Now the final-over condition also returns
+       * is_completed = 1.
+       */
+      if (
+        inningsCompleted
+      ) {
 
-          updatedInnings.is_completed =
-            1;
+        updatedInnings.is_completed =
+          1;
 
-          updatedInnings.current_bowler_id =
-            null;
-        }
+        updatedInnings.current_bowler_id =
+          null;
       }
 
       /* -----------------------------------------------------
@@ -975,7 +951,6 @@ async function recordBall(
 
         display:
           getBallDisplay({
-
             is_wicket:
               is_wicket
                 ? 1
@@ -998,6 +973,14 @@ async function recordBall(
           savedBall,
 
         overJustCompleted,
+
+        inningsCompleted,
+
+        oversDone,
+
+        targetReached,
+
+        allOut,
 
         teamRuns,
 
@@ -1036,30 +1019,9 @@ async function undoLastBall(
   inningsId
 ) {
 
-  /*
-   * IMPORTANT:
-   *
-   * Undo uses the SAME innings lock as recordBall().
-   *
-   * Therefore this cannot happen:
-   *
-   * recordBall()
-   *       +
-   * undoLastBall()
-   *
-   * at the exact same time for the same innings.
-   */
-
   return withInningsLock(
     inningsId,
     async () => {
-
-      /*
-       * Read the innings BEFORE deleting the ball.
-       *
-       * This allows us to preserve the selected batsmen
-       * and bowler when Undo removes the first ball.
-       */
 
       const beforeUndo =
         await getInnings(
@@ -1072,10 +1034,6 @@ async function undoLastBall(
           'Innings not found'
         );
       }
-
-      /*
-       * Get the latest ball.
-       */
 
       const last =
         await db.prepare(`
@@ -1093,10 +1051,6 @@ async function undoLastBall(
         );
       }
 
-      /*
-       * Check if this is the first ball.
-       */
-
       const wasFirstBall =
         Number(
           beforeUndo.total_balls || 0
@@ -1106,9 +1060,10 @@ async function undoLastBall(
         ) === 1;
 
       /*
-       * Preserve current player selections.
+       * Preserve current selections so undoing the first
+       * ball does not force the scorer to select everything
+       * again.
        */
-
       const preservedStriker =
         beforeUndo.striker_id ||
         null;
@@ -1122,9 +1077,9 @@ async function undoLastBall(
         last.bowler_id ||
         null;
 
-      /*
-       * Delete only the latest ball.
-       */
+      /* -----------------------------------------------------
+         DELETE LAST BALL
+      ----------------------------------------------------- */
 
       await db.prepare(`
         DELETE FROM balls
@@ -1133,30 +1088,17 @@ async function undoLastBall(
         last.id
       );
 
-      /*
-       * Recalculate everything from the
-       * remaining balls.
-       */
+      /* -----------------------------------------------------
+         RECOMPUTE
+      ----------------------------------------------------- */
 
       await recomputeInningsFromBalls(
         inningsId
       );
 
-      /*
-       * -----------------------------------------------------
-       * FIRST BALL UNDO FIX
-       * -----------------------------------------------------
-       *
-       * After deleting the first ball there are zero balls.
-       *
-       * Therefore recomputation cannot know the batsmen
-       * or bowler that were selected before that ball.
-       *
-       * Restore them directly in the innings table.
-       *
-       * We DO NOT call set-batsmen().
-       * We DO NOT create another ball.
-       */
+      /* -----------------------------------------------------
+         FIRST BALL UNDO
+      ----------------------------------------------------- */
 
       if (
         wasFirstBall
@@ -1178,20 +1120,16 @@ async function undoLastBall(
       }
 
       /*
-       * Undo must make the innings active again.
+       * Undo must reopen the innings.
        */
-
       await db.prepare(`
         UPDATE innings
-        SET is_completed = 0
+        SET
+          is_completed = 0
         WHERE id = ?
       `).run(
         inningsId
       );
-
-      /*
-       * Get innings after Undo.
-       */
 
       const innings =
         await getInnings(
@@ -1202,7 +1140,6 @@ async function undoLastBall(
        * If match was temporarily at innings-break,
        * restore live status.
        */
-
       if (
         innings
       ) {
@@ -1216,10 +1153,6 @@ async function undoLastBall(
           innings.match_id
         );
       }
-
-      /*
-       * Final authoritative innings state.
-       */
 
       const updatedInnings =
         await getInnings(
@@ -1292,11 +1225,6 @@ async function recomputeInningsFromBalls(
   let nonStriker = null;
   let bowler = null;
 
-  /*
-   * If balls exist, start with the first ball's
-   * batsmen and bowler.
-   */
-
   if (
     balls.length > 0
   ) {
@@ -1311,17 +1239,12 @@ async function recomputeInningsFromBalls(
       balls[0].bowler_id;
   }
 
-  /*
-   * Replay every remaining ball.
-   */
-
   for (
     const b of balls
   ) {
 
     const effect =
       computeRunEffects({
-
         runs:
           b.runs_batsman,
 
@@ -1339,14 +1262,16 @@ async function recomputeInningsFromBalls(
       Number(b.is_legal) === 1
     ) {
 
-      totalBalls += 1;
+      totalBalls +=
+        1;
     }
 
     if (
       Number(b.is_wicket) === 1
     ) {
 
-      totalWickets += 1;
+      totalWickets +=
+        1;
     }
 
     /* -----------------------------------------------------
@@ -1389,10 +1314,6 @@ async function recomputeInningsFromBalls(
     let ballNonStriker =
       b.non_striker_id;
 
-    /*
-     * WICKET
-     */
-
     if (
       Number(b.is_wicket) === 1 &&
       b.dismissed_id
@@ -1415,10 +1336,6 @@ async function recomputeInningsFromBalls(
           null;
       }
 
-    /*
-     * ODD RUN
-     */
-
     } else if (
       effect.runsRun % 2 === 1
     ) {
@@ -1438,29 +1355,21 @@ async function recomputeInningsFromBalls(
     nonStriker =
       ballNonStriker;
 
-    /*
-     * -----------------------------------------------------
-     * BOWLER
-     * -----------------------------------------------------
-     */
+    /* -----------------------------------------------------
+       BOWLER
+    ----------------------------------------------------- */
 
     bowler =
       b.bowler_id;
 
-    /*
-     * -----------------------------------------------------
-     * OVER COMPLETE
-     * -----------------------------------------------------
-     */
+    /* -----------------------------------------------------
+       OVER COMPLETE
+    ----------------------------------------------------- */
 
     if (
       Number(b.is_legal) === 1 &&
       totalBalls % 6 === 0
     ) {
-
-      /*
-       * End-of-over strike change.
-       */
 
       if (
         striker &&
@@ -1476,20 +1385,10 @@ async function recomputeInningsFromBalls(
         ];
       }
 
-      /*
-       * Next over requires a new bowler.
-       */
-
       bowler =
         null;
     }
   }
-
-  /*
-   * -------------------------------------------------------
-   * SAVE RECOMPUTED STATE
-   * -------------------------------------------------------
-   */
 
   await db.prepare(`
     UPDATE innings
@@ -1596,6 +1495,11 @@ async function checkAndFinalizeInnings(
     return;
   }
 
+  /*
+   * IMPORTANT:
+   *
+   * This is the authoritative database finalization.
+   */
   await db.prepare(`
     UPDATE innings
     SET
@@ -1606,6 +1510,11 @@ async function checkAndFinalizeInnings(
     inningsId
   );
 
+  /*
+   * Second innings:
+   * finalize the match only when innings #2
+   * is completed.
+   */
   if (
     Number(
       innings.innings_number
@@ -1619,6 +1528,17 @@ async function checkAndFinalizeInnings(
     return;
   }
 
+  /*
+   * First innings is complete.
+   *
+   * We intentionally DO NOT invent an INSERT for
+   * innings #2 here because your supplied database
+   * code does not show how innings #2 is created.
+   *
+   * Your match/innings creation controller should
+   * already create the second innings if that is
+   * your current architecture.
+   */
   await db.prepare(`
     UPDATE matches
     SET
@@ -2049,7 +1969,6 @@ function buildBowlingScorecard(
 
     const effect =
       computeRunEffects({
-
         runs:
           b.runs_batsman,
 
@@ -2066,7 +1985,6 @@ function buildBowlingScorecard(
       ) === 1;
 
     if (legal) {
-
       s.legalBalls +=
         1;
     }
@@ -2116,7 +2034,8 @@ function buildBowlingScorecard(
 
       s.overRuns[
         overNo
-      ].legalBalls += 1;
+      ].legalBalls +=
+        1;
     }
   }
 
@@ -2242,7 +2161,6 @@ function buildPartnership(
 
     const effect =
       computeRunEffects({
-
         runs:
           b.runs_batsman,
 
@@ -2266,9 +2184,7 @@ function buildPartnership(
   }
 
   return {
-
     runs,
-
     balls:
       ballsFaced
   };
@@ -2322,7 +2238,6 @@ function buildPartnerships(
 
     const effect =
       computeRunEffects({
-
         runs:
           b.runs_batsman,
 
@@ -2447,7 +2362,6 @@ function buildFallOfWickets(
 
     const effect =
       computeRunEffects({
-
         runs:
           b.runs_batsman,
 
@@ -2624,7 +2538,6 @@ function buildExtras(
 
       const effect =
         computeRunEffects({
-
           runs:
             b.runs_batsman,
 
@@ -2640,46 +2553,36 @@ function buildExtras(
       ) {
 
         case 'wide':
-
           wide +=
             effect.teamRuns;
-
           break;
 
         case 'noball':
-
           noball +=
             Number(
               b.extra_runs || 0
             );
-
           break;
 
         case 'bye':
-
           bye +=
             Number(
               b.extra_runs || 0
             );
-
           break;
 
         case 'legbye':
-
           legbye +=
             Number(
               b.extra_runs || 0
             );
-
           break;
 
         case 'penalty':
-
           penalty +=
             Number(
               b.extra_runs || 0
             );
-
           break;
 
         default:
@@ -3247,7 +3150,6 @@ async function computeCareerBowlingStats(
 
     const effect =
       computeRunEffects({
-
         runs:
           b.runs_batsman,
 
@@ -3686,7 +3588,6 @@ async function getAllPlayerCareerStats() {
 
     const effect =
       computeRunEffects({
-
         runs:
           ball.runs_batsman,
 
@@ -4441,7 +4342,6 @@ async function getAllTimeRecords() {
 
       const effect =
         computeRunEffects({
-
           runs:
             b.runs_batsman,
 
