@@ -613,8 +613,6 @@ async function recordBall(
 
         /*
          * End-of-over strike rotation.
-         *
-         * Do this only when both batsmen still exist.
          */
         if (
           newStriker &&
@@ -630,10 +628,8 @@ async function recordBall(
         }
 
         /*
-         * Normally a new bowler is required.
-         *
-         * If this is the final over, the innings
-         * will immediately be finalized below.
+         * A new bowler is required
+         * unless the innings ends.
          */
         newBowler =
           null;
@@ -750,13 +746,6 @@ async function recordBall(
          FINALIZATION CHECK
       ----------------------------------------------------- */
 
-      /*
-       * We only need the match when we need to determine
-       * the overs limit.
-       *
-       * This avoids an unnecessary matches query for
-       * every ordinary ball.
-       */
       let match = null;
 
       let maxBalls = 0;
@@ -764,8 +753,8 @@ async function recordBall(
       let oversDone = false;
 
       /*
-       * The following conditions can finish an innings
-       * without reaching the end of an over.
+       * These conditions can finish an innings
+       * without completing an over.
        */
       const targetReached =
         innings.target != null &&
@@ -778,6 +767,9 @@ async function recordBall(
         newTotalWickets >=
         MAX_WICKETS;
 
+      /*
+       * Only query the match when needed.
+       */
       if (
         overJustCompleted ||
         targetReached ||
@@ -856,43 +848,49 @@ async function recordBall(
          FINALIZE
       ----------------------------------------------------- */
 
+      let finalizationResult =
+        null;
+
       if (
         needsFinalizationCheck
       ) {
 
-        await checkAndFinalizeInnings(
-          inningsId
-        );
+        finalizationResult =
+          await checkAndFinalizeInnings(
+            inningsId
+          );
       }
 
       /*
-       * IMPORTANT FIX
+       * The actual database state is authoritative.
        *
-       * Previously is_completed was only returned for:
-       *
-       * - all out
-       * - target reached
-       *
-       * That caused the final over to look like:
-       *
-       * 20.0 overs
-       * bowler = null
-       *
-       * and the frontend opened:
-       *
-       * SELECT NEXT BOWLER
-       *
-       * Now the final-over condition also returns
-       * is_completed = 1.
+       * Reload it after finalization so that the
+       * response contains the latest is_completed state.
+       */
+      let finalInnings =
+        await getInnings(
+          inningsId
+        );
+
+      if (
+        !finalInnings
+      ) {
+        finalInnings =
+          updatedInnings;
+      }
+
+      /*
+       * If this innings completed, make sure the
+       * response clearly says so.
        */
       if (
         inningsCompleted
       ) {
 
-        updatedInnings.is_completed =
+        finalInnings.is_completed =
           1;
 
-        updatedInnings.current_bowler_id =
+        finalInnings.current_bowler_id =
           null;
       }
 
@@ -988,24 +986,43 @@ async function recordBall(
 
         totalRuns:
           Number(
-            updatedInnings?.total_runs ??
+            finalInnings?.total_runs ??
             newTotalRuns
           ),
 
         totalWickets:
           Number(
-            updatedInnings?.total_wickets ??
+            finalInnings?.total_wickets ??
             newTotalWickets
           ),
 
         totalBalls:
           Number(
-            updatedInnings?.total_balls ??
+            finalInnings?.total_balls ??
             newTotalBalls
           ),
 
         innings:
-          updatedInnings
+          finalInnings,
+
+        /*
+         * IMPORTANT:
+         *
+         * When innings #1 finishes,
+         * this contains the newly created
+         * innings #2.
+         */
+        nextInnings:
+          finalizationResult?.nextInnings ||
+          null,
+
+        /*
+         * True only when innings #2
+         * has finished.
+         */
+        matchCompleted:
+          finalizationResult?.matchCompleted ||
+          false
       };
     }
   );
@@ -1051,6 +1068,89 @@ async function undoLastBall(
         );
       }
 
+      /*
+       * -----------------------------------------------------
+       * IMPORTANT FIRST-INNINGS UNDO SAFETY
+       * -----------------------------------------------------
+       *
+       * If innings #1 already caused innings #2
+       * to be created, we only allow removing
+       * innings #1's final ball if innings #2
+       * has not started yet.
+       */
+
+      if (
+        Number(
+          beforeUndo.innings_number
+        ) === 1 &&
+        Number(
+          beforeUndo.is_completed
+        ) === 1
+      ) {
+
+        const secondInnings =
+          await db.prepare(`
+            SELECT *
+            FROM innings
+            WHERE match_id = ?
+              AND innings_number = 2
+            LIMIT 1
+          `).get(
+            beforeUndo.match_id
+          );
+
+        if (
+          secondInnings
+        ) {
+
+          const secondBalls =
+            await db.prepare(`
+              SELECT COUNT(*) AS c
+              FROM balls
+              WHERE innings_id = ?
+            `).get(
+              secondInnings.id
+            );
+
+          const secondBallCount =
+            Number(
+              secondBalls?.c || 0
+            );
+
+          if (
+            secondBallCount > 0
+          ) {
+
+            throw new Error(
+              'Cannot undo the first innings after the second innings has started.'
+            );
+          }
+
+          /*
+           * Delete empty second innings.
+           */
+          await db.prepare(`
+            DELETE FROM innings
+            WHERE id = ?
+          `).run(
+            secondInnings.id
+          );
+
+          /*
+           * Put match back into innings break.
+           */
+          await db.prepare(`
+            UPDATE matches
+            SET
+              status = 'innings-break',
+              current_innings = 1
+            WHERE id = ?
+          `).run(
+            beforeUndo.match_id
+          );
+        }
+      }
+
       const wasFirstBall =
         Number(
           beforeUndo.total_balls || 0
@@ -1060,9 +1160,7 @@ async function undoLastBall(
         ) === 1;
 
       /*
-       * Preserve current selections so undoing the first
-       * ball does not force the scorer to select everything
-       * again.
+       * Preserve selections.
        */
       const preservedStriker =
         beforeUndo.striker_id ||
@@ -1125,9 +1223,15 @@ async function undoLastBall(
       await db.prepare(`
         UPDATE innings
         SET
-          is_completed = 0
+          is_completed = 0,
+          current_bowler_id =
+            COALESCE(
+              current_bowler_id,
+              ?
+            )
         WHERE id = ?
       `).run(
+        preservedBowler,
         inningsId
       );
 
@@ -1137,8 +1241,7 @@ async function undoLastBall(
         );
 
       /*
-       * If match was temporarily at innings-break,
-       * restore live status.
+       * Restore live state.
        */
       if (
         innings
@@ -1434,7 +1537,7 @@ async function recomputeInningsFromBalls(
 }
 
 /* =========================================================
-   CHECK INNINGS
+   CHECK + FINALIZE INNINGS
 ========================================================= */
 
 async function checkAndFinalizeInnings(
@@ -1447,7 +1550,19 @@ async function checkAndFinalizeInnings(
     );
 
   if (!innings) {
-    return;
+    return null;
+  }
+
+  /*
+   * Never create another innings if
+   * this innings has already been completed.
+   */
+  if (
+    Number(
+      innings.is_completed
+    ) === 1
+  ) {
+    return null;
   }
 
   const match =
@@ -1456,7 +1571,7 @@ async function checkAndFinalizeInnings(
     );
 
   if (!match) {
-    return;
+    return null;
   }
 
   const maxBalls =
@@ -1464,42 +1579,59 @@ async function checkAndFinalizeInnings(
       match.overs_limit || 0
     ) * 6;
 
-  const allOut =
+  const totalRuns =
+    Number(
+      innings.total_runs || 0
+    );
+
+  const totalWickets =
     Number(
       innings.total_wickets || 0
-    ) >=
+    );
+
+  const totalBalls =
+    Number(
+      innings.total_balls || 0
+    );
+
+  /* -------------------------------------------------------
+     COMPLETION CONDITIONS
+  ------------------------------------------------------- */
+
+  const allOut =
+    totalWickets >=
     MAX_WICKETS;
 
   const oversDone =
     maxBalls > 0 &&
-    Number(
-      innings.total_balls || 0
-    ) >=
-    maxBalls;
+    totalBalls >=
+      maxBalls;
 
   const targetReached =
     innings.target != null &&
-    Number(
-      innings.total_runs || 0
-    ) >=
-    Number(
-      innings.target
-    );
+    totalRuns >=
+      Number(
+        innings.target
+      );
 
-  if (
-    !allOut &&
-    !oversDone &&
-    !targetReached
-  ) {
-
-    return;
-  }
+  const inningsCompleted =
+    allOut ||
+    oversDone ||
+    targetReached;
 
   /*
-   * IMPORTANT:
-   *
-   * This is the authoritative database finalization.
+   * Still active.
    */
+  if (
+    !inningsCompleted
+  ) {
+    return null;
+  }
+
+  /* -------------------------------------------------------
+     MARK CURRENT INNINGS COMPLETE
+  ------------------------------------------------------- */
+
   await db.prepare(`
     UPDATE innings
     SET
@@ -1511,10 +1643,13 @@ async function checkAndFinalizeInnings(
   );
 
   /*
-   * Second innings:
-   * finalize the match only when innings #2
-   * is completed.
+   * -------------------------------------------------------
+   * INNINGS #2 COMPLETED
+   * -------------------------------------------------------
+   *
+   * Now the whole match is completed.
    */
+
   if (
     Number(
       innings.innings_number
@@ -1525,29 +1660,258 @@ async function checkAndFinalizeInnings(
       match.id
     );
 
-    return;
+    return {
+
+      completed:
+        true,
+
+      matchCompleted:
+        true,
+
+      nextInnings:
+        null
+    };
   }
 
   /*
-   * First innings is complete.
+   * -------------------------------------------------------
+   * FIRST INNINGS COMPLETED
+   * -------------------------------------------------------
    *
-   * We intentionally DO NOT invent an INSERT for
-   * innings #2 here because your supplied database
-   * code does not show how innings #2 is created.
-   *
-   * Your match/innings creation controller should
-   * already create the second innings if that is
-   * your current architecture.
+   * Create innings #2 automatically.
    */
+
+  const existingSecondInnings =
+    await db.prepare(`
+      SELECT *
+      FROM innings
+      WHERE match_id = ?
+        AND innings_number = 2
+      LIMIT 1
+    `).get(
+      match.id
+    );
+
+  /*
+   * Prevent duplicate innings #2.
+   */
+  if (
+    existingSecondInnings
+  ) {
+
+    await db.prepare(`
+      UPDATE matches
+      SET
+        status = 'live',
+        current_innings = 2
+      WHERE id = ?
+    `).run(
+      match.id
+    );
+
+    return {
+
+      completed:
+        true,
+
+      matchCompleted:
+        false,
+
+      nextInnings:
+        existingSecondInnings
+    };
+  }
+
+  /*
+   * -------------------------------------------------------
+   * TEAM REVERSAL
+   * -------------------------------------------------------
+   *
+   * 1st innings:
+   *
+   * batting_team_id = Team A
+   * bowling_team_id = Team B
+   *
+   * 2nd innings:
+   *
+   * batting_team_id = Team B
+   * bowling_team_id = Team A
+   */
+
+  const secondBattingTeamId =
+    innings.bowling_team_id;
+
+  const secondBowlingTeamId =
+    innings.batting_team_id;
+
+  if (
+    !secondBattingTeamId ||
+    !secondBowlingTeamId
+  ) {
+
+    console.error(
+      'Cannot create second innings: team IDs missing',
+      {
+        matchId:
+          match.id,
+
+        inningsId,
+
+        battingTeamId:
+          innings.batting_team_id,
+
+        bowlingTeamId:
+          innings.bowling_team_id
+      }
+    );
+
+    /*
+     * Keep the match in a safe
+     * innings-break state.
+     */
+    await db.prepare(`
+      UPDATE matches
+      SET
+        status = 'innings-break',
+        current_innings = 1
+      WHERE id = ?
+    `).run(
+      match.id
+    );
+
+    return {
+
+      completed:
+        true,
+
+      matchCompleted:
+        false,
+
+      nextInnings:
+        null,
+
+      error:
+        'Cannot create second innings because team information is missing.'
+    };
+  }
+
+  /*
+   * -------------------------------------------------------
+   * TARGET
+   * -------------------------------------------------------
+   *
+   * If first innings = 150
+   * second innings target = 151.
+   */
+
+  const target =
+    totalRuns + 1;
+
+  /*
+   * -------------------------------------------------------
+   * CREATE INNINGS #2
+   * -------------------------------------------------------
+   */
+
+  const secondInningsId =
+    uuidv4();
+
+  await db.prepare(`
+    INSERT INTO innings (
+      id,
+      match_id,
+      innings_number,
+      batting_team_id,
+      bowling_team_id,
+      target,
+      total_runs,
+      total_wickets,
+      total_balls,
+      striker_id,
+      non_striker_id,
+      current_bowler_id,
+      extras_wide,
+      extras_noball,
+      extras_bye,
+      extras_legbye,
+      extras_penalty,
+      is_completed
+    )
+    VALUES (
+      ?, ?, ?, ?, ?, ?,
+      0, 0, 0,
+      NULL, NULL, NULL,
+      0, 0, 0, 0, 0,
+      0
+    )
+  `).run(
+    secondInningsId,
+    match.id,
+    2,
+    secondBattingTeamId,
+    secondBowlingTeamId,
+    target
+  );
+
+  /*
+   * -------------------------------------------------------
+   * MATCH RETURNS TO LIVE
+   * -------------------------------------------------------
+   */
+
   await db.prepare(`
     UPDATE matches
     SET
-      status = 'innings-break',
-      current_innings = 1
+      status = 'live',
+      current_innings = 2
     WHERE id = ?
   `).run(
     match.id
   );
+
+  /*
+   * -------------------------------------------------------
+   * GET AUTHORITATIVE SECOND INNINGS
+   * -------------------------------------------------------
+   */
+
+  const createdSecondInnings =
+    await getInnings(
+      secondInningsId
+    );
+
+  console.log(
+    'Second innings created successfully',
+    {
+      matchId:
+        match.id,
+
+      firstInningsId:
+        inningsId,
+
+      secondInningsId,
+
+      target,
+
+      battingTeamId:
+        secondBattingTeamId,
+
+      bowlingTeamId:
+        secondBowlingTeamId
+    }
+  );
+
+  return {
+
+    completed:
+      true,
+
+    matchCompleted:
+      false,
+
+    nextInnings:
+      createdSecondInnings
+  };
 }
 
 /* =========================================================
@@ -1726,6 +2090,14 @@ async function finalizeMatch(
     winnerId,
 
     matchId
+  );
+
+  console.log(
+    'Match finalized successfully',
+    {
+      matchId,
+      resultText
+    }
   );
 }
 
