@@ -1475,48 +1475,45 @@ export default function Scorer() {
         ========================================================
         */
 
-        const oldFOW =
-          previousOptimistic?.fallOfWickets ||
-          currentInnings?.fallOfWickets ||
-          [];
+const oldFOW =
+  previousOptimistic?.fallOfWickets ||
+  currentInnings?.fallOfWickets ||
+  [];
 
-        const newFallOfWickets =
-          isWicket
-            ? [
-                ...safeArray(oldFOW),
-                {
-                  wicket_number:
-                    newTotalWickets,
+const newFallOfWickets =
+  isWicket
+    ? [
+        ...safeArray(oldFOW),
+        {
+          wicket_number:
+            newTotalWickets,
 
-                  player_id:
-                    payload?.dismissed_id ||
-                    strikerId,
+          player_id:
+            payload?.dismissed_id ||
+            strikerId,
 
-                  score:
-                    newTotalRuns,
+          score:
+            newTotalRuns,
 
-                  overs:
-                    `${Math.floor(
-                      newTotalBalls / 6
-                    )}.${newTotalBalls % 6}`,
+          overs:
+            `${Math.floor(
+              newTotalBalls / 6
+            )}.${newTotalBalls % 6}`,
 
-                  wicket_type:
-                    payload?.wicket_type ||
-                    'Wicket'
-                }
-              ]
-            ]
-            : oldFOW;
+          wicket_type:
+            payload?.wicket_type ||
+            'Wicket'
+        }
+      ]
+    : oldFOW;
 
-        const runRate =
-          newTotalBalls > 0
-            ? (
-                newTotalRuns /
-                (
-                  newTotalBalls / 6
-                )
-              ).toFixed(2)
-            : '0.00';
+const runRate =
+  newTotalBalls > 0
+    ? (
+        newTotalRuns /
+        (newTotalBalls / 6)
+      ).toFixed(2)
+    : '0.00';
 
         return {
           total_runs:
