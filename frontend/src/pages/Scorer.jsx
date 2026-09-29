@@ -1,4 +1,3 @@
-
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
@@ -23,15 +22,6 @@ export default function Scorer() {
   const [boundary, setBoundary] = useState(null);
   const [extraPicker, setExtraPicker] = useState(null);
   const [flashWicket, setFlashWicket] = useState(false);
-
-  /*
-   * IMPORTANT:
-   * This is also used for the INITIAL bowler.
-   *
-   * Previously this popup was only opened after 6 balls.
-   * Now it also appears immediately after batsmen are selected
-   * when there is no current bowler.
-   */
   const [showNextBowler, setShowNextBowler] = useState(false);
 
   const [optimistic, setOptimistic] = useState(null);
@@ -42,6 +32,12 @@ export default function Scorer() {
   const pendingCountRef = useRef(0);
 
   const [pendingCount, setPendingCount] = useState(0);
+
+  /*
+   * Prevent multiple undo/swap requests at the same time.
+   */
+  const actionBusyRef = useRef(false);
+  const [actionBusy, setActionBusy] = useState(false);
 
   const boundaryTimer = useRef(null);
   const wicketTimer = useRef(null);
@@ -59,10 +55,6 @@ export default function Scorer() {
     setPlayers(safeArray(data.players));
     setInnings(safeArray(data.innings));
 
-    /*
-     * Do not clear optimistic state while balls are still
-     * waiting to be saved.
-     */
     if (pendingCountRef.current === 0) {
       optimisticRef.current = null;
       setOptimistic(null);
@@ -73,10 +65,6 @@ export default function Scorer() {
     try {
       const data = await Matches.get(matchId);
 
-      /*
-       * Never overwrite the optimistic scoreboard while
-       * queued balls are still being saved.
-       */
       if (pendingCountRef.current > 0) {
         return;
       }
@@ -105,9 +93,17 @@ export default function Scorer() {
       innings: updatedInnings
     }) => {
       /*
-       * Ignore socket refreshes while local balls are pending.
+       * Do not overwrite local optimistic scoring.
        */
       if (pendingCountRef.current > 0) {
+        return;
+      }
+
+      /*
+       * While a local instant action is being synchronized,
+       * don't immediately overwrite it with stale socket data.
+       */
+      if (actionBusyRef.current) {
         return;
       }
 
@@ -139,6 +135,7 @@ export default function Scorer() {
 
       scoreQueueRef.current = [];
       processingQueueRef.current = false;
+      actionBusyRef.current = false;
     };
   }, []);
 
@@ -192,8 +189,11 @@ export default function Scorer() {
 
   /*
    * ---------------------------------------------------------
-   * GENERIC ACTION
+   * GENERIC SERVER ACTION
    * ---------------------------------------------------------
+   *
+   * Used for actions where waiting for the response is okay.
+   * Normal Swap/Undo DO NOT use this anymore.
    */
 
   const act = async (fn) => {
@@ -405,9 +405,6 @@ export default function Scorer() {
       previousOptimistic?.nonStrikerStats ||
       serverNonStrikerStats;
 
-    /*
-     * Wides and no-balls do not count as balls faced.
-     */
     const strikerBallsAdded =
       payload.extra_type === 'wide' ||
       payload.extra_type === 'noball'
@@ -521,11 +518,6 @@ export default function Scorer() {
     } else if (
       runsRun % 2 === 1
     ) {
-      /*
-       * Odd runs:
-       * Swap player IDs AND their complete stats.
-       */
-
       const oldStrikerId =
         strikerId;
 
@@ -664,12 +656,6 @@ export default function Scorer() {
       `${Math.floor(
         newBowlerBalls / 6
       )}.${newBowlerBalls % 6}`;
-
-    /*
-     * ---------------------------------------------------------
-     * MAIDEN
-     * ---------------------------------------------------------
-     */
 
     let newMaidens =
       Number(
@@ -1182,9 +1168,6 @@ export default function Scorer() {
 
       processingQueueRef.current = false;
 
-      /*
-       * Authoritative sync after ALL queued balls finish.
-       */
       if (
         !failed &&
         pendingCountRef.current === 0
@@ -1237,19 +1220,11 @@ export default function Scorer() {
         optimisticRef.current?.activeBowlerId ??
         current.current_bowler_id;
 
-      /*
-       * No bowler = don't allow scoring.
-       *
-       * This is important for the initial bowler selection.
-       */
       if (!effectiveBowlerId) {
         setShowNextBowler(true);
         return;
       }
 
-      /*
-       * Do not score while waiting for next bowler.
-       */
       if (
         optimisticRef.current
           ?.needsNextBowler
@@ -1316,6 +1291,997 @@ export default function Scorer() {
   );
 
   /*
+   * =========================================================
+   * FAST SWAP STRIKE
+   * =========================================================
+   *
+   * The old code:
+   *
+   *   await API
+   *   await loadFull()
+   *   wait...
+   *
+   * New code:
+   *
+   *   1. Change striker immediately
+   *   2. Change stats immediately
+   *   3. Send API in background
+   *   4. Authoritative sync afterward
+   */
+
+  const fastSwapStrike = useCallback(async () => {
+    if (
+      actionBusyRef.current ||
+      pendingCountRef.current > 0
+    ) {
+      return;
+    }
+
+    const currentInnings =
+      innings[
+        innings.length - 1
+      ];
+
+    if (!currentInnings?.innings) {
+      return;
+    }
+
+    const current =
+      currentInnings.innings;
+
+    const strikerId =
+      optimisticRef.current?.strikerId ??
+      current.striker_id;
+
+    const nonStrikerId =
+      optimisticRef.current?.nonStrikerId ??
+      current.non_striker_id;
+
+    if (
+      !strikerId ||
+      !nonStrikerId
+    ) {
+      return;
+    }
+
+    /*
+     * Snapshot current state.
+     */
+    const previous =
+      optimisticRef.current || {};
+
+    const battingCard =
+      safeArray(
+        currentInnings.battingCard
+      );
+
+    const strikerStats =
+      previous.strikerStats ||
+      battingCard.find(
+        b => b.player_id === strikerId
+      ) || {
+        player_id: strikerId,
+        runs: 0,
+        balls: 0,
+        fours: 0,
+        sixes: 0,
+        strike_rate: 0
+      };
+
+    const nonStrikerStats =
+      previous.nonStrikerStats ||
+      battingCard.find(
+        b =>
+          b.player_id ===
+          nonStrikerId
+      ) || {
+        player_id: nonStrikerId,
+        runs: 0,
+        balls: 0,
+        fours: 0,
+        sixes: 0,
+        strike_rate: 0
+      };
+
+    /*
+     * INSTANT UI UPDATE.
+     */
+    const nextState = {
+      ...previous,
+
+      total_runs:
+        previous.total_runs ??
+        Number(current.total_runs || 0),
+
+      total_wickets:
+        previous.total_wickets ??
+        Number(current.total_wickets || 0),
+
+      total_balls:
+        previous.total_balls ??
+        Number(current.total_balls || 0),
+
+      strikerId:
+        nonStrikerId,
+
+      nonStrikerId:
+        strikerId,
+
+      activeBowlerId:
+        previous.activeBowlerId ??
+        current.current_bowler_id,
+
+      strikerStats:
+        {
+          ...nonStrikerStats,
+          player_id:
+            nonStrikerId
+        },
+
+      nonStrikerStats:
+        {
+          ...strikerStats,
+          player_id:
+            strikerId
+        },
+
+      recentBalls:
+        previous.recentBalls ||
+        safeArray(
+          currentInnings.recentBalls
+        ),
+
+      extras:
+        previous.extras || {
+          wide:
+            Number(
+              current.extras_wide || 0
+            ),
+          noball:
+            Number(
+              current.extras_noball || 0
+            ),
+          bye:
+            Number(
+              current.extras_bye || 0
+            ),
+          legbye:
+            Number(
+              current.extras_legbye || 0
+            ),
+          penalty:
+            Number(
+              current.extras_penalty || 0
+            )
+        },
+
+      partnership:
+        previous.partnership ||
+        currentInnings.partnership ||
+        {
+          runs: 0,
+          balls: 0
+        },
+
+      fallOfWickets:
+        previous.fallOfWickets ||
+        currentInnings.fallOfWickets ||
+        [],
+
+      needsNextBowler:
+        previous.needsNextBowler ||
+        false
+    };
+
+    optimisticRef.current =
+      nextState;
+
+    setOptimistic(
+      nextState
+    );
+
+    /*
+     * Now send the request.
+     * The user does NOT wait for this.
+     */
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setError('');
+
+    try {
+      await Innings.swapStrike(
+        current.id
+      );
+
+      /*
+       * Authoritative refresh only after
+       * server confirms the swap.
+       */
+      const data =
+        await Matches.get(matchId);
+
+      /*
+       * Only apply if no new balls were
+       * entered while syncing.
+       */
+      if (
+        pendingCountRef.current === 0
+      ) {
+        setMatch(data.match);
+        setPlayers(
+          safeArray(data.players)
+        );
+        setInnings(
+          safeArray(data.innings)
+        );
+
+        optimisticRef.current = null;
+        setOptimistic(null);
+      }
+
+    } catch (err) {
+      /*
+       * If server fails, restore authoritative state.
+       */
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to swap batsmen'
+      );
+
+      try {
+        const data =
+          await Matches.get(matchId);
+
+        if (
+          pendingCountRef.current === 0
+        ) {
+          applyServerData(data);
+        }
+      } catch (_) {}
+
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }, [
+    innings,
+    matchId,
+    applyServerData
+  ]);
+
+  /*
+   * =========================================================
+   * FAST UNDO
+   * =========================================================
+   *
+   * The visible last ball is removed immediately.
+   *
+   * The backend remains authoritative and is synchronized
+   * after the undo request completes.
+   */
+
+  const fastUndo = useCallback(async () => {
+    if (
+      actionBusyRef.current ||
+      pendingCountRef.current > 0
+    ) {
+      return;
+    }
+
+    const currentInnings =
+      innings[
+        innings.length - 1
+      ];
+
+    if (!currentInnings?.innings) {
+      return;
+    }
+
+    const current =
+      currentInnings.innings;
+
+    const currentRecentBalls =
+      optimisticRef.current?.recentBalls ||
+      safeArray(
+        currentInnings.recentBalls
+      );
+
+    if (
+      currentRecentBalls.length === 0
+    ) {
+      return;
+    }
+
+    /*
+     * Last visible ball.
+     */
+    const lastBall =
+      currentRecentBalls[
+        currentRecentBalls.length - 1
+      ];
+
+    const previous =
+      optimisticRef.current || {};
+
+    const oldRuns =
+      Number(
+        previous.total_runs ??
+        current.total_runs ??
+        0
+      );
+
+    const oldWickets =
+      Number(
+        previous.total_wickets ??
+        current.total_wickets ??
+        0
+      );
+
+    const oldBalls =
+      Number(
+        previous.total_balls ??
+        current.total_balls ??
+        0
+      );
+
+    const lastTeamRuns =
+      calculateBallTeamRuns(
+        lastBall
+      );
+
+    const legal =
+      Number(
+        lastBall.is_legal
+      ) === 1 ||
+      lastBall.is_legal === true;
+
+    const newRuns =
+      Math.max(
+        0,
+        oldRuns -
+        lastTeamRuns
+      );
+
+    const newWickets =
+      Math.max(
+        0,
+        oldWickets -
+        (
+          lastBall.is_wicket
+            ? 1
+            : 0
+        )
+      );
+
+    const newBalls =
+      Math.max(
+        0,
+        oldBalls -
+        (
+          legal
+            ? 1
+            : 0
+        )
+      );
+
+    /*
+     * Rebuild visible batsman stats by reversing
+     * the last ball.
+     */
+    const battingCard =
+      safeArray(
+        currentInnings.battingCard
+      );
+
+    const strikerId =
+      lastBall.batsman_id;
+
+    const nonStrikerId =
+      lastBall.non_striker_id;
+
+    const currentStriker =
+      previous.strikerStats ||
+      battingCard.find(
+        b =>
+          b.player_id ===
+          strikerId
+      ) || {
+        player_id: strikerId,
+        runs: 0,
+        balls: 0,
+        fours: 0,
+        sixes: 0,
+        strike_rate: 0
+      };
+
+    const currentNonStriker =
+      previous.nonStrikerStats ||
+      battingCard.find(
+        b =>
+          b.player_id ===
+          nonStrikerId
+      ) || {
+        player_id: nonStrikerId,
+        runs: 0,
+        balls: 0,
+        fours: 0,
+        sixes: 0,
+        strike_rate: 0
+      };
+
+    const batsmanRuns =
+      Number(
+        lastBall.runs_batsman || 0
+      );
+
+    const isBatterBall =
+      !lastBall.extra_type ||
+      lastBall.extra_type ===
+        'noball';
+
+    const oldStrikerRuns =
+      Math.max(
+        0,
+        Number(
+          currentStriker.runs || 0
+        ) -
+        (
+          isBatterBall
+            ? batsmanRuns
+            : 0
+        )
+      );
+
+    const oldStrikerBalls =
+      Math.max(
+        0,
+        Number(
+          currentStriker.balls || 0
+        ) -
+        (
+          isBatterBall &&
+          lastBall.extra_type !==
+            'noball'
+            ? 1
+            : 0
+        )
+      );
+
+    const oldStrikerFours =
+      Math.max(
+        0,
+        Number(
+          currentStriker.fours || 0
+        ) -
+        (
+          isBatterBall &&
+          batsmanRuns === 4
+            ? 1
+            : 0
+        )
+      );
+
+    const oldStrikerSixes =
+      Math.max(
+        0,
+        Number(
+          currentStriker.sixes || 0
+        ) -
+        (
+          isBatterBall &&
+          batsmanRuns === 6
+            ? 1
+            : 0
+        )
+      );
+
+    const oldStrikerSR =
+      oldStrikerBalls > 0
+        ? Number(
+            (
+              oldStrikerRuns /
+              oldStrikerBalls *
+              100
+            ).toFixed(2)
+          )
+        : 0;
+
+    const restoredStrikerStats = {
+      ...currentStriker,
+
+      player_id:
+        strikerId,
+
+      runs:
+        oldStrikerRuns,
+
+      balls:
+        oldStrikerBalls,
+
+      fours:
+        oldStrikerFours,
+
+      sixes:
+        oldStrikerSixes,
+
+      strike_rate:
+        oldStrikerSR,
+
+      /*
+       * Undoing a wicket restores the batsman.
+       */
+      is_out:
+        lastBall.is_wicket
+          ? false
+          : currentStriker.is_out,
+
+      how_out:
+        lastBall.is_wicket
+          ? null
+          : currentStriker.how_out,
+
+      dismissed_by:
+        lastBall.is_wicket
+          ? null
+          : currentStriker.dismissed_by,
+
+      fielder_id:
+        lastBall.is_wicket
+          ? null
+          : currentStriker.fielder_id
+    };
+
+    /*
+     * Restore striker/non-striker positions.
+     *
+     * If the last ball caused an odd-run swap,
+     * reverse that swap.
+     */
+    let restoredStrikerId =
+      previous.strikerId ??
+      current.striker_id;
+
+    let restoredNonStrikerId =
+      previous.nonStrikerId ??
+      current.non_striker_id;
+
+    let restoredStriker =
+      restoredStrikerStats;
+
+    let restoredNonStriker =
+      currentNonStriker;
+
+    const runsRun =
+      calculateBallRunsForStrike(
+        lastBall
+      );
+
+    if (
+      runsRun % 2 === 1
+    ) {
+      restoredStrikerId =
+        strikerId;
+
+      restoredNonStrikerId =
+        nonStrikerId;
+
+      restoredStriker =
+        restoredStrikerStats;
+
+      restoredNonStriker = {
+        ...currentNonStriker,
+        player_id:
+          nonStrikerId
+      };
+    } else {
+      /*
+       * If the previous optimistic state had the
+       * players swapped, use the stored positions.
+       */
+      restoredStrikerId =
+        previous.strikerId ??
+        current.striker_id;
+
+      restoredNonStrikerId =
+        previous.nonStrikerId ??
+        current.non_striker_id;
+
+      if (
+        restoredStrikerId ===
+        nonStrikerId
+      ) {
+        restoredStriker =
+          {
+            ...currentNonStriker,
+            player_id:
+              nonStrikerId
+          };
+
+        restoredNonStriker =
+          restoredStrikerStats;
+      }
+    }
+
+    /*
+     * Restore bowler stats.
+     */
+    const bowlerId =
+      lastBall.bowler_id ||
+      previous.activeBowlerId ||
+      current.current_bowler_id;
+
+    const bowlingCard =
+      safeArray(
+        currentInnings.bowlingCard
+      );
+
+    const currentBowlerStats =
+      previous.bowlerStats ||
+      bowlingCard.find(
+        b =>
+          b.player_id ===
+          bowlerId
+      ) || {
+        player_id:
+          bowlerId,
+        overs: '0.0',
+        maidens: 0,
+        runs: 0,
+        wickets: 0,
+        economy: 0
+      };
+
+    const legalBowlerBall =
+      legal;
+
+    const bowlerRuns =
+      calculateBallBowlerRuns(
+        lastBall
+      );
+
+    const oldBowlerBalls =
+      getBowlerBalls(
+        currentBowlerStats
+      );
+
+    const restoredBowlerBalls =
+      Math.max(
+        0,
+        oldBowlerBalls -
+        (
+          legalBowlerBall
+            ? 1
+            : 0
+        )
+      );
+
+    const restoredBowlerRuns =
+      Math.max(
+        0,
+        Number(
+          currentBowlerStats.runs || 0
+        ) -
+        bowlerRuns
+      );
+
+    const restoredBowlerWickets =
+      Math.max(
+        0,
+        Number(
+          currentBowlerStats.wickets || 0
+        ) -
+        (
+          lastBall.is_wicket &&
+          lastBall.wicket_type !==
+            'run-out'
+            ? 1
+            : 0
+        )
+      );
+
+    const restoredBowlerOvers =
+      `${Math.floor(
+        restoredBowlerBalls / 6
+      )}.${restoredBowlerBalls % 6}`;
+
+    const restoredEconomy =
+      restoredBowlerBalls > 0
+        ? Number(
+            (
+              restoredBowlerRuns /
+              (
+                restoredBowlerBalls /
+                6
+              )
+            ).toFixed(2)
+          )
+        : 0;
+
+    const restoredBowlerStats = {
+      ...currentBowlerStats,
+
+      player_id:
+        bowlerId,
+
+      overs:
+        restoredBowlerOvers,
+
+      runs:
+        restoredBowlerRuns,
+
+      wickets:
+        restoredBowlerWickets,
+
+      economy:
+        restoredEconomy
+    };
+
+    /*
+     * Remove last ball immediately.
+     */
+    const restoredRecentBalls =
+      currentRecentBalls
+        .slice(
+          0,
+          -1
+        );
+
+    /*
+     * Remove last fall-of-wicket.
+     */
+    const currentFOW =
+      previous.fallOfWickets ||
+      currentInnings.fallOfWickets ||
+      [];
+
+    const restoredFOW =
+      lastBall.is_wicket
+        ? currentFOW.slice(0, -1)
+        : currentFOW;
+
+    /*
+     * Partnership.
+     */
+    const currentPartnership =
+      previous.partnership ||
+      currentInnings.partnership ||
+      {
+        runs: 0,
+        balls: 0
+      };
+
+    const restoredPartnership = {
+      runs:
+        Math.max(
+          0,
+          Number(
+            currentPartnership.runs || 0
+          ) -
+          lastTeamRuns
+        ),
+
+      balls:
+        Math.max(
+          0,
+          Number(
+            currentPartnership.balls || 0
+          ) -
+          (
+            legal ||
+            lastBall.extra_type ===
+              'noball'
+              ? 1
+              : 0
+          )
+        )
+    };
+
+    /*
+     * Extras.
+     */
+    const currentExtras =
+      previous.extras || {
+        wide:
+          Number(
+            current.extras_wide || 0
+          ),
+        noball:
+          Number(
+            current.extras_noball || 0
+          ),
+        bye:
+          Number(
+            current.extras_bye || 0
+          ),
+        legbye:
+          Number(
+            current.extras_legbye || 0
+          ),
+        penalty:
+          Number(
+            current.extras_penalty || 0
+          )
+      };
+
+    const restoredExtras = {
+      ...currentExtras
+    };
+
+    if (
+      lastBall.extra_type
+    ) {
+      restoredExtras[
+        lastBall.extra_type
+      ] =
+        Math.max(
+          0,
+          Number(
+            restoredExtras[
+              lastBall.extra_type
+            ] || 0
+          ) -
+          Number(
+            lastBall.extra_runs || 0
+          )
+        );
+    }
+
+    /*
+     * If the last ball completed an over, the next-bowler
+     * state must disappear after undo.
+     */
+    const restoredNeedsNextBowler =
+      newBalls > 0 &&
+      newBalls % 6 === 0;
+
+    const restoredState = {
+      ...previous,
+
+      total_runs:
+        newRuns,
+
+      total_wickets:
+        newWickets,
+
+      total_balls:
+        newBalls,
+
+      strikerId:
+        restoredStrikerId,
+
+      nonStrikerId:
+        restoredNonStrikerId,
+
+      activeBowlerId:
+        bowlerId,
+
+      needsNextBowler:
+        false,
+
+      bowlerStats:
+        restoredBowlerStats,
+
+      bowlerBalls:
+        restoredBowlerBalls,
+
+      strikerStats:
+        restoredStriker,
+
+      nonStrikerStats:
+        restoredNonStriker,
+
+      recentBalls:
+        restoredRecentBalls,
+
+      extras:
+        restoredExtras,
+
+      partnership:
+        restoredPartnership,
+
+      fallOfWickets:
+        restoredFOW,
+
+      runRate:
+        newBalls > 0
+          ? Number(
+              (
+                newRuns /
+                (newBalls / 6)
+              ).toFixed(2)
+            )
+          : 0
+    };
+
+    /*
+     * If undo removes the last ball of an over, don't force
+     * the next-bowler popup.
+     */
+    if (
+      restoredNeedsNextBowler &&
+      !lastBall
+    ) {
+      restoredState.needsNextBowler =
+        true;
+    }
+
+    /*
+     * INSTANT UI UPDATE.
+     */
+    optimisticRef.current =
+      restoredState;
+
+    setOptimistic(
+      restoredState
+    );
+
+    /*
+     * Now synchronize with backend.
+     */
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setError('');
+
+    try {
+      await Innings.undo(
+        current.id
+      );
+
+      /*
+       * Fetch authoritative state AFTER server undo.
+       * User has already seen instant UI change.
+       */
+      const data =
+        await Matches.get(matchId);
+
+      if (
+        pendingCountRef.current === 0
+      ) {
+        setMatch(data.match);
+        setPlayers(
+          safeArray(data.players)
+        );
+        setInnings(
+          safeArray(data.innings)
+        );
+
+        optimisticRef.current = null;
+        setOptimistic(null);
+      }
+
+    } catch (err) {
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to undo'
+      );
+
+      /*
+       * Server is authoritative if undo failed.
+       */
+      try {
+        const data =
+          await Matches.get(matchId);
+
+        if (
+          pendingCountRef.current === 0
+        ) {
+          applyServerData(data);
+        }
+      } catch (_) {}
+
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }, [
+    innings,
+    matchId,
+    applyServerData
+  ]);
+
+  /*
    * ---------------------------------------------------------
    * LOADING
    * ---------------------------------------------------------
@@ -1374,6 +2340,8 @@ export default function Scorer() {
    * ---------------------------------------------------------
    * INNINGS BREAK
    * ---------------------------------------------------------
+   *
+   * Shows target immediately.
    */
 
   if (
@@ -1388,35 +2356,112 @@ export default function Scorer() {
       );
     }
 
+    const firstInningsRuns =
+      Number(
+        currentInnings.innings.total_runs ||
+        0
+      );
+
+    /*
+     * Use backend target if available.
+     * Otherwise calculate it immediately.
+     */
+    const target =
+      currentInnings.innings.target != null
+        ? Number(
+            currentInnings.innings.target
+          )
+        : firstInningsRuns + 1;
+
     return (
-      <div className="max-w-lg mx-auto card text-center space-y-3 fade-in">
+      <div className="max-w-lg mx-auto card text-center space-y-5 fade-in">
 
-        <h1 className="text-2xl font-bold">
-          Innings Break
-        </h1>
+        <div>
 
-        <p className="text-slate-300 text-lg">
-          {currentInnings.innings.total_runs}
-          /
-          {currentInnings.innings.total_wickets}
-          {' '}
-          in{' '}
-          {currentInnings.overs}
-          {' '}
-          overs
-        </p>
+          <div className="text-xs uppercase tracking-widest text-emerald-400 font-semibold">
+            1st Innings Complete
+          </div>
+
+          <h1 className="text-3xl font-extrabold mt-2">
+            Innings Break
+          </h1>
+
+        </div>
+
+        <div className="bg-slate-900/80 rounded-2xl border border-slate-700 p-5">
+
+          <div className="text-sm text-slate-400">
+            {currentInnings.batting_team?.name ||
+              match.team1_short}
+          </div>
+
+          <div className="text-4xl font-extrabold mt-1">
+            {firstInningsRuns}
+            /
+            {currentInnings.innings.total_wickets}
+          </div>
+
+          <div className="text-sm text-slate-500 mt-1">
+            {currentInnings.overs} overs
+          </div>
+
+        </div>
+
+        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-5">
+
+          <div className="text-xs uppercase tracking-widest text-emerald-400 font-semibold">
+            Target Score
+          </div>
+
+          <div className="text-5xl font-black text-white mt-1">
+            {target}
+          </div>
+
+          <div className="text-sm text-slate-400 mt-2">
+            2nd innings needs {target} runs to win
+          </div>
+
+        </div>
 
         <button
-          className="btn btn-primary"
+          className="btn btn-primary w-full h-12 text-base font-bold"
+          disabled={actionBusy}
           onClick={async () => {
-            try {
-              setError('');
+            if (actionBusyRef.current) {
+              return;
+            }
 
+            actionBusyRef.current = true;
+            setActionBusy(true);
+            setError('');
+
+            try {
               await Matches.startSecondInnings(
                 matchId
               );
 
-              await loadFull();
+              /*
+               * Only one authoritative refresh.
+               */
+              const data =
+                await Matches.get(
+                  matchId
+                );
+
+              setMatch(data.match);
+              setPlayers(
+                safeArray(data.players)
+              );
+              setInnings(
+                safeArray(data.innings)
+              );
+
+              optimisticRef.current =
+                null;
+
+              setOptimistic(
+                null
+              );
 
             } catch (err) {
               setError(
@@ -1424,10 +2469,17 @@ export default function Scorer() {
                 err?.message ||
                 'Unable to start second innings'
               );
+            } finally {
+              actionBusyRef.current =
+                false;
+
+              setActionBusy(false);
             }
           }}
         >
-          Start 2nd Innings
+          {actionBusy
+            ? 'Starting…'
+            : 'Continue to 2nd Innings →'}
         </button>
 
         {error && (
@@ -1531,9 +2583,6 @@ export default function Scorer() {
         )
     );
 
-  /*
-   * Include optimistic dismissed players.
-   */
   if (
     optimistic?.strikerStats?.is_out &&
     optimistic.strikerStats.player_id
@@ -1799,16 +2848,8 @@ export default function Scorer() {
 
   /*
    * ---------------------------------------------------------
-   * IMPORTANT BOWLER LOGIC
+   * BOWLER LOGIC
    * ---------------------------------------------------------
-   *
-   * INITIAL:
-   * No bowler selected -> true
-   *
-   * AFTER OVER:
-   * optimistic.needsNextBowler -> true
-   *
-   * This is the main fix.
    */
 
   const needsNextBowler =
@@ -1918,6 +2959,12 @@ export default function Scorer() {
             {pendingCount > 0 && (
               <div className="text-emerald-400 text-xs mt-1 font-medium">
                 Saving {pendingCount}…
+              </div>
+            )}
+
+            {actionBusy && (
+              <div className="text-yellow-400 text-xs mt-1">
+                Syncing…
               </div>
             )}
 
@@ -2108,28 +3155,26 @@ export default function Scorer() {
             <div className="grid grid-cols-2 gap-1.5 mt-1.5">
 
               <button
-                className="h-10 rounded-xl bg-indigo-600/80 hover:bg-indigo-500 font-semibold text-sm active:scale-95 transition-transform"
-                onClick={() =>
-                  act(() =>
-                    Innings.swapStrike(
-                      inn.id
-                    )
-                  )
-                }
+                className="h-10 rounded-xl bg-indigo-600/80 hover:bg-indigo-500 font-semibold text-sm active:scale-95 transition-transform disabled:opacity-50"
+                onClick={fastSwapStrike}
                 disabled={
-                  pendingCount > 0
+                  pendingCount > 0 ||
+                  actionBusy
                 }
               >
-                ⇄ Swap
+                {actionBusy
+                  ? 'Syncing…'
+                  : '⇄ Swap'}
               </button>
 
               <button
-                className="h-10 rounded-xl bg-red-700 hover:bg-red-600 font-semibold text-sm active:scale-95 transition-transform"
+                className="h-10 rounded-xl bg-red-700 hover:bg-red-600 font-semibold text-sm active:scale-95 transition-transform disabled:opacity-50"
                 onClick={() =>
                   setShowWicket(true)
                 }
                 disabled={
-                  pendingCount > 0
+                  pendingCount > 0 ||
+                  actionBusy
                 }
               >
                 OUT
@@ -2305,33 +3350,26 @@ export default function Scorer() {
           <div className="grid grid-cols-2 gap-2">
 
             <button
-              className="btn btn-secondary"
+              className="btn btn-secondary disabled:opacity-50"
               disabled={
-                pendingCount > 0
+                pendingCount > 0 ||
+                actionBusy ||
+                recentBalls.length === 0
               }
-              onClick={() =>
-                act(() =>
-                  Innings.undo(
-                    inn.id
-                  )
-                )
-              }
+              onClick={fastUndo}
             >
-              ↺ Undo
+              {actionBusy
+                ? 'Syncing…'
+                : '↺ Undo'}
             </button>
 
             <button
-              className="btn btn-secondary"
+              className="btn btn-secondary disabled:opacity-50"
               disabled={
-                pendingCount > 0
+                pendingCount > 0 ||
+                actionBusy
               }
-              onClick={() =>
-                act(() =>
-                  Innings.swapStrike(
-                    inn.id
-                  )
-                )
-              }
+              onClick={fastSwapStrike}
             >
               ⇄ Swap Batsmen
             </button>
@@ -2401,15 +3439,7 @@ export default function Scorer() {
         View Full Scoreboard
       </button>
 
-      {/* =====================================================
-          NEXT BOWLER MODAL
-
-          IMPORTANT FIX:
-          Opens in TWO situations:
-
-          1. Initial bowler has not been selected
-          2. Previous over has completed
-         ===================================================== */}
+      {/* NEXT BOWLER */}
 
       {(
         showNextBowler ||
@@ -2446,9 +3476,6 @@ export default function Scorer() {
             try {
               setError('');
 
-              /*
-               * Save bowler to backend.
-               */
               await Innings.setBowler(
                 inn.id,
                 {
@@ -2457,13 +3484,6 @@ export default function Scorer() {
                 }
               );
 
-              /*
-               * IMPORTANT:
-               * Preserve all current optimistic state.
-               *
-               * For the initial bowler there may be no
-               * optimistic state yet.
-               */
               const previous =
                 optimisticRef.current || {};
 
@@ -2476,10 +3496,6 @@ export default function Scorer() {
                 needsNextBowler:
                   false,
 
-                /*
-                 * Only reset bowler stats when starting
-                 * a genuinely new over.
-                 */
                 bowlerBalls:
                   previous.needsNextBowler
                     ? 0
@@ -2534,10 +3550,7 @@ export default function Scorer() {
               );
 
               /*
-               * Refresh server data.
-               *
-               * Do NOT overwrite optimistic state if
-               * another ball is already pending.
+               * One refresh only.
                */
               const data =
                 await Matches.get(
@@ -2548,10 +3561,6 @@ export default function Scorer() {
                 pendingCountRef.current ===
                 0
               ) {
-                /*
-                 * Clear optimistic only if this is
-                 * safe to do so.
-                 */
                 setMatch(
                   data.match
                 );
@@ -2568,12 +3577,6 @@ export default function Scorer() {
                   )
                 );
 
-                /*
-                 * IMPORTANT:
-                 * Keep the selected bowler immediately
-                 * visible without waiting for another
-                 * render cycle.
-                 */
                 optimisticRef.current =
                   null;
 
@@ -2658,6 +3661,151 @@ export default function Scorer() {
       )}
 
     </div>
+  );
+}
+
+
+/*
+ * ============================================================
+ * HELPERS FOR FAST UNDO
+ * ============================================================
+ */
+
+function calculateBallTeamRuns(ball) {
+  if (!ball) {
+    return 0;
+  }
+
+  const batsmanRuns =
+    Number(
+      ball.runs_batsman || 0
+    );
+
+  const extraRuns =
+    Number(
+      ball.extra_runs || 0
+    );
+
+  switch (ball.extra_type) {
+    case 'wide':
+      return Math.max(
+        1,
+        extraRuns || 1
+      );
+
+    case 'noball':
+      return (
+        Math.max(
+          1,
+          extraRuns || 1
+        ) +
+        batsmanRuns
+      );
+
+    case 'bye':
+    case 'legbye':
+    case 'penalty':
+      return extraRuns;
+
+    default:
+      return batsmanRuns;
+  }
+}
+
+function calculateBallRunsForStrike(ball) {
+  if (!ball) {
+    return 0;
+  }
+
+  if (
+    ball.extra_type === 'wide'
+  ) {
+    return Math.max(
+      0,
+      Number(
+        ball.extra_runs || 0
+      ) - 1
+    );
+  }
+
+  if (
+    ball.extra_type === 'noball'
+  ) {
+    return Number(
+      ball.runs_batsman || 0
+    );
+  }
+
+  if (
+    ball.extra_type === 'bye' ||
+    ball.extra_type === 'legbye' ||
+    ball.extra_type === 'penalty'
+  ) {
+    return 0;
+  }
+
+  return Number(
+    ball.runs_batsman || 0
+  );
+}
+
+function calculateBallBowlerRuns(ball) {
+  if (!ball) {
+    return 0;
+  }
+
+  const batsmanRuns =
+    Number(
+      ball.runs_batsman || 0
+    );
+
+  const extraRuns =
+    Number(
+      ball.extra_runs || 0
+    );
+
+  switch (ball.extra_type) {
+    case 'wide':
+      return Math.max(
+        1,
+        extraRuns || 1
+      );
+
+    case 'noball':
+      return (
+        Math.max(
+          1,
+          extraRuns || 1
+        ) +
+        batsmanRuns
+      );
+
+    case 'bye':
+    case 'legbye':
+    case 'penalty':
+      return 0;
+
+    default:
+      return batsmanRuns;
+  }
+}
+
+function getBowlerBalls(stats) {
+  if (!stats) {
+    return 0;
+  }
+
+  const oversText =
+    String(
+      stats.overs || '0.0'
+    );
+
+  const [overs, balls] =
+    oversText.split('.');
+
+  return (
+    (Number(overs) || 0) * 6 +
+    (Number(balls) || 0)
   );
 }
 
