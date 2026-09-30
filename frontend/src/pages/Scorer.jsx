@@ -2122,15 +2122,47 @@ export default function Scorer() {
               setFixedBatsmen(nextFixed);
             });
 
-            act(() =>
-              Innings.setBatsmen(
-                inn.id,
-                {
-                  striker_id: nextStriker,
-                  non_striker_id: nextNonStriker
+            (async () => {
+              try {
+                setError('');
+
+                /* Save the batsmen first. */
+                await Innings.setBatsmen(
+                  inn.id,
+                  {
+                    striker_id: nextStriker,
+                    non_striker_id: nextNonStriker
+                  }
+                );
+
+                /*
+                 * The first over has no bowler yet. Open the bowler
+                 * selector immediately after the batsmen are confirmed.
+                 */
+                const bowlerAlreadySelected =
+                  optimisticRef.current?.activeBowlerId ||
+                  inn.current_bowler_id;
+
+                if (!bowlerAlreadySelected) {
+                  setShowNextBowler(true);
                 }
-              )
-            );
+
+                /* Refresh server data in the background. */
+                Matches.get(matchId)
+                  .then((data) => {
+                    if (pendingCountRef.current === 0) {
+                      applyServerData(data);
+                    }
+                  })
+                  .catch(() => {});
+              } catch (err) {
+                setError(
+                  err?.response?.data?.error ||
+                    err?.message ||
+                    'Unable to set batsmen'
+                );
+              }
+            })();
           }}
         />
 
@@ -2817,7 +2849,7 @@ export default function Scorer() {
 
       {/* NEXT BOWLER POPUP */}
 
-      {showNextBowler && needsNextBowler && (
+      {showNextBowler && (needsNextBowler || !effectiveBowlerId) && (
         <NextBowlerModal
           team={bowlingTeamPlayers}
           teamId={inn.bowling_team_id}
