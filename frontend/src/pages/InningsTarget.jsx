@@ -11,63 +11,82 @@ export default function InningsTarget() {
 
   const [match, setMatch] = useState(null);
   const [innings, setInnings] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
 
   /*
-  ====================================================
+  =========================================================
   IMMEDIATE DATA FROM SCORER
-  ====================================================
+  =========================================================
   */
 
-  const immediateScore = Number(passedState.score || 0);
-  const immediateWickets = Number(passedState.wickets || 0);
-  const immediateBalls = Number(passedState.balls || 0);
-
-  const hasImmediateData =
+  const hasPassedScore =
     passedState.inningsCompleted === true &&
-    Number.isFinite(immediateScore);
+    passedState.score !== undefined &&
+    passedState.score !== null;
+
+  const immediateScore = hasPassedScore
+    ? Number(passedState.score)
+    : 0;
+
+  const immediateWickets =
+    passedState.wickets !== undefined
+      ? Number(passedState.wickets)
+      : 0;
+
+  const immediateBalls =
+    passedState.balls !== undefined
+      ? Number(passedState.balls)
+      : 0;
+
+  const immediateTarget =
+    passedState.target !== undefined &&
+    passedState.target !== null
+      ? Number(passedState.target)
+      : immediateScore + 1;
 
   /*
-  ====================================================
-  LOAD SERVER DATA
-  ====================================================
+  =========================================================
+  LOAD MATCH
+  =========================================================
   */
 
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
-      try {
-        /*
-         * We already have everything needed to show the
-         * target immediately, so don't block the screen.
-         */
-        if (hasImmediateData) {
-          setLoading(false);
-        } else {
-          setLoading(true);
-        }
+    async function loadMatch() {
+      if (!matchId) {
+        setError('Match ID is missing.');
+        setLoading(false);
+        return;
+      }
 
+      try {
         const data = await Matches.get(matchId);
 
         if (cancelled) return;
 
         setMatch(data?.match || null);
-        setInnings(Array.isArray(data?.innings) ? data.innings : []);
+
+        setInnings(
+          Array.isArray(data?.innings)
+            ? data.innings
+            : []
+        );
+
         setError('');
       } catch (err) {
-        console.error('TARGET LOAD ERROR:', err);
+        console.error(
+          'InningsTarget load error:',
+          err
+        );
 
         if (!cancelled) {
-          /*
-           * Do NOT make the whole page black if the API fails.
-           */
           setError(
             err?.response?.data?.error ||
             err?.message ||
-            'Unable to load match data'
+            'Unable to load match information.'
           );
         }
       } finally {
@@ -77,19 +96,17 @@ export default function InningsTarget() {
       }
     }
 
-    if (matchId) {
-      load();
-    }
+    loadMatch();
 
     return () => {
       cancelled = true;
     };
-  }, [matchId, hasImmediateData]);
+  }, [matchId]);
 
   /*
-  ====================================================
+  =========================================================
   FIND FIRST INNINGS
-  ====================================================
+  =========================================================
   */
 
   const firstInningsEntry =
@@ -107,15 +124,19 @@ export default function InningsTarget() {
     }) || innings[0];
 
   const firstInnings =
-    firstInningsEntry?.innings || firstInningsEntry || null;
+    firstInningsEntry?.innings ||
+    firstInningsEntry ||
+    null;
 
   /*
-  ====================================================
-  SCORE
-  ====================================================
+  =========================================================
+  SERVER DATA
+  =========================================================
   */
 
-  const serverScore = Number(firstInnings?.total_runs || 0);
+  const serverScore = Number(
+    firstInnings?.total_runs || 0
+  );
 
   const serverWickets = Number(
     firstInnings?.total_wickets || 0
@@ -125,30 +146,36 @@ export default function InningsTarget() {
     firstInnings?.total_balls || 0
   );
 
-  const score = hasImmediateData
+  /*
+  =========================================================
+  FINAL DISPLAY VALUES
+  =========================================================
+  */
+
+  const score = hasPassedScore
     ? immediateScore
     : serverScore;
 
-  const wickets = hasImmediateData
+  const wickets = hasPassedScore
     ? immediateWickets
     : serverWickets;
 
-  const balls = hasImmediateData
+  const balls = hasPassedScore
     ? immediateBalls
     : serverBalls;
 
   const target =
-    Number(passedState.target) > 0
-      ? Number(passedState.target)
-      : score + 1;
+    hasPassedScore
+      ? immediateTarget
+      : serverScore + 1;
 
   const overs =
     `${Math.floor(balls / 6)}.${balls % 6}`;
 
   /*
-  ====================================================
-  TEAMS
-  ====================================================
+  =========================================================
+  TEAM NAMES
+  =========================================================
   */
 
   const battingTeam =
@@ -168,9 +195,9 @@ export default function InningsTarget() {
     'Bowling Team';
 
   /*
-  ====================================================
-  CONTINUE
-  ====================================================
+  =========================================================
+  CONTINUE TO SECOND INNINGS
+  =========================================================
   */
 
   const continueToSecondInnings = async () => {
@@ -180,6 +207,12 @@ export default function InningsTarget() {
     setError('');
 
     try {
+      /*
+      -------------------------------------------------------
+      Start second innings on backend
+      -------------------------------------------------------
+      */
+
       if (
         typeof Matches.startSecondInnings === 'function'
       ) {
@@ -187,27 +220,34 @@ export default function InningsTarget() {
       }
 
       /*
-       * IMPORTANT:
-       * Go back to the scorer page.
-       *
-       * Do NOT use:
-       * navigate(`/match/${matchId}`)
-       *
-       * because your scorer route may be:
-       * /match/:matchId/scorer
-       */
+      -------------------------------------------------------
+      IMPORTANT
+      -------------------------------------------------------
 
-      navigate(-1);
+      Your actual scorer route is:
+
+      /match/:matchId/score
+
+      So go there explicitly.
+      -------------------------------------------------------
+      */
+
+      navigate(
+        `/match/${matchId}/score`,
+        {
+          replace: true,
+        }
+      );
     } catch (err) {
       console.error(
-        'START SECOND INNINGS ERROR:',
+        'Failed to start second innings:',
         err
       );
 
       setError(
         err?.response?.data?.error ||
         err?.message ||
-        'Unable to start second innings'
+        'Unable to start second innings.'
       );
 
       setStarting(false);
@@ -215,121 +255,148 @@ export default function InningsTarget() {
   };
 
   /*
-  ====================================================
+  =========================================================
   LOADING
-  ====================================================
+  =========================================================
   */
 
-  if (loading && !hasImmediateData) {
+  if (
+    loading &&
+    !hasPassedScore
+  ) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+      <div className="min-h-[500px] w-full flex items-center justify-center bg-slate-950 text-white">
+
         <div className="text-center">
-          <div className="text-xl font-semibold">
-            Loading...
+
+          <div className="text-xl font-bold">
+            Loading innings...
           </div>
 
-          <div className="text-slate-400 text-sm mt-2">
-            Preparing innings target
+          <div className="mt-2 text-sm text-slate-400">
+            Preparing target
           </div>
+
         </div>
+
       </div>
     );
   }
 
   /*
-  ====================================================
-  ALWAYS RENDER SOMETHING
-  ====================================================
+  =========================================================
+  MAIN SCREEN
+  =========================================================
   */
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white px-4 py-8">
-      <div className="max-w-md mx-auto">
+    <div className="min-h-[500px] w-full bg-slate-950 text-white px-4 py-8">
 
-        {/* HEADER */}
+      <div className="mx-auto w-full max-w-md">
 
-        <div className="text-center mb-8">
-          <div className="text-emerald-400 text-sm font-semibold uppercase tracking-wider">
+        {/* =================================================
+            HEADER
+        ================================================= */}
+
+        <div className="mb-8 text-center">
+
+          <div className="text-sm font-bold uppercase tracking-widest text-emerald-400">
             1st Innings Complete
           </div>
 
-          <h1 className="text-3xl font-bold mt-2">
+          <h1 className="mt-2 text-3xl font-black">
             Innings Break
           </h1>
+
         </div>
 
-        {/* SCORE CARD */}
+        {/* =================================================
+            SCORE CARD
+        ================================================= */}
 
-        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+
+          {/* TEAM */}
 
           <div className="text-center">
 
-            <div className="text-slate-400 text-sm">
+            <div className="text-sm text-slate-400">
               {battingTeam}
             </div>
 
-            <div className="text-5xl font-bold mt-2">
+            <div className="mt-2 text-5xl font-black">
               {score}/{wickets}
             </div>
 
-            <div className="text-slate-400 mt-2">
+            <div className="mt-2 text-sm text-slate-400">
               {overs} overs
             </div>
 
           </div>
 
-          <div className="border-t border-slate-800 my-6" />
+          {/* DIVIDER */}
+
+          <div className="my-6 border-t border-slate-800" />
 
           {/* TARGET */}
 
           <div className="text-center">
 
-            <div className="text-slate-400 text-sm">
-              Target
+            <div className="text-sm font-medium text-slate-400">
+              TARGET
             </div>
 
-            <div className="text-6xl font-black text-emerald-400 mt-2">
+            <div className="mt-2 text-6xl font-black text-emerald-400">
               {target}
             </div>
 
-            <div className="text-slate-400 mt-2">
+            <div className="mt-2 text-sm text-slate-400">
               {bowlingTeam} to chase
             </div>
 
           </div>
 
-          {/* ERROR */}
+          {/* =================================================
+              ERROR
+          ================================================= */}
 
           {error && (
-            <div className="mt-6 rounded-xl bg-red-950/40 border border-red-800 p-4">
-              <div className="text-red-400 text-sm font-semibold">
+            <div className="mt-6 rounded-xl border border-red-800 bg-red-950/40 p-4">
+
+              <div className="text-sm font-bold text-red-400">
                 Error
               </div>
 
-              <div className="text-red-300 text-sm mt-1 break-words">
+              <div className="mt-1 break-words text-sm text-red-300">
                 {error}
               </div>
+
             </div>
           )}
 
-          {/* CONTINUE */}
+          {/* =================================================
+              CONTINUE
+          ================================================= */}
 
           <button
             type="button"
             onClick={continueToSecondInnings}
             disabled={starting}
             className="
-              w-full
               mt-6
+              min-h-[52px]
+              w-full
               rounded-xl
               bg-emerald-500
+              px-4
+              py-4
+              font-black
+              text-slate-950
+              transition
               hover:bg-emerald-400
+              disabled:cursor-not-allowed
               disabled:bg-slate-700
               disabled:text-slate-400
-              text-slate-950
-              font-bold
-              py-4
-              transition
             "
           >
             {starting
@@ -339,20 +406,29 @@ export default function InningsTarget() {
 
         </div>
 
-        {/* BACK */}
+        {/* =================================================
+            BACK
+        ================================================= */}
 
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={() =>
+            navigate(
+              `/match/${matchId}/score`
+            )
+          }
           className="
-            w-full
             mt-4
-            py-3
+            min-h-[48px]
+            w-full
             rounded-xl
-            bg-slate-900
             border
             border-slate-800
+            bg-slate-900
+            px-4
+            py-3
             text-slate-300
+            transition
             hover:bg-slate-800
           "
         >
@@ -360,6 +436,7 @@ export default function InningsTarget() {
         </button>
 
       </div>
+
     </div>
   );
 }
