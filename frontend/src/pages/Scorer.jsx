@@ -239,6 +239,13 @@ export default function Scorer() {
       const latest = nextInnings[nextInnings.length - 1];
       const latestInn = latest?.innings;
 
+      if (
+        updatedMatch?.status === 'innings-break' ||
+        updatedMatch?.status === 'completed'
+      ) {
+        setShowNextBowler(false);
+      }
+
       setMatch(updatedMatch);
       setInnings(nextInnings);
 
@@ -331,6 +338,7 @@ export default function Scorer() {
    */
   useEffect(() => {
     if (
+      !optimistic?.inningsCompleted &&
       optimistic?.needsNextBowler &&
       Number(optimistic?.total_balls || 0) > 0 &&
       Number(optimistic?.total_balls || 0) % 6 === 0
@@ -1190,6 +1198,38 @@ export default function Scorer() {
           ]
         : previousFallOfWickets;
 
+    /*
+     * LOCAL INNINGS COMPLETION
+     *
+     * Do this before the server response so the UI never opens the next
+     * bowler dialog after the final ball of an innings.
+     */
+    const inningsNumber = Number(
+      current.innings_number ??
+      current.innings_no ??
+      current.number ?? 1
+    );
+
+    const maxBalls =
+      Number(match?.overs_limit || 0) > 0
+        ? Number(match.overs_limit) * 6
+        : 0;
+
+    const targetForChase =
+      inningsNumber === 2
+        ? Number(
+            current.target ??
+            match?.target ??
+            match?.target_score ??
+            0
+          ) || null
+        : null;
+
+    const inningsCompleted =
+      newTotalWickets >= 10 ||
+      (maxBalls > 0 && newTotalBalls >= maxBalls) ||
+      (targetForChase && newTotalRuns >= targetForChase);
+
     return {
       inningsId: current.id,
 
@@ -1208,7 +1248,9 @@ export default function Scorer() {
       activeBowlerId:
         scoringBowlerId,
 
-      needsNextBowler,
+      needsNextBowler: inningsCompleted ? false : needsNextBowler,
+
+      inningsCompleted,
 
       bowlerStats:
         updatedBowlerStats,
@@ -1812,16 +1854,7 @@ export default function Scorer() {
             setError('');
 
             try {
-              /*
-               * Start the second innings on the server.  Do NOT wait for a
-               * second GET /match request here.  In normal operation the
-               * Socket.IO score-update supplies the new innings immediately.
-               * If the API itself returns the fresh match payload, use it
-               * directly; otherwise let the socket update the screen and
-               * use a delayed fallback GET only when necessary.
-               */
-              const result =
-                await Matches.startSecondInnings(matchId);
+              await Matches.startSecondInnings(matchId);
 
               visualStateRef.current = null;
               optimisticRef.current = null;
@@ -1835,19 +1868,8 @@ export default function Scorer() {
                 setShowNextBowler(false);
               });
 
-              const returnedData =
-                result?.data || result;
-
-              if (returnedData?.match && returnedData?.innings) {
-                applyServerData(returnedData);
-              } else {
-                /* Socket.IO is the fast path.  Only use GET as a fallback. */
-                setTimeout(() => {
-                  if (pendingCountRef.current === 0) {
-                    loadFull();
-                  }
-                }, 350);
-              }
+              /* Do not block the UI on the full match GET. */
+              loadFull().catch(() => {});
             } catch (err) {
               setError(
                 err?.response?.data?.error ||
@@ -2171,7 +2193,12 @@ export default function Scorer() {
                   optimisticRef.current?.activeBowlerId ||
                   inn.current_bowler_id;
 
-                if (!bowlerAlreadySelected) {
+                if (
+                  !bowlerAlreadySelected &&
+                  !optimisticRef.current?.inningsCompleted &&
+                  match?.status !== 'innings-break' &&
+                  match?.status !== 'completed'
+                ) {
                   setShowNextBowler(true);
                 }
 
@@ -2322,12 +2349,13 @@ export default function Scorer() {
         );
 
   const needsNextBowler =
+    !optimistic?.inningsCompleted &&
     optimistic?.needsNextBowler ||
-    (
+    (!optimistic?.inningsCompleted && (
       !inn.current_bowler_id &&
       displayTotalBalls > 0 &&
       displayTotalBalls % 6 === 0
-    );
+    ));
 
   /*
    * -------------------------
@@ -2877,7 +2905,11 @@ export default function Scorer() {
 
       {/* NEXT BOWLER POPUP */}
 
-      {showNextBowler && (needsNextBowler || !effectiveBowlerId) && (
+      {showNextBowler &&
+        !optimistic?.inningsCompleted &&
+        match.status !== 'innings-break' &&
+        match.status !== 'completed' &&
+        (needsNextBowler || !effectiveBowlerId) && (
         <NextBowlerModal
           team={bowlingTeamPlayers}
           teamId={inn.bowling_team_id}
@@ -2919,22 +2951,13 @@ export default function Scorer() {
               setOptimistic(nextState);
               setShowNextBowler(false);
 
-              /*
-               * The bowler is already saved.  Do not block the scorer on
-               * another full match GET.  Socket.IO will synchronize the
-               * authoritative state; a small delayed GET is only a fallback.
-               */
-              setTimeout(() => {
-                if (pendingCountRef.current === 0) {
-                  Matches.get(matchId)
-                    .then((data) => {
-                      if (pendingCountRef.current === 0) {
-                        applyServerData(data);
-                      }
-                    })
-                    .catch(() => {});
-                }
-              }, 300);
+              Matches.get(matchId)
+                .then((data) => {
+                  if (pendingCountRef.current === 0) {
+                    applyServerData(data);
+                  }
+                })
+                .catch(() => {});
 
             } catch (err) {
               setError(
