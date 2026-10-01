@@ -167,7 +167,7 @@ function HomeIntro({
 
         onFinished();
 
-      }, 700);
+      }, 1700);
 
 
     return () => {
