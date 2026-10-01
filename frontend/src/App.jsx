@@ -14,6 +14,22 @@ const MatchSetup = lazy(() => import('./pages/MatchSetup.jsx'));
 const Scorer = lazy(() => import('./pages/Scorer.jsx'));
 const LiveScoreboard = lazy(() => import('./pages/LiveScoreboard.jsx'));
 
+/*
+=========================================================
+IMPORTANT
+=========================================================
+
+Target page for the end of 1st innings.
+
+This route is required because Scorer navigates to:
+
+/match/:matchId/target
+=========================================================
+*/
+const InningsTarget = lazy(
+  () => import('./pages/InningsTarget.jsx')
+);
+
 /* =========================================================
    PAGE LOADING
 ========================================================= */
@@ -140,31 +156,46 @@ export default function App() {
 
             <Routes>
 
-              {/* HOME */}
+              {/* =================================================
+                  HOME
+              ================================================= */}
+
               <Route
                 path="/"
                 element={<Home />}
               />
 
-              {/* RECORDS */}
+              {/* =================================================
+                  RECORDS
+              ================================================= */}
+
               <Route
                 path="/records"
                 element={<Records />}
               />
 
-              {/* TEAMS */}
+              {/* =================================================
+                  TEAMS
+              ================================================= */}
+
               <Route
                 path="/teams"
                 element={<TeamManager />}
               />
 
-              {/* PLAYERS */}
+              {/* =================================================
+                  PLAYERS
+              ================================================= */}
+
               <Route
                 path="/players"
                 element={<PlayerRecords />}
               />
 
-              {/* CREATE MATCH */}
+              {/* =================================================
+                  CREATE MATCH
+              ================================================= */}
+
               <Route
                 path="/create-match"
                 element={
@@ -174,13 +205,19 @@ export default function App() {
                 }
               />
 
-              {/* MATCH SETUP / TOSS */}
+              {/* =================================================
+                  MATCH SETUP / TOSS
+              ================================================= */}
+
               <Route
                 path="/match/:matchId/setup"
                 element={<MatchSetup />}
               />
 
-              {/* SCORER */}
+              {/* =================================================
+                  SCORER
+              ================================================= */}
+
               <Route
                 path="/match/:matchId/score"
                 element={
@@ -190,7 +227,23 @@ export default function App() {
                 }
               />
 
-              {/* LIVE SCOREBOARD */}
+              {/* =================================================
+                  1ST INNINGS TARGET SCREEN
+              ================================================= */}
+
+              <Route
+                path="/match/:matchId/target"
+                element={
+                  <ScoreboardGate>
+                    <InningsTarget />
+                  </ScoreboardGate>
+                }
+              />
+
+              {/* =================================================
+                  LIVE SCOREBOARD
+              ================================================= */}
+
               <Route
                 path="/match/:matchId/live"
                 element={<LiveScoreboard />}
