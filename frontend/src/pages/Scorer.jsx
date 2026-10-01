@@ -3525,50 +3525,48 @@ function SelectBatsmen({
   onPlayerCreated,
   onSelect
 }) {
-  const [
-    striker,
-    setStriker
-  ] = useState(null);
+  const [striker, setStriker] = useState(null);
+  const [nonStriker, setNonStriker] = useState(null);
 
-  const [
-    nonStriker,
-    setNonStriker
-  ] = useState(null);
+  const available = team.filter(
+    (player) => !outIds.has(player.id)
+  );
 
-  const available =
-    team.filter(
-      player =>
-        !outIds.has(
-          player.id
-        )
-    );
-
+  // Always get the ID whether autocomplete returns
+  // a player object or just an ID.
   const strikerId =
-    typeof striker ===
-    'object'
+    typeof striker === "object"
       ? striker?.id
       : striker;
 
   const nonStrikerId =
-    typeof nonStriker ===
-    'object'
+    typeof nonStriker === "object"
       ? nonStriker?.id
       : nonStriker;
+
+  const canConfirm =
+    (hasStriker || strikerId) &&
+    (hasNonStriker || nonStrikerId);
+
+  const handleConfirm = () => {
+    if (!canConfirm) return;
+
+    onSelect(
+      hasStriker ? null : strikerId,
+      hasNonStriker ? null : nonStrikerId
+    );
+  };
 
   return (
     <div className="card space-y-4 fade-in">
 
+      {/* HEADER */}
       <div className="flex items-center justify-between">
-
         <div>
           <h1 className="text-xl font-bold">
-            {hasStriker &&
-            !hasNonStriker
-              ? 'Select New Batsman'
-              : !hasStriker &&
-                hasNonStriker
-              ? 'Select New Batsman'
-              : 'Select Batsmen'}
+            {hasStriker || hasNonStriker
+              ? "Select New Batsman"
+              : "Select Batsmen"}
           </h1>
 
           <p className="text-xs text-slate-500 mt-1">
@@ -3579,12 +3577,11 @@ function SelectBatsmen({
         <div className="text-2xl">
           🏏
         </div>
-
       </div>
 
+      {/* STRIKER */}
       {!hasStriker && (
         <div>
-
           <label className="text-sm text-slate-400 mb-1 block">
             On strike
           </label>
@@ -3594,9 +3591,7 @@ function SelectBatsmen({
             value={striker}
             onChange={setStriker}
             teamId={teamId}
-            onCreated={
-              onPlayerCreated
-            }
+            onCreated={onPlayerCreated}
             excludeIds={
               nonStrikerId
                 ? [nonStrikerId]
@@ -3604,13 +3599,12 @@ function SelectBatsmen({
             }
             placeholder="Type or add striker's name…"
           />
-
         </div>
       )}
 
+      {/* NON-STRIKER */}
       {!hasNonStriker && (
         <div>
-
           <label className="text-sm text-slate-400 mb-1 block">
             Non-striker
           </label>
@@ -3620,9 +3614,7 @@ function SelectBatsmen({
             value={nonStriker}
             onChange={setNonStriker}
             teamId={teamId}
-            onCreated={
-              onPlayerCreated
-            }
+            onCreated={onPlayerCreated}
             excludeIds={
               strikerId
                 ? [strikerId]
@@ -3630,24 +3622,15 @@ function SelectBatsmen({
             }
             placeholder="Type or add non-striker's name…"
           />
-
         </div>
       )}
 
+      {/* CONFIRM */}
       <button
+        type="button"
         className="btn btn-primary w-full"
-        disabled={
-          (!hasStriker &&
-            !strikerId) ||
-          (!hasNonStriker &&
-            !nonStrikerId)
-        }
-        onClick={() =>
-          onSelect(
-            strikerId,
-            nonStrikerId
-          )
-        }
+        disabled={!canConfirm}
+        onClick={handleConfirm}
       >
         Confirm
       </button>
@@ -3655,3 +3638,4 @@ function SelectBatsmen({
     </div>
   );
 }
+
