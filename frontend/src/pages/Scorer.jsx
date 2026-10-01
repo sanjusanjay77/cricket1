@@ -1812,14 +1812,42 @@ export default function Scorer() {
             setError('');
 
             try {
-              await Matches.startSecondInnings(matchId);
+              /*
+               * Start the second innings on the server.  Do NOT wait for a
+               * second GET /match request here.  In normal operation the
+               * Socket.IO score-update supplies the new innings immediately.
+               * If the API itself returns the fresh match payload, use it
+               * directly; otherwise let the socket update the screen and
+               * use a delayed fallback GET only when necessary.
+               */
+              const result =
+                await Matches.startSecondInnings(matchId);
+
               visualStateRef.current = null;
               optimisticRef.current = null;
               visualHistoryRef.current = [];
               fixedBatsmenRef.current = null;
-              setOptimistic(null);
-              setFixedBatsmen(null);
-              await loadFull();
+              fixedBatsmenInningsRef.current = null;
+
+              flushSync(() => {
+                setOptimistic(null);
+                setFixedBatsmen(null);
+                setShowNextBowler(false);
+              });
+
+              const returnedData =
+                result?.data || result;
+
+              if (returnedData?.match && returnedData?.innings) {
+                applyServerData(returnedData);
+              } else {
+                /* Socket.IO is the fast path.  Only use GET as a fallback. */
+                setTimeout(() => {
+                  if (pendingCountRef.current === 0) {
+                    loadFull();
+                  }
+                }, 350);
+              }
             } catch (err) {
               setError(
                 err?.response?.data?.error ||
@@ -2891,11 +2919,22 @@ export default function Scorer() {
               setOptimistic(nextState);
               setShowNextBowler(false);
 
-              const data = await Matches.get(matchId);
-
-              if (pendingCountRef.current === 0) {
-                applyServerData(data);
-              }
+              /*
+               * The bowler is already saved.  Do not block the scorer on
+               * another full match GET.  Socket.IO will synchronize the
+               * authoritative state; a small delayed GET is only a fallback.
+               */
+              setTimeout(() => {
+                if (pendingCountRef.current === 0) {
+                  Matches.get(matchId)
+                    .then((data) => {
+                      if (pendingCountRef.current === 0) {
+                        applyServerData(data);
+                      }
+                    })
+                    .catch(() => {});
+                }
+              }, 300);
 
             } catch (err) {
               setError(
