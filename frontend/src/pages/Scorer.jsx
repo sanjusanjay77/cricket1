@@ -1799,14 +1799,38 @@ export default function Scorer() {
   }
 
   /*
-   * INNINGS BREAK
+   * =========================================================
+   * FIRST INNINGS -> SEPARATE TARGET PAGE
+   * =========================================================
+   *
+   * Never show the bowler selector on the scorer after the
+   * first innings is completed. The target screen is now a
+   * separate route. It owns the Continue button and starts
+   * innings 2 before returning to the normal scorer.
    */
-  if (
-    match.status ===
-      'innings-break' &&
-    pendingCount === 0
-  ) {
-    if (!currentInnings) {
+  useEffect(() => {
+    if (
+      match.status === 'innings-break' &&
+      pendingCountRef.current === 0
+    ) {
+      navigate(`/match/${matchId}/target`, { replace: true });
+    }
+  }, [match.status, matchId, navigate]);
+
+  if (match.status === 'innings-break') {
+    return (
+      <div className="max-w-lg mx-auto card text-center">
+        <div className="text-emerald-400 font-semibold">
+          Innings completed
+        </div>
+        <div className="text-slate-400 text-sm mt-1">
+          Opening target screen…
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentInnings) {
       return (
         <p className="text-slate-400">
           Loading…
@@ -2350,12 +2374,14 @@ export default function Scorer() {
 
   const needsNextBowler =
     !optimistic?.inningsCompleted &&
-    optimistic?.needsNextBowler ||
-    (!optimistic?.inningsCompleted && (
-      !inn.current_bowler_id &&
-      displayTotalBalls > 0 &&
-      displayTotalBalls % 6 === 0
-    ));
+    (
+      optimistic?.needsNextBowler ||
+      (
+        !inn.current_bowler_id &&
+        displayTotalBalls > 0 &&
+        displayTotalBalls % 6 === 0
+      )
+    );
 
   /*
    * -------------------------
