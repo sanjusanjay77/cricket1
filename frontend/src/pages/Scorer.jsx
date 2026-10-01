@@ -1,24 +1,10 @@
-import {
-  useEffect,
-  useState,
-  useCallback,
-  useRef
-} from 'react';
-
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
-
-import {
-  Matches,
-  Innings
-} from '../api/api.js';
-
+import { Matches, Innings } from '../api/api.js';
 import WicketModal from '../components/WicketModal.jsx';
 import PlayerAutocomplete from '../components/PlayerAutocomplete.jsx';
 import socket from '../socket.js';
-
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
 
 export default function Scorer() {
   const { matchId } = useParams();
@@ -33,342 +19,365 @@ export default function Scorer() {
   const [boundary, setBoundary] = useState(null);
   const [extraPicker, setExtraPicker] = useState(null);
   const [flashWicket, setFlashWicket] = useState(false);
-
   const [showNextBowler, setShowNextBowler] = useState(false);
 
   const [optimistic, setOptimistic] = useState(null);
   const optimisticRef = useRef(null);
 
   /*
-   * =========================================================
-   * UNIFIED SERVER QUEUE
-   * =========================================================
+   * FIXED BATSMAN CARDS
    *
-   * EVERY server operation uses this same queue:
-   *
-   * score
-   * swap
-   * undo
-   * bowler
-   * batsmen
-   *
-   * This guarantees:
-   *
-   * score -> swap -> undo -> score
-   *
-   * reaches the server in exactly that order.
+   * The left/right cards never swap when an odd run is scored.
+   * Only strikerSide changes. Stats stay permanently attached to
+   * the player in that card. This removes the visual name/stats
+   * mismatch caused by swapping React card positions.
    */
+  const [fixedBatsmen, setFixedBatsmen] = useState(null);
+  const fixedBatsmenRef = useRef(null);
+  const fixedBatsmenInningsRef = useRef(null);
 
-  const serverActionTailRef = useRef(
-    Promise.resolve()
-  );
+  /*
+   * Keep the last locally displayed scoring state even after an
+   * authoritative server refresh clears `optimistic`. This lets Undo
+   * restore the previous screen instantly without waiting for GET /match.
+   */
+  const visualStateRef = useRef(null);
+  const visualHistoryRef = useRef([]);
+  const undoRollbackRef = useRef(null);
+  const swapRollbackRef = useRef(null);
 
+  const [actionBusy, setActionBusy] = useState(null);
+  const actionBusyRef = useRef(null);
+
+  const scoreQueueRef = useRef([]);
+  const processingQueueRef = useRef(false);
   const pendingCountRef = useRef(0);
 
-  const [pendingCount, setPendingCount] =
-    useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
 
   const boundaryTimer = useRef(null);
   const wicketTimer = useRef(null);
 
-  /*
-   * Used to prevent duplicate second-innings
-   * start clicks.
-   */
-  const startingSecondRef = useRef(false);
+  const applyServerData = useCallback((data) => {
+    if (!data) return;
 
-  /*
-   * =========================================================
-   * VISUAL HISTORY
-   * =========================================================
-   *
-   * Every scored ball stores the previous visual state.
-   *
-   * Undo can therefore update immediately without waiting
-   * for the server.
-   */
+    const nextInnings = data.innings || [];
+    const latest = nextInnings[nextInnings.length - 1];
+    const latestInn = latest?.innings;
+    const latestInningsId = latestInn?.id ?? null;
 
-  const visualHistoryRef = useRef([]);
+    setMatch(data.match);
+    setPlayers(data.players || []);
+    setInnings(nextInnings);
 
-  /*
-   * =========================================================
-   * SERVER QUEUE
-   * =========================================================
-   */
+    /*
+     * Preserve the fixed left/right cards across authoritative refreshes.
+     * Only the stats and strikerSide are synchronized from the server.
+     * A new innings gets a fresh pair.
+     */
+    setFixedBatsmen(previous => {
+      if (!latestInn || !latestInningsId) {
+        fixedBatsmenRef.current = null;
+        fixedBatsmenInningsRef.current = null;
+        return null;
+      }
 
-  const enqueueServerAction = useCallback(
-    (action) => {
-      const run =
-        serverActionTailRef.current
-          .catch(() => {})
-          .then(action);
+      const battingCard = latest?.battingCard || [];
 
-      /*
-       * Never allow one rejected action to permanently
-       * break the queue.
-       */
-      serverActionTailRef.current =
-        run.catch(() => {});
+      const getStats = (playerId) => {
+        if (!playerId) return null;
+        return battingCard.find(
+          b => String(b.player_id) === String(playerId)
+        ) || {
+          player_id: playerId,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          strike_rate: 0,
+          is_out: false
+        };
+      };
 
-      return run;
-    },
-    []
-  );
+      const isNewInnings =
+        !previous ||
+        String(previous.inningsId) !== String(latestInningsId);
 
-  /*
-   * =========================================================
-   * PENDING HELPERS
-   * =========================================================
-   */
+      if (isNewInnings) {
+        const fresh = {
+          inningsId: latestInningsId,
+          leftPlayerId: latestInn.striker_id || null,
+          rightPlayerId: latestInn.non_striker_id || null,
+          leftStats: getStats(latestInn.striker_id),
+          rightStats: getStats(latestInn.non_striker_id),
+          strikerSide: 'left'
+        };
 
-  const increasePending = useCallback(() => {
-    pendingCountRef.current += 1;
+        fixedBatsmenRef.current = fresh;
+        fixedBatsmenInningsRef.current = latestInningsId;
+        return fresh;
+      }
 
-    setPendingCount(
-      pendingCountRef.current
-    );
+      const leftId = previous.leftPlayerId;
+      const rightId = previous.rightPlayerId;
+
+      let leftPlayerId = leftId;
+      let rightPlayerId = rightId;
+
+      /* If a selection happened before the server refresh, keep it. */
+      if (!leftPlayerId && latestInn.striker_id && String(latestInn.striker_id) !== String(rightPlayerId)) {
+        leftPlayerId = latestInn.striker_id;
+      }
+
+      if (!rightPlayerId && latestInn.striker_id && String(latestInn.striker_id) !== String(leftPlayerId)) {
+        rightPlayerId = latestInn.striker_id;
+      }
+
+      if (!leftPlayerId && latestInn.non_striker_id && String(latestInn.non_striker_id) !== String(rightPlayerId)) {
+        leftPlayerId = latestInn.non_striker_id;
+      }
+
+      if (!rightPlayerId && latestInn.non_striker_id && String(latestInn.non_striker_id) !== String(leftPlayerId)) {
+        rightPlayerId = latestInn.non_striker_id;
+      }
+
+      const strikerSide =
+        String(latestInn.striker_id) === String(leftPlayerId)
+          ? 'left'
+          : String(latestInn.striker_id) === String(rightPlayerId)
+            ? 'right'
+            : previous.strikerSide;
+
+      const synced = {
+        ...previous,
+        inningsId: latestInningsId,
+        leftPlayerId,
+        rightPlayerId,
+        leftStats: getStats(leftPlayerId),
+        rightStats: getStats(rightPlayerId),
+        strikerSide
+      };
+
+      fixedBatsmenRef.current = synced;
+      fixedBatsmenInningsRef.current = latestInningsId;
+      return synced;
+    });
+
+    /*
+     * The server response is now authoritative. A new innings must start
+     * with a completely fresh local history/state.
+     */
+    const latestState = visualStateRef.current;
+
+    if (latestInn && latestState && String(latestState.inningsId) !== String(latestInn.id)) {
+      visualStateRef.current = null;
+      visualHistoryRef.current = [];
+    }
+
+    optimisticRef.current = null;
+    setOptimistic(null);
+
+    const currentVisualState = visualStateRef.current;
+    if (currentVisualState && latestInn && String(currentVisualState.inningsId || latestInn.id) === String(latestInn.id)) {
+      visualStateRef.current = {
+        ...currentVisualState,
+        total_runs: Number(latestInn.total_runs || 0),
+        total_wickets: Number(latestInn.total_wickets || 0),
+        total_balls: Number(latestInn.total_balls || 0),
+        strikerId: latestInn.striker_id || null,
+        nonStrikerId: latestInn.non_striker_id || null,
+        activeBowlerId: latestInn.current_bowler_id || currentVisualState.activeBowlerId || null,
+        strikerStats: (latest?.battingCard || []).find(b => String(b.player_id) === String(latestInn.striker_id)) || currentVisualState.strikerStats,
+        nonStrikerStats: (latest?.battingCard || []).find(b => String(b.player_id) === String(latestInn.non_striker_id)) || currentVisualState.nonStrikerStats,
+        bowlerStats: (latest?.bowlingCard || []).find(b => String(b.player_id) === String(latestInn.current_bowler_id)) || currentVisualState.bowlerStats,
+        recentBalls: latest?.recentBalls || currentVisualState.recentBalls || [],
+        partnership: latest?.partnership || currentVisualState.partnership,
+        fallOfWickets: latest?.fallOfWickets || currentVisualState.fallOfWickets || []
+      };
+    }
   }, []);
 
-  const decreasePending = useCallback(() => {
-    pendingCountRef.current =
-      Math.max(
-        0,
-        pendingCountRef.current - 1
-      );
+  const loadFull = useCallback(async () => {
+    try {
+      const data = await Matches.get(matchId);
 
-    setPendingCount(
-      pendingCountRef.current
-    );
-  }, []);
-
-  /*
-   * =========================================================
-   * SERVER DATA
-   * =========================================================
-   */
-
-  const applyServerData = useCallback(
-    (data) => {
-      if (!data) return;
-
-      setMatch(data.match);
-      setPlayers(
-        safeArray(data.players)
-      );
-      setInnings(
-        safeArray(data.innings)
-      );
-
-      /*
-       * Never destroy the local scoreboard while
-       * operations are still pending.
-       */
-      if (
-        pendingCountRef.current === 0
-      ) {
-        optimisticRef.current = null;
-        setOptimistic(null);
-      }
-    },
-    []
-  );
-
-  const loadFull = useCallback(
-    async () => {
-      try {
-        const data =
-          await Matches.get(matchId);
-
-        /*
-         * Never overwrite optimistic UI while
-         * server actions are pending.
-         */
-        if (
-          pendingCountRef.current > 0
-        ) {
-          return data;
-        }
-
-        applyServerData(data);
-
-        return data;
-      } catch (err) {
-        console.error(
-          'Failed to load match:',
-          err
-        );
-
-        throw err;
-      }
-    },
-    [
-      matchId,
-      applyServerData
-    ]
-  );
-
-  /*
-   * =========================================================
-   * INITIAL LOAD
-   * =========================================================
-   */
-
-  useEffect(() => {
-    loadFull().catch(() => {});
-  }, [loadFull]);
-
-  /*
-   * =========================================================
-   * SOCKET
-   * =========================================================
-   */
-
-  useEffect(() => {
-    socket.emit(
-      'join-match',
-      matchId
-    );
-
-    const onUpdate = ({
-      match: updatedMatch,
-      innings: updatedInnings
-    }) => {
-      /*
-       * Local optimistic state has priority while
-       * operations are being saved.
-       */
-      if (
-        pendingCountRef.current > 0
-      ) {
+      if (pendingCountRef.current > 0) {
         return;
       }
 
-      setMatch(updatedMatch);
+      applyServerData(data);
+    } catch (err) {
+      console.error('Failed to load match:', err);
+    }
+  }, [matchId, applyServerData]);
 
-      setInnings(
-        safeArray(updatedInnings)
-      );
+  useEffect(() => {
+    loadFull();
+  }, [loadFull]);
+
+  const handlePlayerCreated = useCallback((player) => {
+    setPlayers(prev => {
+      const exists = prev.some(p => p.id === player.id);
+
+      if (exists) {
+        return prev;
+      }
+
+      return [...prev, player];
+    });
+  }, []);
+
+  useEffect(() => {
+    socket.emit('join-match', matchId);
+
+    const onUpdate = ({ match: updatedMatch, innings: updatedInnings }) => {
+      if (pendingCountRef.current > 0) {
+        return;
+      }
+
+      const nextInnings = updatedInnings || [];
+      const latest = nextInnings[nextInnings.length - 1];
+      const latestInn = latest?.innings;
+
+      if (
+        updatedMatch?.status === 'innings-break' ||
+        updatedMatch?.status === 'completed'
+      ) {
+        setShowNextBowler(false);
+      }
+
+      setMatch(updatedMatch);
+      setInnings(nextInnings);
+
+      if (latestInn) {
+        setFixedBatsmen(previous => {
+          if (!previous || String(previous.inningsId) !== String(latestInn.id)) {
+            return previous;
+          }
+
+          const card = latest?.battingCard || [];
+          const getStats = id =>
+            id
+              ? card.find(b => String(b.player_id) === String(id)) || {
+                  player_id: id,
+                  runs: 0,
+                  balls: 0,
+                  fours: 0,
+                  sixes: 0,
+                  strike_rate: 0
+                }
+              : null;
+
+          const strikerSide =
+            String(latestInn.striker_id) === String(previous.leftPlayerId)
+              ? 'left'
+              : String(latestInn.striker_id) === String(previous.rightPlayerId)
+                ? 'right'
+                : previous.strikerSide;
+
+          const synced = {
+            ...previous,
+            leftStats: getStats(previous.leftPlayerId),
+            rightStats: getStats(previous.rightPlayerId),
+            strikerSide
+          };
+
+          fixedBatsmenRef.current = synced;
+          return synced;
+        });
+      }
 
       optimisticRef.current = null;
       setOptimistic(null);
+      visualStateRef.current = null;
+      visualHistoryRef.current = [];
     };
 
-    socket.on(
-      'score-update',
-      onUpdate
-    );
+    socket.on('score-update', onUpdate);
 
     return () => {
-      socket.emit(
-        'leave-match',
-        matchId
-      );
-
-      socket.off(
-        'score-update',
-        onUpdate
-      );
+      socket.emit('leave-match', matchId);
+      socket.off('score-update', onUpdate);
     };
   }, [matchId]);
 
-  /*
-   * =========================================================
-   * CLEANUP
-   * =========================================================
-   */
-
   useEffect(() => {
     return () => {
-      clearTimeout(
-        boundaryTimer.current
-      );
+      clearTimeout(boundaryTimer.current);
+      clearTimeout(wicketTimer.current);
 
-      clearTimeout(
-        wicketTimer.current
-      );
+      scoreQueueRef.current = [];
+      processingQueueRef.current = false;
     };
   }, []);
 
-  /*
-   * =========================================================
-   * PLAYER CREATED
-   * =========================================================
-   */
+  const popBoundary = useCallback((type) => {
+    clearTimeout(boundaryTimer.current);
 
-  const handlePlayerCreated =
-    useCallback((player) => {
-      if (!player) return;
+    setBoundary(type);
 
-      setPlayers((prev) => {
-        const exists =
-          prev.some(
-            (p) =>
-              p.id === player.id
-          );
+    boundaryTimer.current = setTimeout(() => {
+      setBoundary(null);
+    }, 1100);
+  }, []);
 
-        if (exists) {
-          return prev;
-        }
+  const popWicket = useCallback(() => {
+    clearTimeout(wicketTimer.current);
 
-        return [
-          ...prev,
-          player
-        ];
-      });
-    }, []);
+    setFlashWicket(true);
+
+    wicketTimer.current = setTimeout(() => {
+      setFlashWicket(false);
+    }, 600);
+  }, []);
 
   /*
-   * =========================================================
-   * VISUAL EFFECTS
-   * =========================================================
+   * Open the next-bowler popup immediately after the 6th LEGAL ball.
+   * Wides and no-balls do not trigger this because total_balls only
+   * increases for legal deliveries.
    */
+  useEffect(() => {
+    if (
+      !optimistic?.inningsCompleted &&
+      optimistic?.needsNextBowler &&
+      Number(optimistic?.total_balls || 0) > 0 &&
+      Number(optimistic?.total_balls || 0) % 6 === 0
+    ) {
+      setShowNextBowler(true);
+    }
+  }, [
+    optimistic?.needsNextBowler,
+    optimistic?.total_balls
+  ]);
 
-  const popBoundary =
-    useCallback((type) => {
-      clearTimeout(
-        boundaryTimer.current
+  const act = async (fn) => {
+    setError('');
+
+    try {
+      await fn();
+      await loadFull();
+    } catch (err) {
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Something went wrong'
       );
 
-      setBoundary(type);
-
-      boundaryTimer.current =
-        setTimeout(() => {
-          setBoundary(null);
-        }, 1100);
-    }, []);
-
-  const popWicket =
-    useCallback(() => {
-      clearTimeout(
-        wicketTimer.current
-      );
-
-      setFlashWicket(true);
-
-      wicketTimer.current =
-        setTimeout(() => {
-          setFlashWicket(false);
-        }, 600);
-    }, []);
+      await loadFull();
+    }
+  };
 
   /*
-   * =========================================================
-   * PLAYER ID
-   * =========================================================
+   * Convert a player object / id into an actual player id.
    */
-
   const getPlayerId = (player) => {
     if (!player) return null;
 
-    if (
-      typeof player === 'string'
-    ) {
+    if (typeof player === 'string') {
       return player;
     }
 
-    if (
-      typeof player === 'object'
-    ) {
+    if (typeof player === 'object') {
       return player.id || null;
     }
 
@@ -376,11 +385,8 @@ export default function Scorer() {
   };
 
   /*
-   * =========================================================
-   * OPTIMISTIC BALL BUILDER
-   * =========================================================
+   * Build the instant UI state before the server responds.
    */
-
   const buildOptimisticBall = ({
     current,
     currentInnings,
@@ -403,32 +409,26 @@ export default function Scorer() {
       Number(payload.runs || 0);
 
     const inputExtraRuns =
-      Number(
-        payload.extra_runs || 0
-      );
+      Number(payload.extra_runs || 0);
 
     let teamRuns = 0;
     let batsmanRuns = 0;
     let runsRun = 0;
     let legal = true;
 
-    switch (
-      payload.extra_type
-    ) {
+    switch (payload.extra_type) {
       case 'wide':
-        teamRuns =
-          Math.max(
-            1,
-            inputExtraRuns || 1
-          );
+        teamRuns = Math.max(
+          1,
+          inputExtraRuns || 1
+        );
 
         batsmanRuns = 0;
 
-        runsRun =
-          Math.max(
-            0,
-            teamRuns - 1
-          );
+        runsRun = Math.max(
+          0,
+          teamRuns - 1
+        );
 
         legal = false;
         break;
@@ -442,7 +442,6 @@ export default function Scorer() {
 
         batsmanRuns = runs;
         runsRun = runs;
-
         legal = false;
         break;
 
@@ -456,7 +455,6 @@ export default function Scorer() {
 
         batsmanRuns = 0;
         runsRun = teamRuns;
-
         legal = true;
         break;
 
@@ -469,7 +467,6 @@ export default function Scorer() {
 
         batsmanRuns = 0;
         runsRun = 0;
-
         legal = false;
         break;
 
@@ -477,7 +474,6 @@ export default function Scorer() {
         teamRuns = runs;
         batsmanRuns = runs;
         runsRun = runs;
-
         legal = true;
         break;
     }
@@ -487,21 +483,15 @@ export default function Scorer() {
 
     const previousRuns =
       previousOptimistic?.total_runs ??
-      Number(
-        current.total_runs || 0
-      );
+      Number(current.total_runs || 0);
 
     const previousWickets =
       previousOptimistic?.total_wickets ??
-      Number(
-        current.total_wickets || 0
-      );
+      Number(current.total_wickets || 0);
 
     const previousBalls =
       previousOptimistic?.total_balls ??
-      Number(
-        current.total_balls || 0
-      );
+      Number(current.total_balls || 0);
 
     const newTotalRuns =
       previousRuns + teamRuns;
@@ -515,21 +505,17 @@ export default function Scorer() {
       (legal ? 1 : 0);
 
     /*
-     * =======================================================
+     * -------------------------
      * BATSMAN STATS
-     * =======================================================
+     * -------------------------
      */
 
     const battingCard =
-      safeArray(
-        currentInnings.battingCard
-      );
+      currentInnings.battingCard || [];
 
     const serverStrikerStats =
       battingCard.find(
-        (b) =>
-          b.player_id ===
-          strikerId
+        b => b.player_id === strikerId
       ) || {
         player_id: strikerId,
         runs: 0,
@@ -545,9 +531,7 @@ export default function Scorer() {
 
     const serverNonStrikerStats =
       battingCard.find(
-        (b) =>
-          b.player_id ===
-          nonStrikerId
+        b => b.player_id === nonStrikerId
       ) || {
         player_id: nonStrikerId,
         runs: 0,
@@ -569,23 +553,24 @@ export default function Scorer() {
       previousOptimistic?.nonStrikerStats ||
       serverNonStrikerStats;
 
+    /*
+     * According to the backend:
+     * wides do not count as a batter ball.
+     * No-ball also does not count as a legal delivery,
+     * and is therefore not counted as a ball faced here.
+     */
     const strikerBallsAdded =
-      payload.extra_type ===
-        'wide' ||
-      payload.extra_type ===
-        'noball'
+      payload.extra_type === 'wide' ||
+      payload.extra_type === 'noball'
         ? 0
         : 1;
 
     const batterGetsRuns =
       !payload.extra_type ||
-      payload.extra_type ===
-        'noball';
+      payload.extra_type === 'noball';
 
     const newStrikerRuns =
-      Number(
-        previousStrikerStats.runs || 0
-      ) +
+      Number(previousStrikerStats.runs || 0) +
       (
         batterGetsRuns
           ? batsmanRuns
@@ -593,15 +578,11 @@ export default function Scorer() {
       );
 
     const newStrikerBalls =
-      Number(
-        previousStrikerStats.balls || 0
-      ) +
+      Number(previousStrikerStats.balls || 0) +
       strikerBallsAdded;
 
     const newStrikerFours =
-      Number(
-        previousStrikerStats.fours || 0
-      ) +
+      Number(previousStrikerStats.fours || 0) +
       (
         batterGetsRuns &&
         batsmanRuns === 4
@@ -610,9 +591,7 @@ export default function Scorer() {
       );
 
     const newStrikerSixes =
-      Number(
-        previousStrikerStats.sixes || 0
-      ) +
+      Number(previousStrikerStats.sixes || 0) +
       (
         batterGetsRuns &&
         batsmanRuns === 6
@@ -648,61 +627,57 @@ export default function Scorer() {
     };
 
     /*
-     * =======================================================
      * WICKET
-     * =======================================================
      */
-
     if (
       wicket &&
       payload.dismissed_id
     ) {
       if (
-        payload.dismissed_id ===
-        strikerId
+        payload.dismissed_id === strikerId
       ) {
-        updatedStrikerStats.is_out =
-          true;
-
+        updatedStrikerStats.is_out = true;
         updatedStrikerStats.how_out =
-          payload.wicket_type ||
-          null;
-
+          payload.wicket_type || null;
         updatedStrikerStats.dismissed_by =
-          scoringBowlerId ||
-          null;
-
+          scoringBowlerId || null;
         updatedStrikerStats.fielder_id =
-          payload.fielder_id ||
-          null;
+          payload.fielder_id || null;
 
         strikerId = null;
-
       } else if (
-        payload.dismissed_id ===
-        nonStrikerId
+        payload.dismissed_id === nonStrikerId
       ) {
-        updatedNonStrikerStats.is_out =
-          true;
-
+        updatedNonStrikerStats.is_out = true;
         updatedNonStrikerStats.how_out =
-          payload.wicket_type ||
-          null;
-
+          payload.wicket_type || null;
         updatedNonStrikerStats.dismissed_by =
-          scoringBowlerId ||
-          null;
-
+          scoringBowlerId || null;
         updatedNonStrikerStats.fielder_id =
-          payload.fielder_id ||
-          null;
+          payload.fielder_id || null;
 
         nonStrikerId = null;
       }
-
     } else if (
       runsRun % 2 === 1
     ) {
+      /*
+       * ODD RUN:
+       *
+       * The batsmen change ends.
+       * Their complete stats must move with them.
+       *
+       * Example:
+       * Sanjay 50 -> scores 1 -> 51
+       * Raja 30
+       *
+       * New positions:
+       * Striker     = Raja 30
+       * Non-striker = Sanjay 51
+       *
+       * This prevents the stats from appearing
+       * to swap later after the server refresh.
+       */
       const oldStrikerId =
         strikerId;
 
@@ -729,24 +704,21 @@ export default function Scorer() {
     }
 
     /*
-     * =======================================================
+     * -------------------------
      * BOWLER STATS
-     * =======================================================
+     * -------------------------
      */
 
     const bowlingCard =
-      safeArray(
-        currentInnings.bowlingCard
-      );
+      currentInnings.bowlingCard || [];
 
     const serverBowlerStats =
       bowlingCard.find(
-        (b) =>
+        b =>
           b.player_id ===
           scoringBowlerId
       ) || {
-        player_id:
-          scoringBowlerId,
+        player_id: scoringBowlerId,
         overs: '0.0',
         maidens: 0,
         runs: 0,
@@ -757,18 +729,6 @@ export default function Scorer() {
     const previousBowlerStats =
       previousOptimistic?.bowlerStats ||
       serverBowlerStats;
-
-    /*
-     * IMPORTANT:
-     *
-     * 0.1 = one legal ball
-     * 0.2 = two legal balls
-     * 0.3 = three legal balls
-     * ...
-     * 1.0 = six legal balls
-     *
-     * Never treat 0.1 as decimal 0.1 overs.
-     */
 
     let previousBowlerBalls =
       previousOptimistic?.bowlerBalls;
@@ -783,15 +743,15 @@ export default function Scorer() {
           '0.0'
         );
 
-      const parts =
+      const [overs, balls] =
         oversText.split('.');
 
       previousBowlerBalls =
         (
-          Number(parts[0]) || 0
+          Number(overs) || 0
         ) * 6 +
         (
-          Number(parts[1]) || 0
+          Number(balls) || 0
         );
     }
 
@@ -810,7 +770,6 @@ export default function Scorer() {
           1,
           inputExtraRuns || 1
         );
-
     } else if (
       payload.extra_type ===
       'noball'
@@ -821,17 +780,15 @@ export default function Scorer() {
           inputExtraRuns || 1
         ) +
         batsmanRuns;
-
     } else if (
       payload.extra_type ===
-        'bye' ||
+      'bye' ||
       payload.extra_type ===
-        'legbye' ||
+      'legbye' ||
       payload.extra_type ===
-        'penalty'
+      'penalty'
     ) {
       bowlerRunsAdded = 0;
-
     } else {
       bowlerRunsAdded =
         batsmanRuns;
@@ -850,8 +807,7 @@ export default function Scorer() {
 
     const newBowlerWickets =
       Number(
-        previousBowlerStats.wickets ||
-          0
+        previousBowlerStats.wickets || 0
       ) +
       (
         bowlerGetsWicket
@@ -865,15 +821,11 @@ export default function Scorer() {
       )}.${newBowlerBalls % 6}`;
 
     /*
-     * =======================================================
-     * MAIDEN
-     * =======================================================
+     * Maiden detection.
      */
-
     let newMaidens =
       Number(
-        previousBowlerStats.maidens ||
-          0
+        previousBowlerStats.maidens || 0
       );
 
     const overJustCompleted =
@@ -882,14 +834,11 @@ export default function Scorer() {
       newTotalBalls >
         previousBalls;
 
-    if (
-      overJustCompleted
-    ) {
+    if (overJustCompleted) {
       const previousRecentBalls =
         previousOptimistic?.recentBalls ||
-        safeArray(
-          currentInnings.recentBalls
-        );
+        currentInnings.recentBalls ||
+        [];
 
       const completedOverNumber =
         Math.floor(
@@ -898,11 +847,9 @@ export default function Scorer() {
 
       const ballsForCompletedOver =
         previousRecentBalls.filter(
-          (ball) =>
-            Number(
-              ball.over_number
-            ) ===
-              completedOverNumber &&
+          ball =>
+            Number(ball.over_number) ===
+            completedOverNumber &&
             ball.bowler_id ===
               scoringBowlerId
         );
@@ -911,51 +858,45 @@ export default function Scorer() {
         bowlerRunsAdded;
 
       ballsForCompletedOver.forEach(
-        (ball) => {
-          const type =
+        ball => {
+          const ballExtra =
             ball.extra_type;
 
           if (
-            type === 'bye' ||
-            type === 'legbye' ||
-            type === 'penalty'
+            ballExtra === 'bye' ||
+            ballExtra === 'legbye' ||
+            ballExtra === 'penalty'
           ) {
             return;
           }
 
           if (
-            type === 'wide'
+            ballExtra === 'wide'
           ) {
             overRuns +=
               Math.max(
                 1,
                 Number(
-                  ball.extra_runs ||
-                    1
+                  ball.extra_runs || 1
                 )
               );
-
           } else if (
-            type === 'noball'
+            ballExtra === 'noball'
           ) {
             overRuns +=
               Math.max(
                 1,
                 Number(
-                  ball.extra_runs ||
-                    1
+                  ball.extra_runs || 1
                 )
               ) +
               Number(
-                ball.runs_batsman ||
-                  0
+                ball.runs_batsman || 0
               );
-
           } else {
             overRuns +=
               Number(
-                ball.runs_batsman ||
-                  0
+                ball.runs_batsman || 0
               );
           }
         }
@@ -968,23 +909,12 @@ export default function Scorer() {
       }
     }
 
-    /*
-     * IMPORTANT ECONOMY FORMULA
-     *
-     * 1 run / 1 ball × 6 = 6.00
-     *
-     * NOT:
-     * 1 / 0.1
-     */
-
     const bowlerEconomy =
       newBowlerBalls > 0
         ? Number(
             (
-              (
-                newBowlerRuns /
-                newBowlerBalls
-              ) * 6
+              newBowlerRuns /
+              (newBowlerBalls / 6)
             ).toFixed(2)
           )
         : 0;
@@ -1006,11 +936,8 @@ export default function Scorer() {
     };
 
     /*
-     * =======================================================
      * END OF OVER
-     * =======================================================
      */
-
     let needsNextBowler =
       previousOptimistic?.needsNextBowler ||
       false;
@@ -1022,6 +949,11 @@ export default function Scorer() {
         strikerId &&
         nonStrikerId
       ) {
+        /*
+         * At the end of an over the batsmen
+         * change ends again. Move their stats
+         * together with their player IDs.
+         */
         const oldStrikerId =
           strikerId;
 
@@ -1051,16 +983,15 @@ export default function Scorer() {
     }
 
     /*
-     * =======================================================
+     * -------------------------
      * RECENT BALL
-     * =======================================================
+     * -------------------------
      */
 
     const previousRecentBalls =
       previousOptimistic?.recentBalls ||
-      safeArray(
-        currentInnings.recentBalls
-      );
+      currentInnings.recentBalls ||
+      [];
 
     const overNumber =
       Math.floor(
@@ -1081,13 +1012,11 @@ export default function Scorer() {
         `optimistic-${Date.now()}-${Math.random()}`,
 
       ball_sequence:
-        previousRecentBalls.length >
-        0
+        previousRecentBalls.length > 0
           ? (
               Number(
                 previousRecentBalls[
-                  previousRecentBalls.length -
-                    1
+                  previousRecentBalls.length - 1
                 ].ball_sequence
               ) ||
               previousBalls
@@ -1115,8 +1044,7 @@ export default function Scorer() {
         batsmanRuns,
 
       extra_type:
-        payload.extra_type ||
-        null,
+        payload.extra_type || null,
 
       extra_runs:
         inputExtraRuns,
@@ -1125,16 +1053,13 @@ export default function Scorer() {
         wicket,
 
       wicket_type:
-        payload.wicket_type ||
-        null,
+        payload.wicket_type || null,
 
       dismissed_id:
-        payload.dismissed_id ||
-        null,
+        payload.dismissed_id || null,
 
       fielder_id:
-        payload.fielder_id ||
-        null,
+        payload.fielder_id || null,
 
       is_legal:
         legal ? 1 : 0
@@ -1146,42 +1071,36 @@ export default function Scorer() {
     ].slice(-24);
 
     /*
-     * =======================================================
+     * -------------------------
      * EXTRAS
-     * =======================================================
+     * -------------------------
      */
 
     const previousExtras =
-      previousOptimistic?.extras ||
-      {
+      previousOptimistic?.extras || {
         wide:
           Number(
-            current.extras_wide ||
-              0
+            current.extras_wide || 0
           ),
 
         noball:
           Number(
-            current.extras_noball ||
-              0
+            current.extras_noball || 0
           ),
 
         bye:
           Number(
-            current.extras_bye ||
-              0
+            current.extras_bye || 0
           ),
 
         legbye:
           Number(
-            current.extras_legbye ||
-              0
+            current.extras_legbye || 0
           ),
 
         penalty:
           Number(
-            current.extras_penalty ||
-              0
+            current.extras_penalty || 0
           )
       };
 
@@ -1204,9 +1123,9 @@ export default function Scorer() {
     }
 
     /*
-     * =======================================================
+     * -------------------------
      * PARTNERSHIP
-     * =======================================================
+     * -------------------------
      */
 
     const previousPartnership =
@@ -1226,15 +1145,13 @@ export default function Scorer() {
         : {
             runs:
               Number(
-                previousPartnership.runs ||
-                  0
+                previousPartnership.runs || 0
               ) +
               teamRuns,
 
             balls:
               Number(
-                previousPartnership.balls ||
-                  0
+                previousPartnership.balls || 0
               ) +
               (
                 legal ||
@@ -1250,147 +1167,72 @@ export default function Scorer() {
         ? Number(
             (
               newTotalRuns /
-              (
-                newTotalBalls /
-                6
-              )
+              (newTotalBalls / 6)
             ).toFixed(2)
           )
         : 0;
 
     /*
-     * =======================================================
      * FALL OF WICKETS
-     * =======================================================
+     * Keep the wicket list optimistic too, so the new wicket appears
+     * immediately without waiting for the backend response.
      */
-
     const previousFallOfWickets =
       previousOptimistic?.fallOfWickets ||
       currentInnings.fallOfWickets ||
       [];
 
     const newFallOfWickets =
-      wicket &&
-      payload.dismissed_id
+      wicket && payload.dismissed_id
         ? [
             ...previousFallOfWickets,
             {
-              wicket_number:
-                newTotalWickets,
-
-              player_id:
-                payload.dismissed_id,
-
-              score:
-                newTotalRuns,
-
-              overs:
-                `${Math.floor(
-                  newTotalBalls /
-                    6
-                )}.${newTotalBalls % 6}`,
-
-              wicket_type:
-                payload.wicket_type ||
-                null,
-
-              bowler_id:
-                scoringBowlerId ||
-                null,
-
-              fielder_id:
-                payload.fielder_id ||
-                null
+              wicket_number: newTotalWickets,
+              player_id: payload.dismissed_id,
+              score: newTotalRuns,
+              overs: `${Math.floor(newTotalBalls / 6)}.${newTotalBalls % 6}`,
+              wicket_type: payload.wicket_type || null,
+              bowler_id: scoringBowlerId || null,
+              fielder_id: payload.fielder_id || null
             }
           ]
-        ]
         : previousFallOfWickets;
 
     /*
-     * =======================================================
-     * INNINGS COMPLETION
-     * =======================================================
+     * LOCAL INNINGS COMPLETION
+     *
+     * Do this before the server response so the UI never opens the next
+     * bowler dialog after the final ball of an innings.
      */
-
-    const oversLimit =
-      Number(
-        currentInnings.overs_limit ??
-        current.overs_limit ??
-        0
-      );
+    const inningsNumber = Number(
+      current.innings_number ??
+      current.innings_no ??
+      current.number ?? 1
+    );
 
     const maxBalls =
-      oversLimit > 0
-        ? oversLimit * 6
-        : Infinity;
+      Number(match?.overs_limit || 0) > 0
+        ? Number(match.overs_limit) * 6
+        : 0;
 
-    const inningsNumber =
-      Number(
-        current.innings_number ??
-        current.innings_no ??
-        current.number ??
-        currentInnings.innings_number ??
-        1
-      );
-
-    /*
-     * Second innings target.
-     */
-
-    let target =
-      Number(
-        current.target ??
-        current.target_score ??
-        0
-      );
-
-    if (
-      !target &&
+    const targetForChase =
       inningsNumber === 2
-    ) {
-      const firstInnings =
-        innings.find((item) => {
-          const n =
-            Number(
-              item?.innings
-                ?.innings_number ??
-              item?.innings
-                ?.innings_no ??
-              item?.innings?.number ??
-              item?.innings_number ??
-              item?.innings_no ??
-              item?.number
-            );
-
-          return n === 1;
-        });
-
-      target =
-        Number(
-          firstInnings?.innings
-            ?.total_runs ??
-          firstInnings?.total_runs ??
-          0
-        ) + 1;
-    }
-
-    const targetReached =
-      inningsNumber === 2 &&
-      target > 0 &&
-      newTotalRuns >= target;
-
-    const allOut =
-      newTotalWickets >= 10;
-
-    const oversFinished =
-      newTotalBalls >= maxBalls;
+        ? Number(
+            current.target ??
+            match?.target ??
+            match?.target_score ??
+            0
+          ) || null
+        : null;
 
     const inningsCompleted =
-      targetReached ||
-      allOut ||
-      oversFinished;
+      newTotalWickets >= 10 ||
+      (maxBalls > 0 && newTotalBalls >= maxBalls) ||
+      (targetForChase && newTotalRuns >= targetForChase);
 
     return {
+      inningsId: current.id,
+
       total_runs:
         newTotalRuns,
 
@@ -1406,16 +1248,9 @@ export default function Scorer() {
       activeBowlerId:
         scoringBowlerId,
 
-      needsNextBowler:
-        inningsCompleted
-          ? false
-          : needsNextBowler,
+      needsNextBowler: inningsCompleted ? false : needsNextBowler,
 
       inningsCompleted,
-
-      inningsNumber,
-
-      target,
 
       bowlerStats:
         updatedBowlerStats,
@@ -1447,275 +1282,108 @@ export default function Scorer() {
   };
 
   /*
-   * =========================================================
-   * SAVE BALL
-   * =========================================================
-   */
-
-  const saveBallToServer =
-    useCallback(
-      (
-        inningsId,
-        payload
-      ) => {
-        increasePending();
-
-        enqueueServerAction(
-          async () => {
-            try {
-              await Innings.ball(
-                inningsId,
-                payload
-              );
-            } catch (err) {
-              setError(
-                err?.response
-                  ?.data?.error ||
-                err?.message ||
-                'Unable to save ball'
-              );
-
-              /*
-               * Resync authoritative state.
-               */
-              try {
-                await loadFull();
-              } catch (_) {}
-
-              throw err;
-            } finally {
-              decreasePending();
-            }
-          }
-        ).catch(() => {});
-      },
-      [
-        enqueueServerAction,
-        increasePending,
-        decreasePending,
-        loadFull
-      ]
-    );
-
-  /*
-   * =========================================================
-   * RECORD BALL
-   * =========================================================
-   */
-
-  const playBall =
-    useCallback(
-      (payload) => {
-        const currentInnings =
-          innings[
-            innings.length - 1
-          ];
-
-        if (!currentInnings) {
-          return;
-        }
-
-        const current =
-          currentInnings.innings;
-
-        if (!current) {
-          return;
-        }
-
-        const effectiveStrikerId =
-          optimisticRef.current
-            ?.strikerId ??
-          current.striker_id;
-
-        const effectiveNonStrikerId =
-          optimisticRef.current
-            ?.nonStrikerId ??
-          current.non_striker_id;
-
-        const effectiveBowlerId =
-          optimisticRef.current
-            ?.activeBowlerId ??
-          current.current_bowler_id;
-
-        /*
-         * If there is no bowler, open bowler selection.
-         */
-        if (!effectiveBowlerId) {
-          setShowNextBowler(true);
-          return;
-        }
-
-        /*
-         * Do not score while next bowler is required.
-         */
-        if (
-          optimisticRef.current
-            ?.needsNextBowler
-        ) {
-          setShowNextBowler(true);
-          return;
-        }
-
-        /*
-         * If batsmen are missing, show batsman selection.
-         */
-        if (
-          !effectiveStrikerId ||
-          !effectiveNonStrikerId
-        ) {
-          return;
-        }
-
-        if (
-          !payload.extra_type &&
-          Number(payload.runs) === 4
-        ) {
-          popBoundary('four');
-        }
-
-        if (
-          !payload.extra_type &&
-          Number(payload.runs) === 6
-        ) {
-          popBoundary('six');
-        }
-
-        /*
-         * Save the state BEFORE this ball for Undo.
-         */
-        visualHistoryRef.current.push({
-          optimistic:
-            optimisticRef.current
-              ? {
-                  ...optimisticRef.current
-                }
-              : null,
-
-          strikerId:
-            effectiveStrikerId,
-
-          nonStrikerId:
-            effectiveNonStrikerId,
-
-          activeBowlerId:
-            effectiveBowlerId
-        });
-
-        const nextOptimistic =
-          buildOptimisticBall({
-            current,
-            currentInnings,
-            payload,
-            previousOptimistic:
-              optimisticRef.current
-          });
-
-        optimisticRef.current =
-          nextOptimistic;
-
-        /*
-         * IMPORTANT:
-         * Render immediately.
-         */
-        setOptimistic(
-          nextOptimistic
-        );
-
-        /*
-         * FIRST INNINGS COMPLETE:
-         *
-         * Navigate immediately.
-         *
-         * Do NOT wait for backend response.
-         */
-        if (
-          nextOptimistic.inningsCompleted &&
-          Number(
-            nextOptimistic.inningsNumber
-          ) === 1
-        ) {
-          navigate(
-            `/match/${matchId}/target`,
-            {
-              replace: true,
-              state: {
-                inningsCompleted:
-                  true,
-
-                inningsNumber:
-                  1,
-
-                score:
-                  Number(
-                    nextOptimistic.total_runs ||
-                      0
-                  ),
-
-                wickets:
-                  Number(
-                    nextOptimistic.total_wickets ||
-                      0
-                  ),
-
-                balls:
-                  Number(
-                    nextOptimistic.total_balls ||
-                      0
-                  ),
-
-                target:
-                  Number(
-                    nextOptimistic.total_runs ||
-                      0
-                  ) + 1,
-
-                battingTeam:
-                  match?.team1_short ||
-                  '',
-
-                bowlingTeam:
-                  match?.team2_short ||
-                  ''
-              }
-            }
-          );
-        }
-
-        /*
-         * SECOND INNINGS:
-         *
-         * Do NOT go to target page.
-         *
-         * The match completion will be handled by
-         * server status/socket.
-         */
-
-        saveBallToServer(
-          current.id,
-          payload
-        );
-      },
-      [
-        innings,
-        popBoundary,
-        matchId,
-        match,
-        navigate,
-        saveBallToServer
-      ]
-    );
-
-  /*
-   * =========================================================
-   * FAST SWAP
-   * =========================================================
+   * SAVE QUEUE
    *
-   * UI changes immediately.
-   * Server request happens in queue.
+   * Balls are saved one after another.
+   * The UI does not wait for the server before showing the score.
    */
+  const processScoreQueue =
+    useCallback(async () => {
+      if (
+        processingQueueRef.current
+      ) {
+        return;
+      }
 
-  const fastSwapStrike =
-    useCallback(() => {
+      processingQueueRef.current = true;
+
+      let failed = false;
+
+      while (
+        scoreQueueRef.current.length >
+        0
+      ) {
+        const item =
+          scoreQueueRef.current.shift();
+
+        if (!item) {
+          continue;
+        }
+
+        try {
+          await Innings.ball(
+            item.inningsId,
+            item.payload
+          );
+
+          pendingCountRef.current =
+            Math.max(
+              0,
+              pendingCountRef.current - 1
+            );
+
+          setPendingCount(
+            pendingCountRef.current
+          );
+        } catch (err) {
+          failed = true;
+
+          setError(
+            err?.response?.data?.error ||
+            err?.message ||
+            'Unable to save ball'
+          );
+
+          scoreQueueRef.current = [];
+
+          pendingCountRef.current = 0;
+          setPendingCount(0);
+
+          optimisticRef.current = null;
+          setOptimistic(null);
+          visualStateRef.current = null;
+          visualHistoryRef.current = [];
+          fixedBatsmenRef.current = null;
+          fixedBatsmenInningsRef.current = null;
+          setFixedBatsmen(null);
+
+          try {
+            const data =
+              await Matches.get(matchId);
+
+            applyServerData(data);
+          } catch (_) {}
+
+          break;
+        }
+      }
+
+      processingQueueRef.current = false;
+
+      /*
+       * Final authoritative sync is deliberately fire-and-forget.
+       * The scorer must never wait for this GET before accepting the next
+       * UI action. The optimistic screen is already correct.
+       */
+      if (!failed && pendingCountRef.current === 0) {
+        Matches.get(matchId)
+          .then((data) => {
+            if (pendingCountRef.current === 0) {
+              applyServerData(data);
+            }
+          })
+          .catch(() => {});
+      }
+    }, [
+      matchId,
+      applyServerData
+    ]);
+
+  /*
+   * RECORD BALL
+   */
+  const playBall = useCallback(
+    (payload) => {
       const currentInnings =
         innings[
           innings.length - 1
@@ -1732,425 +1400,357 @@ export default function Scorer() {
         return;
       }
 
-      const currentState =
-        optimisticRef.current;
-
-      const strikerId =
-        currentState?.strikerId ??
+      const effectiveStrikerId =
+        optimisticRef.current?.strikerId ??
+        visualStateRef.current?.strikerId ??
         current.striker_id;
 
-      const nonStrikerId =
-        currentState?.nonStrikerId ??
+      const effectiveNonStrikerId =
+        optimisticRef.current?.nonStrikerId ??
+        visualStateRef.current?.nonStrikerId ??
         current.non_striker_id;
 
+      const effectiveBowlerId =
+        optimisticRef.current?.activeBowlerId ??
+        visualStateRef.current?.activeBowlerId ??
+        current.current_bowler_id;
+
+      /*
+       * Do not allow scoring while waiting
+       * for the next bowler.
+       */
       if (
-        !strikerId ||
-        !nonStrikerId
+        optimisticRef.current
+          ?.needsNextBowler
       ) {
         return;
       }
 
-      /*
-       * IMMEDIATE LOCAL SWAP
-       */
-
-      const nextState = {
-        ...(currentState || {}),
-
-        strikerId:
-          nonStrikerId,
-
-        nonStrikerId:
-          strikerId
-      };
-
       if (
-        currentState
-          ?.strikerStats &&
-        currentState
-          ?.nonStrikerStats
-      ) {
-        nextState.strikerStats =
-          currentState.nonStrikerStats;
-
-        nextState.nonStrikerStats =
-          currentState.strikerStats;
-      }
-
-      optimisticRef.current =
-        nextState;
-
-      setOptimistic(
-        nextState
-      );
-
-      /*
-       * SERVER
-       *
-       * No waiting.
-       * No disabled button.
-       * No "Swapping..." text.
-       */
-
-      increasePending();
-
-      enqueueServerAction(
-        async () => {
-          try {
-            await Innings.swapStrike(
-              current.id
-            );
-          } catch (err) {
-            setError(
-              err?.response
-                ?.data?.error ||
-              err?.message ||
-              'Unable to swap batsmen'
-            );
-
-            try {
-              await loadFull();
-            } catch (_) {}
-
-            throw err;
-          } finally {
-            decreasePending();
-          }
-        }
-      ).catch(() => {});
-    }, [
-      innings,
-      increasePending,
-      decreasePending,
-      enqueueServerAction,
-      loadFull
-    ]);
-
-  /*
-   * =========================================================
-   * FAST UNDO
-   * =========================================================
-   *
-   * UI changes immediately.
-   * Server undo is queued.
-   */
-
-  const fastUndo =
-    useCallback(() => {
-      const currentInnings =
-        innings[
-          innings.length - 1
-        ];
-
-      if (!currentInnings) {
-        return;
-      }
-
-      const current =
-        currentInnings.innings;
-
-      if (!current) {
-        return;
-      }
-
-      /*
-       * No history = nothing to undo.
-       */
-      if (
-        visualHistoryRef.current
-          .length === 0
+        !effectiveStrikerId ||
+        !effectiveNonStrikerId ||
+        !effectiveBowlerId
       ) {
         return;
       }
 
-      /*
-       * Remove the latest ball immediately.
-       */
-      const previous =
-        visualHistoryRef.current.pop();
-
-      /*
-       * Restore previous local state immediately.
-       */
       if (
-        previous?.optimistic
+        !payload.extra_type &&
+        Number(payload.runs) === 4
       ) {
-        optimisticRef.current = {
-          ...previous.optimistic
-        };
+        popBoundary('four');
+      }
 
-        setOptimistic({
-          ...previous.optimistic
+      if (
+        !payload.extra_type &&
+        Number(payload.runs) === 6
+      ) {
+        popBoundary('six');
+      }
+
+      const previousVisual =
+        optimisticRef.current ||
+        visualStateRef.current ||
+        null;
+
+      /* Save the exact pre-ball state for instant Undo. */
+      visualHistoryRef.current.push({
+        state: previousVisual ? JSON.parse(JSON.stringify(previousVisual)) : null,
+        fixed: fixedBatsmenRef.current ? JSON.parse(JSON.stringify(fixedBatsmenRef.current)) : null
+      });
+
+      /* Keep history bounded. */
+      if (visualHistoryRef.current.length > 50) {
+        visualHistoryRef.current.shift();
+      }
+
+      const nextOptimistic =
+        buildOptimisticBall({
+          current,
+          currentInnings,
+          payload,
+          previousOptimistic: previousVisual
         });
 
-      } else {
-        optimisticRef.current =
-          null;
+      /*
+       * FIXED-CARD UPDATE
+       *
+       * The cards never swap places. We keep the same left/right player IDs
+       * and only toggle strikerSide. Stats are attached to the player ID in
+       * that card, so a 1/3/5 can never visually separate a name from its
+       * stats.
+       */
+      const previousFixed = fixedBatsmenRef.current;
 
-        setOptimistic(null);
+      const initialLeftId =
+        previousFixed?.leftPlayerId ??
+        effectiveStrikerId;
+
+      const initialRightId =
+        previousFixed?.rightPlayerId ??
+        effectiveNonStrikerId;
+
+      const statsById = new Map();
+
+      if (nextOptimistic.strikerStats?.player_id) {
+        statsById.set(
+          String(nextOptimistic.strikerStats.player_id),
+          nextOptimistic.strikerStats
+        );
       }
 
-      /*
-       * SERVER UNDO
-       *
-       * It is placed after every operation already
-       * queued before this click.
-       */
+      if (nextOptimistic.nonStrikerStats?.player_id) {
+        statsById.set(
+          String(nextOptimistic.nonStrikerStats.player_id),
+          nextOptimistic.nonStrikerStats
+        );
+      }
 
-      increasePending();
+      /* Wicket: clear the dismissed player's card so the new batsman can
+       * occupy the same physical card after selection. */
+      let leftPlayerId = initialLeftId;
+      let rightPlayerId = initialRightId;
 
-      enqueueServerAction(
-        async () => {
-          try {
-            await Innings.undo(
-              current.id
-            );
-          } catch (err) {
-            setError(
-              err?.response
-                ?.data?.error ||
-              err?.message ||
-              'Unable to undo ball'
-            );
-
-            try {
-              await loadFull();
-            } catch (_) {}
-
-            throw err;
-          } finally {
-            decreasePending();
-          }
+      if (payload.is_wicket && payload.dismissed_id) {
+        if (String(leftPlayerId) === String(payload.dismissed_id)) {
+          leftPlayerId = null;
         }
-      ).catch(() => {});
-    }, [
+        if (String(rightPlayerId) === String(payload.dismissed_id)) {
+          rightPlayerId = null;
+        }
+      }
+
+      const strikerSide =
+        String(nextOptimistic.strikerId) === String(leftPlayerId)
+          ? 'left'
+          : String(nextOptimistic.strikerId) === String(rightPlayerId)
+            ? 'right'
+            : previousFixed?.strikerSide || 'left';
+
+      const nextFixed = {
+        inningsId: current.id,
+        leftPlayerId,
+        rightPlayerId,
+        leftStats: leftPlayerId
+          ? statsById.get(String(leftPlayerId)) || previousFixed?.leftStats || null
+          : null,
+        rightStats: rightPlayerId
+          ? statsById.get(String(rightPlayerId)) || previousFixed?.rightStats || null
+          : null,
+        strikerSide
+      };
+
+      fixedBatsmenRef.current = nextFixed;
+
+      visualStateRef.current = nextOptimistic;
+
+      flushSync(() => {
+        optimisticRef.current = nextOptimistic;
+        setOptimistic(nextOptimistic);
+        setFixedBatsmen(nextFixed);
+      });
+
+      scoreQueueRef.current.push({
+        inningsId:
+          current.id,
+        payload
+      });
+
+      pendingCountRef.current += 1;
+
+      setPendingCount(
+        pendingCountRef.current
+      );
+
+      processScoreQueue();
+    },
+    [
       innings,
-      increasePending,
-      decreasePending,
-      enqueueServerAction,
-      loadFull
-    ]);
+      popBoundary,
+      processScoreQueue
+    ]
+  );
 
   /*
    * =========================================================
-   * SELECT BATSMEN
+   * INSTANT SWAP / UNDO
    * =========================================================
    */
 
-  const selectBatsmen =
-    useCallback(
-      (
-        inningsId,
-        strikerId,
-        nonStrikerId
-      ) => {
-        if (
-          !strikerId ||
-          !nonStrikerId
-        ) {
-          return;
+  const fastSwapStrike = useCallback(async () => {
+    if (actionBusyRef.current || pendingCountRef.current > 0) return;
+
+    const currentInnings = innings[innings.length - 1];
+    const current = currentInnings?.innings;
+    if (!current) return;
+
+    const previousState =
+      optimisticRef.current ||
+      visualStateRef.current ||
+      {
+        total_runs: Number(current.total_runs || 0),
+        total_wickets: Number(current.total_wickets || 0),
+        total_balls: Number(current.total_balls || 0),
+        strikerId: current.striker_id,
+        nonStrikerId: current.non_striker_id,
+        activeBowlerId: current.current_bowler_id
+      };
+
+    if (!previousState.strikerId || !previousState.nonStrikerId) return;
+
+    const nextState = {
+      ...previousState,
+      strikerId: previousState.nonStrikerId,
+      nonStrikerId: previousState.strikerId,
+      strikerStats: previousState.nonStrikerStats,
+      nonStrikerStats: previousState.strikerStats
+    };
+
+    const previousFixed = fixedBatsmenRef.current;
+    const nextFixed = previousFixed
+      ? {
+          ...previousFixed,
+          strikerSide: previousFixed.strikerSide === 'left' ? 'right' : 'left'
         }
+      : null;
 
-        setError('');
+    swapRollbackRef.current = {
+      state: JSON.parse(JSON.stringify(previousState)),
+      fixed: previousFixed ? JSON.parse(JSON.stringify(previousFixed)) : null
+    };
 
-        /*
-         * Update local display immediately.
-         */
-        const previous =
-          optimisticRef.current ||
-          {};
+    actionBusyRef.current = 'swap';
+    setActionBusy('swap');
+    setError('');
 
-        const nextState = {
-          ...previous,
+    visualStateRef.current = nextState;
+    optimisticRef.current = nextState;
 
-          strikerId:
-            strikerId,
+    flushSync(() => {
+      setOptimistic(nextState);
+      if (nextFixed) setFixedBatsmen(nextFixed);
+    });
 
-          nonStrikerId:
-            nonStrikerId
-        };
+    try {
+      await Innings.swapStrike(current.id);
+      swapRollbackRef.current = null;
 
-        optimisticRef.current =
-          nextState;
-
-        setOptimistic(
-          nextState
-        );
-
-        increasePending();
-
-        enqueueServerAction(
-          async () => {
-            try {
-              await Innings.setBatsmen(
-                inningsId,
-                {
-                  striker_id:
-                    strikerId,
-
-                  non_striker_id:
-                    nonStrikerId
-                }
-              );
-            } catch (err) {
-              setError(
-                err?.response
-                  ?.data?.error ||
-                err?.message ||
-                'Unable to select batsmen'
-              );
-
-              try {
-                await loadFull();
-              } catch (_) {}
-
-              throw err;
-            } finally {
-              decreasePending();
-            }
+      Matches.get(matchId)
+        .then((data) => {
+          if (pendingCountRef.current === 0) {
+            applyServerData(data);
           }
-        ).catch(() => {});
-      },
-      [
-        increasePending,
-        decreasePending,
-        enqueueServerAction,
-        loadFull
-      ]
-    );
+        })
+        .catch(() => {});
+    } catch (err) {
+      const rollback = swapRollbackRef.current;
+      if (rollback) {
+        visualStateRef.current = rollback.state;
+        optimisticRef.current = rollback.state;
+        fixedBatsmenRef.current = rollback.fixed;
+        flushSync(() => {
+          setOptimistic(rollback.state);
+          setFixedBatsmen(rollback.fixed);
+        });
+      }
+
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to swap batsmen'
+      );
+    } finally {
+      swapRollbackRef.current = null;
+      actionBusyRef.current = null;
+      setActionBusy(null);
+    }
+  }, [innings, matchId, applyServerData]);
+
+  const fastUndo = useCallback(async () => {
+    if (actionBusyRef.current || pendingCountRef.current > 0) return;
+
+    const currentInnings = innings[innings.length - 1];
+    const current = currentInnings?.innings;
+    if (!current) return;
+
+    const history = visualHistoryRef.current;
+    if (!history.length) {
+      setError('Nothing to undo');
+      return;
+    }
+
+    const previous = history[history.length - 1];
+    const currentState =
+      optimisticRef.current ||
+      visualStateRef.current ||
+      null;
+
+    undoRollbackRef.current = {
+      state: currentState ? JSON.parse(JSON.stringify(currentState)) : null,
+      fixed: fixedBatsmenRef.current ? JSON.parse(JSON.stringify(fixedBatsmenRef.current)) : null
+    };
+
+    actionBusyRef.current = 'undo';
+    setActionBusy('undo');
+    setError('');
+
+    const restoredState = previous.state || null;
+    visualStateRef.current = restoredState;
+    optimisticRef.current = restoredState;
+    fixedBatsmenRef.current = previous.fixed || null;
+
+    flushSync(() => {
+      setOptimistic(restoredState);
+      setFixedBatsmen(previous.fixed || null);
+    });
+
+    try {
+      await Innings.undo(current.id);
+
+      history.pop();
+      undoRollbackRef.current = null;
+
+      /* Authoritative sync happens after the button has already updated. */
+      Matches.get(matchId)
+        .then((data) => {
+          if (pendingCountRef.current === 0) {
+            applyServerData(data);
+          }
+        })
+        .catch(() => {});
+    } catch (err) {
+      const rollback = undoRollbackRef.current;
+      if (rollback?.state) {
+        visualStateRef.current = rollback.state;
+        optimisticRef.current = rollback.state;
+      } else {
+        visualStateRef.current = null;
+        optimisticRef.current = null;
+      }
+
+      fixedBatsmenRef.current = rollback?.fixed || null;
+
+      flushSync(() => {
+        setOptimistic(rollback?.state || null);
+        setFixedBatsmen(rollback?.fixed || null);
+      });
+
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to undo last ball'
+      );
+    } finally {
+      undoRollbackRef.current = null;
+      actionBusyRef.current = null;
+      setActionBusy(null);
+    }
+  }, [innings, matchId, applyServerData]);
 
   /*
-   * =========================================================
-   * SELECT BOWLER
-   * =========================================================
-   */
-
-  const selectBowler =
-    useCallback(
-      (selected) => {
-        const bowlerId =
-          getPlayerId(selected);
-
-        if (!bowlerId) {
-          return;
-        }
-
-        const currentInnings =
-          innings[
-            innings.length - 1
-          ];
-
-        if (!currentInnings) {
-          return;
-        }
-
-        const inn =
-          currentInnings.innings;
-
-        if (!inn) {
-          return;
-        }
-
-        setError('');
-
-        const previous =
-          optimisticRef.current ||
-          {};
-
-        const wasNewOver =
-          previous.needsNextBowler ===
-          true;
-
-        const nextState = {
-          ...previous,
-
-          activeBowlerId:
-            bowlerId,
-
-          needsNextBowler:
-            false
-        };
-
-        /*
-         * Initial bowler.
-         */
-        if (
-          !previous.bowlerStats ||
-          wasNewOver
-        ) {
-          nextState.bowlerBalls = 0;
-
-          nextState.bowlerStats = {
-            player_id:
-              bowlerId,
-
-            overs: '0.0',
-
-            maidens: 0,
-
-            runs: 0,
-
-            wickets: 0,
-
-            economy: 0
-          };
-        }
-
-        optimisticRef.current =
-          nextState;
-
-        setOptimistic(
-          nextState
-        );
-
-        setShowNextBowler(
-          false
-        );
-
-        increasePending();
-
-        enqueueServerAction(
-          async () => {
-            try {
-              await Innings.setBowler(
-                inn.id,
-                {
-                  bowler_id:
-                    bowlerId
-                }
-              );
-            } catch (err) {
-              setError(
-                err?.response
-                  ?.data?.error ||
-                err?.message ||
-                'Unable to select bowler'
-              );
-
-              try {
-                await loadFull();
-              } catch (_) {}
-
-              throw err;
-            } finally {
-              decreasePending();
-            }
-          }
-        ).catch(() => {});
-      },
-      [
-        innings,
-        increasePending,
-        decreasePending,
-        enqueueServerAction,
-        loadFull
-      ]
-    );
-
-  /*
-   * =========================================================
+   * -------------------------
    * LOADING
-   * =========================================================
+   * -------------------------
    */
 
   if (!match) {
@@ -2167,11 +1767,8 @@ export default function Scorer() {
     ];
 
   /*
-   * =========================================================
    * MATCH COMPLETED
-   * =========================================================
    */
-
   if (
     match.status ===
       'completed' &&
@@ -2179,7 +1776,6 @@ export default function Scorer() {
   ) {
     return (
       <div className="max-w-lg mx-auto card text-center space-y-3 fade-in">
-
         <h1 className="text-2xl font-bold">
           🏆 Match Completed
         </h1>
@@ -2198,16 +1794,129 @@ export default function Scorer() {
         >
           View Full Scorecard
         </button>
-
       </div>
     );
   }
 
   /*
    * =========================================================
-   * NO INNINGS
+   * FIRST INNINGS -> SEPARATE TARGET PAGE
    * =========================================================
+   *
+   * Never show the bowler selector on the scorer after the
+   * first innings is completed. The target screen is now a
+   * separate route. It owns the Continue button and starts
+   * innings 2 before returning to the normal scorer.
    */
+  useEffect(() => {
+    if (
+      match.status === 'innings-break' &&
+      pendingCountRef.current === 0
+    ) {
+      navigate(`/match/${matchId}/target`, { replace: true });
+    }
+  }, [match.status, matchId, navigate]);
+
+  if (match.status === 'innings-break') {
+    return (
+      <div className="max-w-lg mx-auto card text-center">
+        <div className="text-emerald-400 font-semibold">
+          Innings completed
+        </div>
+        <div className="text-slate-400 text-sm mt-1">
+          Opening target screen…
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentInnings) {
+      return (
+        <p className="text-slate-400">
+          Loading…
+        </p>
+      );
+    }
+
+    return (
+      <div className="max-w-lg mx-auto card text-center space-y-3 fade-in">
+        <h1 className="text-2xl font-bold">
+          Innings Break
+        </h1>
+
+        <p className="text-slate-300 text-lg">
+          {currentInnings.innings.total_runs}
+          /
+          {currentInnings.innings.total_wickets}
+          {' '}
+          in{' '}
+          {currentInnings.overs}
+          {' '}
+          overs
+        </p>
+
+        <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
+          <div className="text-xs uppercase tracking-wider text-emerald-400 font-semibold">
+            Target for 2nd innings
+          </div>
+          <div className="text-4xl font-extrabold text-white mt-1">
+            {Number(currentInnings.innings.total_runs || 0) + 1}
+          </div>
+          <div className="text-xs text-slate-400 mt-1">
+            runs to win
+          </div>
+        </div>
+
+        <button
+          className="btn btn-primary w-full"
+          disabled={actionBusy === 'start'}
+          onClick={async () => {
+            if (actionBusyRef.current) return;
+
+            actionBusyRef.current = 'start';
+            setActionBusy('start');
+            setError('');
+
+            try {
+              await Matches.startSecondInnings(matchId);
+
+              visualStateRef.current = null;
+              optimisticRef.current = null;
+              visualHistoryRef.current = [];
+              fixedBatsmenRef.current = null;
+              fixedBatsmenInningsRef.current = null;
+
+              flushSync(() => {
+                setOptimistic(null);
+                setFixedBatsmen(null);
+                setShowNextBowler(false);
+              });
+
+              /* Do not block the UI on the full match GET. */
+              loadFull().catch(() => {});
+            } catch (err) {
+              setError(
+                err?.response?.data?.error ||
+                err?.message ||
+                'Unable to start second innings'
+              );
+            } finally {
+              actionBusyRef.current = null;
+              setActionBusy(null);
+            }
+          }}
+        >
+          {actionBusy === 'start' ? 'Starting 2nd Innings…' : 'Continue — Start 2nd Innings'}
+        </button>
+
+        {error && (
+          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-2 text-sm">
+            {error}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (!currentInnings) {
     return (
@@ -2220,29 +1929,39 @@ export default function Scorer() {
   const inn =
     currentInnings.innings;
 
-  /*
-   * =========================================================
-   * DISPLAY SCORE
-   * =========================================================
-   */
+  const firstInnings = innings.find(item => {
+    const number = Number(item?.innings?.innings_number ?? item?.innings?.innings_no ?? item?.innings?.number);
+    return number === 1;
+  });
 
+  const derivedTarget =
+    Number(inn?.innings_number ?? inn?.innings_no ?? inn?.number) === 2
+      ? Number(firstInnings?.innings?.total_runs ?? 0) + 1
+      : null;
+
+  const displayTarget =
+    inn.target != null
+      ? Number(inn.target)
+      : match.target != null
+        ? Number(match.target)
+        : match.target_score != null
+          ? Number(match.target_score)
+          : derivedTarget;
+
+  /*
+   * DISPLAY SCORE
+   */
   const displayTotalRuns =
     optimistic?.total_runs ??
-    Number(
-      inn.total_runs || 0
-    );
+    Number(inn.total_runs || 0);
 
   const displayTotalWickets =
     optimistic?.total_wickets ??
-    Number(
-      inn.total_wickets || 0
-    );
+    Number(inn.total_wickets || 0);
 
   const displayTotalBalls =
     optimistic?.total_balls ??
-    Number(
-      inn.total_balls || 0
-    );
+    Number(inn.total_balls || 0);
 
   const displayOvers =
     `${Math.floor(
@@ -2260,11 +1979,8 @@ export default function Scorer() {
       : '0.00';
 
   /*
-   * =========================================================
    * ACTIVE PLAYERS
-   * =========================================================
    */
-
   const effectiveStrikerId =
     optimistic?.strikerId ??
     inn.striker_id;
@@ -2279,7 +1995,7 @@ export default function Scorer() {
 
   const battingTeamPlayers =
     players.filter(
-      (p) =>
+      p =>
         p.team_id ===
           inn.batting_team_id &&
         p.active !== false
@@ -2287,69 +2003,73 @@ export default function Scorer() {
 
   const bowlingTeamPlayers =
     players.filter(
-      (p) =>
+      p =>
         p.team_id ===
           inn.bowling_team_id &&
         p.active !== false
     );
 
-  /*
-   * =========================================================
-   * OUT PLAYERS
-   * =========================================================
-   */
-
   const outIds =
     new Set(
-      safeArray(
-        currentInnings.battingCard
+      (
+        currentInnings.battingCard ||
+        []
       )
         .filter(
-          (b) => b.is_out
+          b => b.is_out
         )
         .map(
-          (b) => b.player_id
+          b => b.player_id
         )
     );
 
   /*
-   * =========================================================
-   * CURRENT PLAYERS
-   * =========================================================
+   * Include an optimistic dismissed player
+   * in the unavailable list immediately.
    */
+  if (
+    optimistic?.strikerStats?.is_out &&
+    optimistic.strikerStats.player_id
+  ) {
+    outIds.add(
+      optimistic.strikerStats.player_id
+    );
+  }
+
+  if (
+    optimistic?.nonStrikerStats?.is_out &&
+    optimistic.nonStrikerStats.player_id
+  ) {
+    outIds.add(
+      optimistic.nonStrikerStats.player_id
+    );
+  }
 
   const striker =
     players.find(
-      (p) =>
+      p =>
         p.id ===
         effectiveStrikerId
     );
 
   const nonStriker =
     players.find(
-      (p) =>
+      p =>
         p.id ===
         effectiveNonStrikerId
     );
 
   const bowler =
     players.find(
-      (p) =>
+      p =>
         p.id ===
         effectiveBowlerId
     );
 
   /*
-   * =========================================================
-   * BATSMAN SELECTION
-   * =========================================================
-   *
-   * This appears:
-   *
-   * - at beginning of each innings
-   * - after wicket
-   *
-   * It does NOT appear just because a new over starts.
+   * -------------------------
+   * NEED BATSMEN
+   * -------------------------
    */
 
   const needStriker =
@@ -2368,9 +2088,7 @@ export default function Scorer() {
         <div className="card">
 
           <div className="flex justify-between items-center">
-
             <div>
-
               <div className="text-sm text-slate-400">
                 {match.team1_short}
                 {' vs '}
@@ -2378,22 +2096,22 @@ export default function Scorer() {
               </div>
 
               <div className="text-3xl font-extrabold">
-
                 {displayTotalRuns}
-
                 <span className="text-slate-400">
-                  /
-                  {displayTotalWickets}
+                  /{displayTotalWickets}
                 </span>
-
               </div>
-
-              <div className="text-xs text-slate-500 mt-1">
-                {displayOvers} overs
-              </div>
-
             </div>
 
+            <div className="text-right text-sm text-slate-400">
+              <div>
+                {displayOvers} ov
+              </div>
+
+              <div>
+                RR: {displayRunRate}
+              </div>
+            </div>
           </div>
 
         </div>
@@ -2402,43 +2120,133 @@ export default function Scorer() {
           team={
             battingTeamPlayers
           }
-
-          outIds={
-            outIds
-          }
-
+          outIds={outIds}
           teamId={
             inn.batting_team_id
           }
-
           onPlayerCreated={
             handlePlayerCreated
           }
-
           hasStriker={
             !!effectiveStrikerId
           }
-
           hasNonStriker={
             !!effectiveNonStrikerId
           }
-
           onSelect={(
             selectedStriker,
             selectedNonStriker
           ) => {
-            selectBatsmen(
-              inn.id,
-              selectedStriker ||
-                effectiveStrikerId,
-              selectedNonStriker ||
-                effectiveNonStrikerId
-            );
+            const nextStriker =
+              selectedStriker || effectiveStrikerId;
+
+            const nextNonStriker =
+              selectedNonStriker || effectiveNonStrikerId;
+
+            const previousFixed = fixedBatsmenRef.current;
+
+            let leftPlayerId = previousFixed?.leftPlayerId ?? null;
+            let rightPlayerId = previousFixed?.rightPlayerId ?? null;
+
+            /* Fill the same physical card that became vacant after the wicket. */
+            if (!leftPlayerId && nextStriker && String(nextStriker) !== String(rightPlayerId)) {
+              leftPlayerId = nextStriker;
+            }
+
+            if (!rightPlayerId && nextStriker && String(nextStriker) !== String(leftPlayerId)) {
+              rightPlayerId = nextStriker;
+            }
+
+            if (!leftPlayerId && nextNonStriker && String(nextNonStriker) !== String(rightPlayerId)) {
+              leftPlayerId = nextNonStriker;
+            }
+
+            if (!rightPlayerId && nextNonStriker && String(nextNonStriker) !== String(leftPlayerId)) {
+              rightPlayerId = nextNonStriker;
+            }
+
+            const battingCard = currentInnings.battingCard || [];
+            const getStats = id =>
+              id
+                ? battingCard.find(b => String(b.player_id) === String(id)) || {
+                    player_id: id,
+                    runs: 0,
+                    balls: 0,
+                    fours: 0,
+                    sixes: 0,
+                    strike_rate: 0
+                  }
+                : null;
+
+            const nextFixed = {
+              inningsId: inn.id,
+              leftPlayerId,
+              rightPlayerId,
+              leftStats: getStats(leftPlayerId),
+              rightStats: getStats(rightPlayerId),
+              strikerSide:
+                String(nextStriker) === String(leftPlayerId)
+                  ? 'left'
+                  : 'right'
+            };
+
+            fixedBatsmenRef.current = nextFixed;
+
+            flushSync(() => {
+              setFixedBatsmen(nextFixed);
+            });
+
+            (async () => {
+              try {
+                setError('');
+
+                /* Save the batsmen first. */
+                await Innings.setBatsmen(
+                  inn.id,
+                  {
+                    striker_id: nextStriker,
+                    non_striker_id: nextNonStriker
+                  }
+                );
+
+                /*
+                 * The first over has no bowler yet. Open the bowler
+                 * selector immediately after the batsmen are confirmed.
+                 */
+                const bowlerAlreadySelected =
+                  optimisticRef.current?.activeBowlerId ||
+                  inn.current_bowler_id;
+
+                if (
+                  !bowlerAlreadySelected &&
+                  !optimisticRef.current?.inningsCompleted &&
+                  match?.status !== 'innings-break' &&
+                  match?.status !== 'completed'
+                ) {
+                  setShowNextBowler(true);
+                }
+
+                /* Refresh server data in the background. */
+                Matches.get(matchId)
+                  .then((data) => {
+                    if (pendingCountRef.current === 0) {
+                      applyServerData(data);
+                    }
+                  })
+                  .catch(() => {});
+              } catch (err) {
+                setError(
+                  err?.response?.data?.error ||
+                    err?.message ||
+                    'Unable to set batsmen'
+                );
+              }
+            })();
           }}
         />
 
         {error && (
-          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
+          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-2 text-sm">
             {error}
           </div>
         )}
@@ -2448,72 +2256,73 @@ export default function Scorer() {
   }
 
   /*
-   * =========================================================
-   * BATSMAN STATS
-   * =========================================================
+   * -------------------------
+   * FIXED BATSMAN CARDS
+   * -------------------------
    */
 
-  const serverStrikerStats =
-    safeArray(
-      currentInnings.battingCard
-    ).find(
-      (b) =>
-        b.player_id ===
-        effectiveStrikerId
+  const battingCard =
+    currentInnings.battingCard || [];
+
+  const getServerBattingStats = (playerId) => {
+    if (!playerId) return null;
+
+    return battingCard.find(
+      b => String(b.player_id) === String(playerId)
     ) || {
-      player_id:
-        effectiveStrikerId,
+      player_id: playerId,
       runs: 0,
       balls: 0,
       fours: 0,
       sixes: 0,
       strike_rate: 0
     };
+  };
 
-  const serverNonStrikerStats =
-    safeArray(
-      currentInnings.battingCard
-    ).find(
-      (b) =>
-        b.player_id ===
-        effectiveNonStrikerId
-    ) || {
-      player_id:
-        effectiveNonStrikerId,
-      runs: 0,
-      balls: 0,
-      fours: 0,
-      sixes: 0,
-      strike_rate: 0
-    };
+  const fixedLeftId =
+    fixedBatsmen?.leftPlayerId ??
+    inn.striker_id;
 
-  const strikerStats =
-    optimistic?.strikerStats &&
-    optimistic.strikerStats
-      .player_id ===
-      effectiveStrikerId
-      ? optimistic.strikerStats
-      : serverStrikerStats;
+  const fixedRightId =
+    fixedBatsmen?.rightPlayerId ??
+    inn.non_striker_id;
 
-  const nonStrikerStats =
-    optimistic?.nonStrikerStats &&
-    optimistic.nonStrikerStats
-      .player_id ===
-      effectiveNonStrikerId
-      ? optimistic.nonStrikerStats
-      : serverNonStrikerStats;
+  const leftPlayer =
+    players.find(p => String(p.id) === String(fixedLeftId));
+
+  const rightPlayer =
+    players.find(p => String(p.id) === String(fixedRightId));
+
+  const leftStats =
+    fixedBatsmen?.leftStats ||
+    getServerBattingStats(fixedLeftId);
+
+  const rightStats =
+    fixedBatsmen?.rightStats ||
+    getServerBattingStats(fixedRightId);
+
+  const leftIsStriker =
+    fixedBatsmen
+      ? fixedBatsmen.strikerSide === 'left'
+      : String(effectiveStrikerId) === String(fixedLeftId);
+
+  const rightIsStriker =
+    fixedBatsmen
+      ? fixedBatsmen.strikerSide === 'right'
+      : String(effectiveStrikerId) === String(fixedRightId);
 
   /*
-   * =========================================================
+   * -------------------------
    * BOWLER STATS
-   * =========================================================
+   * -------------------------
    */
 
   const serverBowlerStats =
-    safeArray(
-      currentInnings.bowlingCard
+    (
+      currentInnings.bowlingCard ||
+      []
     ).find(
-      (b) =>
+      b =>
         b.player_id ===
         effectiveBowlerId
     ) || {
@@ -2528,8 +2337,7 @@ export default function Scorer() {
 
   const bowlerStats =
     optimistic?.bowlerStats &&
-    optimistic.bowlerStats
-      .player_id ===
+    optimistic.bowlerStats.player_id ===
       effectiveBowlerId
       ? {
           ...serverBowlerStats,
@@ -2538,51 +2346,47 @@ export default function Scorer() {
       : serverBowlerStats;
 
   /*
-   * =========================================================
+   * -------------------------
    * RECENT BALLS
-   * =========================================================
+   * -------------------------
    */
 
   const recentBalls =
     optimistic?.recentBalls ||
-    safeArray(
-      currentInnings.recentBalls
-    );
+    currentInnings.recentBalls ||
+    [];
 
   const overCompleted =
     displayTotalBalls > 0 &&
     displayTotalBalls % 6 === 0;
 
   const displayOverNumber =
-    Math.floor(
-      displayTotalBalls / 6
-    );
+    Math.floor(displayTotalBalls / 6);
 
   const currentOverBalls =
     overCompleted
       ? []
       : recentBalls.filter(
-          (ball) =>
-            Number(
-              ball.over_number
-            ) ===
+          ball =>
+            Number(ball.over_number) ===
             displayOverNumber
         );
 
-  /*
-   * =========================================================
-   * NEXT BOWLER
-   * =========================================================
-   */
-
   const needsNextBowler =
-    !!optimistic?.needsNextBowler ||
-    !effectiveBowlerId;
+    !optimistic?.inningsCompleted &&
+    (
+      optimistic?.needsNextBowler ||
+      (
+        !inn.current_bowler_id &&
+        displayTotalBalls > 0 &&
+        displayTotalBalls % 6 === 0
+      )
+    );
 
   /*
-   * =========================================================
+   * -------------------------
    * PARTNERSHIP
-   * =========================================================
+   * -------------------------
    */
 
   const partnership =
@@ -2594,20 +2398,9 @@ export default function Scorer() {
     };
 
   /*
-   * =========================================================
-   * FALL OF WICKETS
-   * =========================================================
-   */
-
-  const fallOfWickets =
-    optimistic?.fallOfWickets ||
-    currentInnings.fallOfWickets ||
-    [];
-
-  /*
-   * =========================================================
+   * -------------------------
    * RENDER
-   * =========================================================
+   * -------------------------
    */
 
   return (
@@ -2615,16 +2408,13 @@ export default function Scorer() {
 
       {boundary && (
         <div className="boundary-overlay">
-
           <div
             className={`boundary-text boundary-${boundary}`}
           >
-            {boundary ===
-            'six'
+            {boundary === 'six'
               ? 'SIX! 🚀'
               : 'FOUR! 🔥'}
           </div>
-
         </div>
       )}
 
@@ -2643,16 +2433,12 @@ export default function Scorer() {
           <div>
 
             <div className="text-sm text-slate-400">
-
               {match.team1_short}
               {' vs '}
               {match.team2_short}
-
               {' · '}
-
               {match.overs_limit}
               {' overs'}
-
             </div>
 
             <div className="text-3xl sm:text-4xl font-extrabold tracking-tight">
@@ -2660,14 +2446,12 @@ export default function Scorer() {
               {displayTotalRuns}
 
               <span className="text-slate-400">
-                /
-                {displayTotalWickets}
+                /{displayTotalWickets}
               </span>
 
               <span className="text-lg text-slate-400 font-medium">
                 {' '}
-                ({displayOvers}{' '}
-                ov)
+                ({displayOvers} ov)
               </span>
 
             </div>
@@ -2680,9 +2464,15 @@ export default function Scorer() {
               RR: {displayRunRate}
             </div>
 
-            {inn.target != null && (
-              <div>
-                Target: {inn.target}
+            {displayTarget != null && (
+              <div className="text-amber-300 font-semibold">
+                Target: {displayTarget}
+              </div>
+            )}
+
+            {pendingCount > 0 && (
+              <div className="text-emerald-400 text-[10px] mt-1 font-medium">
+                ● Syncing
               </div>
             )}
 
@@ -2692,90 +2482,106 @@ export default function Scorer() {
 
         {/* BATSMEN */}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
 
           <BatsmanCard
-            player={striker}
-            stats={strikerStats}
-            striker
+            player={leftPlayer}
+            stats={leftStats}
+            striker={leftIsStriker}
           />
 
           <BatsmanCard
-            player={nonStriker}
-            stats={nonStrikerStats}
+            player={rightPlayer}
+            stats={rightStats}
+            striker={rightIsStriker}
           />
 
         </div>
 
-        {/* BOWLER */}
+        {/* PARTNERSHIP */}
+
+        <div className="mt-3 bg-slate-900/70 rounded-xl p-3 border border-slate-700">
+
+          <div className="flex justify-between items-center">
+
+            <div>
+              <div className="text-xs text-slate-500 uppercase tracking-wide">
+                Current Partnership
+              </div>
+
+              <div className="text-lg font-bold text-white mt-1">
+                {partnership.runs || 0}
+                {' '}
+                <span className="text-sm text-slate-400 font-normal">
+                  runs
+                </span>
+
+                {' · '}
+
+                {partnership.balls || 0}
+                {' '}
+                <span className="text-sm text-slate-400 font-normal">
+                  balls
+                </span>
+              </div>
+            </div>
+
+            <div className="text-2xl">
+              🤝
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* CURRENT BOWLER */}
 
         <div className="mt-2">
 
-          <div className="bg-slate-900/70 rounded-xl p-2 border border-slate-700">
+          <div className="bg-slate-900/70 rounded-xl p-3 border border-slate-700">
 
             <div className="flex justify-between items-center">
 
               <div>
 
                 <div className="font-semibold text-white">
-
-                  🎯{' '}
-
-                  {bowler?.name ||
-                    'Select bowler'}
-
+                  🎯 {bowler?.name || '—'}
                 </div>
 
                 <div className="text-xs text-slate-500 mt-1">
-
-                  {needsNextBowler
-                    ? 'BOWLER REQUIRED'
-                    : 'CURRENT BOWLER'}
-
+                  CURRENT BOWLER
                 </div>
 
               </div>
 
-              {!needsNextBowler && (
-                <div className="grid grid-cols-5 gap-3 text-center">
+              <div className="grid grid-cols-5 gap-3 text-center">
 
-                  <BowlingStat
-                    value={
-                      bowlerStats.overs
-                    }
-                    label="Overs"
-                  />
+                <BowlingStat
+                  value={bowlerStats.overs}
+                  label="Overs"
+                />
 
-                  <BowlingStat
-                    value={
-                      bowlerStats.maidens
-                    }
-                    label="M"
-                  />
+                <BowlingStat
+                  value={bowlerStats.maidens}
+                  label="M"
+                />
 
-                  <BowlingStat
-                    value={
-                      bowlerStats.runs
-                    }
-                    label="Runs"
-                  />
+                <BowlingStat
+                  value={bowlerStats.runs}
+                  label="Runs"
+                />
 
-                  <BowlingStat
-                    value={
-                      bowlerStats.wickets
-                    }
-                    label="W"
-                  />
+                <BowlingStat
+                  value={bowlerStats.wickets}
+                  label="W"
+                />
 
-                  <BowlingStat
-                    value={
-                      bowlerStats.economy
-                    }
-                    label="Econ"
-                  />
+                <BowlingStat
+                  value={bowlerStats.economy}
+                  label="Econ"
+                />
 
-                </div>
-              )}
+              </div>
 
             </div>
 
@@ -2783,9 +2589,20 @@ export default function Scorer() {
 
         </div>
 
+        {/* FALL OF WICKETS */}
+
+        <FallOfWickets
+          wickets={
+            optimistic?.fallOfWickets ||
+            currentInnings.fallOfWickets ||
+            []
+          }
+          players={players}
+        />
+
         {/* CURRENT OVER */}
 
-        <div className="mt-2 bg-slate-900/70 rounded-xl p-2">
+        <div className="mt-4 bg-slate-900/70 rounded-xl p-3">
 
           <div className="flex justify-between items-center mb-2">
 
@@ -2799,19 +2616,18 @@ export default function Scorer() {
 
           </div>
 
-          {currentOverBalls.length ===
-          0 ? (
+          {currentOverBalls.length === 0 ? (
+
             <div className="text-xs text-slate-500">
               No balls yet
             </div>
+
           ) : (
+
             <div className="flex flex-wrap gap-2">
 
               {currentOverBalls.map(
-                (
-                  ball,
-                  index
-                ) => (
+                (ball, index) => (
                   <BallDisplay
                     key={
                       ball.id ||
@@ -2823,6 +2639,7 @@ export default function Scorer() {
               )}
 
             </div>
+
           )}
 
         </div>
@@ -2835,71 +2652,55 @@ export default function Scorer() {
         </div>
       )}
 
-      {/* =====================================================
-          SCORING
-         ===================================================== */}
+      {/* SCORING CONTROLS */}
 
       {!needsNextBowler && (
         <>
 
           <div className="card !p-3">
-
             <div className="flex items-center justify-between mb-2">
-
               <div>
-
                 <h3 className="font-semibold text-sm text-slate-300">
                   Score Runs
                 </h3>
-
                 <div className="text-[10px] text-slate-500 mt-0.5">
                   Quick scoring
                 </div>
-
               </div>
 
               <div className="text-xs text-slate-500">
-                {displayTotalBalls % 6}
-                /6
+                {displayTotalBalls % 6}/6
               </div>
-
             </div>
 
             <div className="grid grid-cols-6 gap-1.5">
-
-              {[0, 1, 2, 3, 4, 6].map(
-                (r) => (
-                  <button
-                    key={r}
-                    className={`h-11 rounded-xl font-bold text-base active:scale-95 transition-transform ${
-                      r === 4
-                        ? 'bg-emerald-600 hover:bg-emerald-500'
-                        : r === 6
-                          ? 'bg-purple-600 hover:bg-purple-500'
-                          : 'bg-slate-700 hover:bg-slate-600'
-                    }`}
-                    onClick={() =>
-                      playBall({
-                        runs: r,
-                        extra_type:
-                          null
-                      })
-                    }
-                  >
-                    {r}
-                  </button>
-                )
-              )}
-
+              {[0, 1, 2, 3, 4, 6].map(r => (
+                <button
+                  key={r}
+                  className={`h-11 rounded-xl font-bold text-base active:scale-95 transition-transform ${
+                    r === 4
+                      ? 'bg-emerald-600 hover:bg-emerald-500'
+                      : r === 6
+                        ? 'bg-purple-600 hover:bg-purple-500'
+                        : 'bg-slate-700 hover:bg-slate-600'
+                  }`}
+                  onClick={() =>
+                    playBall({
+                      runs: r,
+                      extra_type: null
+                    })
+                  }
+                >
+                  {r}
+                </button>
+              ))}
             </div>
 
             <div className="grid grid-cols-2 gap-1.5 mt-1.5">
-
               <button
                 className="h-10 rounded-xl bg-indigo-600/80 hover:bg-indigo-500 font-semibold text-sm active:scale-95 transition-transform"
-                onClick={
-                  fastSwapStrike
-                }
+                onClick={fastSwapStrike}
+                disabled={pendingCount > 0 || !!actionBusy}
               >
                 ⇄ Swap
               </button>
@@ -2909,12 +2710,11 @@ export default function Scorer() {
                 onClick={() =>
                   setShowWicket(true)
                 }
+                disabled={pendingCount > 0}
               >
                 OUT
               </button>
-
             </div>
-
           </div>
 
           {/* EXTRAS */}
@@ -2926,6 +2726,7 @@ export default function Scorer() {
             </h3>
 
             {!extraPicker ? (
+
               <div className="grid grid-cols-4 gap-2">
 
                 <button
@@ -2973,7 +2774,9 @@ export default function Scorer() {
                 </button>
 
               </div>
+
             ) : (
+
               <div className="fade-in">
 
                 <div className="flex items-center justify-between mb-2">
@@ -3014,7 +2817,7 @@ export default function Scorer() {
                 <div className="grid grid-cols-6 gap-2">
 
                   {[0, 1, 2, 3, 4, 6].map(
-                    (r) => (
+                    r => (
                       <button
                         key={r}
                         className="run-btn bg-slate-700 hover:bg-slate-600 active:scale-95 transition-transform !text-base !py-3"
@@ -3031,6 +2834,7 @@ export default function Scorer() {
                             type ===
                             'wide'
                           ) {
+
                             playBall({
                               extra_type:
                                 'wide',
@@ -3042,6 +2846,7 @@ export default function Scorer() {
                             type ===
                             'noball'
                           ) {
+
                             playBall({
                               extra_type:
                                 'noball',
@@ -3051,6 +2856,7 @@ export default function Scorer() {
                             });
 
                           } else {
+
                             playBall({
                               extra_type:
                                 type,
@@ -3060,6 +2866,7 @@ export default function Scorer() {
                                   1
                                 )
                             });
+
                           }
 
                         }}
@@ -3072,97 +2879,42 @@ export default function Scorer() {
                 </div>
 
               </div>
+
             )}
 
           </div>
 
-          {/* =================================================
-              FAST ACTIONS
-             ================================================= */}
+          {/* ACTIONS */}
 
           <div className="grid grid-cols-2 gap-2">
 
             <button
               className="btn btn-secondary"
               disabled={
-                visualHistoryRef
-                  .current.length === 0
+                pendingCount > 0 ||
+                !!actionBusy ||
+                visualHistoryRef.current.length === 0
               }
-              onClick={
-                fastUndo
-              }
+              onClick={fastUndo}
             >
-              ↺ Undo
+              {actionBusy === 'undo' ? '↺ Undoing…' : '↺ Undo'}
             </button>
 
             <button
               className="btn btn-secondary"
-              onClick={
-                fastSwapStrike
+              disabled={
+                pendingCount > 0 ||
+                !!actionBusy
               }
+              onClick={fastSwapStrike}
             >
-              ⇄ Swap Batsmen
+              {actionBusy === 'swap' ? '⇄ Swapping…' : '⇄ Swap Batsmen'}
             </button>
 
           </div>
 
         </>
       )}
-
-      {/* PARTNERSHIP */}
-
-      <div className="mt-2 bg-slate-900/70 rounded-xl p-2 border border-slate-700">
-
-        <div className="flex justify-between items-center">
-
-          <div>
-
-            <div className="text-xs text-slate-500 uppercase tracking-wide">
-              Current Partnership
-            </div>
-
-            <div className="text-base font-bold text-white mt-1">
-
-              {partnership.runs ||
-                0}
-
-              <span className="text-xs text-slate-400 font-normal">
-                {' '}
-                runs
-              </span>
-
-              {' · '}
-
-              {partnership.balls ||
-                0}
-
-              <span className="text-xs text-slate-400 font-normal">
-                {' '}
-                balls
-              </span>
-
-            </div>
-
-          </div>
-
-          <div className="text-xl">
-            🤝
-          </div>
-
-        </div>
-
-      </div>
-
-      {/* FALL OF WICKETS */}
-
-      <FallOfWickets
-        wickets={
-          fallOfWickets
-        }
-        players={
-          players
-        }
-      />
 
       {/* SCOREBOARD */}
 
@@ -3177,74 +2929,91 @@ export default function Scorer() {
         View Full Scoreboard
       </button>
 
-      {/* =====================================================
-          NEXT BOWLER
-         ===================================================== */}
+      {/* NEXT BOWLER POPUP */}
 
-      {(
-        showNextBowler ||
-        !effectiveBowlerId
-      ) &&
-        needsNextBowler && (
-          <NextBowlerModal
-            team={
-              bowlingTeamPlayers
+      {showNextBowler &&
+        !optimistic?.inningsCompleted &&
+        match.status !== 'innings-break' &&
+        match.status !== 'completed' &&
+        (needsNextBowler || !effectiveBowlerId) && (
+        <NextBowlerModal
+          team={bowlingTeamPlayers}
+          teamId={inn.bowling_team_id}
+          onPlayerCreated={handlePlayerCreated}
+          error={error}
+          onSelect={async (selected) => {
+            const bowlerId = getPlayerId(selected);
+
+            if (!bowlerId) {
+              return;
             }
 
-            teamId={
-              inn.bowling_team_id
-            }
+            try {
+              setError('');
 
-            onPlayerCreated={
-              handlePlayerCreated
-            }
+              await Innings.setBowler(
+                inn.id,
+                {
+                  bowler_id: bowlerId
+                }
+              );
 
-            error={
-              error
-            }
+              const nextState = {
+                ...(optimisticRef.current || {}),
+                activeBowlerId: bowlerId,
+                needsNextBowler: false,
+                bowlerBalls: 0,
+                bowlerStats: {
+                  player_id: bowlerId,
+                  overs: '0.0',
+                  maidens: 0,
+                  runs: 0,
+                  wickets: 0,
+                  economy: 0
+                }
+              };
 
-            isInitial={
-              !effectiveBowlerId &&
-              displayTotalBalls ===
-                0
-            }
+              optimisticRef.current = nextState;
+              setOptimistic(nextState);
+              setShowNextBowler(false);
 
-            onSelect={
-              selectBowler
-            }
-          />
-        )}
+              Matches.get(matchId)
+                .then((data) => {
+                  if (pendingCountRef.current === 0) {
+                    applyServerData(data);
+                  }
+                })
+                .catch(() => {});
 
-      {/* WICKET */}
+            } catch (err) {
+              setError(
+                err?.response?.data?.error ||
+                err?.message ||
+                'Unable to select bowler'
+              );
+            }
+          }}
+        />
+      )}
+
+      {/* WICKET MODAL */}
 
       {showWicket && (
         <WicketModal
-          striker={
-            striker
-          }
-
-          nonStriker={
-            nonStriker
-          }
-
+          striker={striker}
+          nonStriker={nonStriker}
           fieldingPlayers={
             bowlingTeamPlayers
           }
-
           fieldingTeamId={
             inn.bowling_team_id
           }
-
           onPlayerCreated={
             handlePlayerCreated
           }
-
           onClose={() =>
-            setShowWicket(
-              false
-            )
+            setShowWicket(false)
           }
-
           onConfirm={({
             wicketType,
             dismissedId,
@@ -3252,9 +3021,7 @@ export default function Scorer() {
             runsBeforeWicket
           }) => {
 
-            setShowWicket(
-              false
-            );
+            setShowWicket(false);
 
             popWicket();
 
@@ -3264,12 +3031,11 @@ export default function Scorer() {
                 'run-out'
                   ? Number(
                       runsBeforeWicket ||
-                        0
+                      0
                     )
                   : 0,
 
-              is_wicket:
-                true,
+              is_wicket: true,
 
               wicket_type:
                 wicketType,
@@ -3295,9 +3061,9 @@ export default function Scorer() {
 
 
 /*
- * ============================================================
+ * --------------------------------
  * BATSMAN CARD
- * ============================================================
+ * --------------------------------
  */
 
 function BatsmanCard({
@@ -3306,7 +3072,13 @@ function BatsmanCard({
   striker = false
 }) {
   return (
-    <div className="bg-slate-900/70 rounded-xl p-2 border border-slate-700">
+    <div
+      className={`bg-slate-900/70 rounded-xl p-3 border ${
+        striker
+          ? 'border-emerald-500/60'
+          : 'border-slate-700'
+      }`}
+    >
 
       <div className="flex justify-between items-center">
 
@@ -3322,15 +3094,19 @@ function BatsmanCard({
 
         </div>
 
-        <div className="text-xs text-slate-400">
-          {striker
-            ? 'STRIKER'
-            : 'NON-STRIKER'}
-        </div>
+        {striker && (
+          <span
+            className="text-emerald-400 text-sm font-bold"
+            title="Striker"
+            aria-label="Striker"
+          >
+            🏏
+          </span>
+        )}
 
       </div>
 
-      <div className="mt-1 flex items-center gap-2 flex-wrap">
+      <div className="mt-2 flex items-center gap-4 flex-wrap">
 
         <Stat
           value={
@@ -3376,9 +3152,12 @@ function BatsmanCard({
 
 
 /*
- * ============================================================
- * NEXT BOWLER MODAL
- * ============================================================
+ * --------------------------------
+ * INLINE NEXT BOWLER SELECTOR
+ * --------------------------------
+ *
+ * This replaces the bowling card in the
+ * exact same location after an over.
  */
 
 function NextBowlerModal({
@@ -3386,13 +3165,9 @@ function NextBowlerModal({
   teamId,
   onPlayerCreated,
   onSelect,
-  error,
-  isInitial = false
+  error
 }) {
-  const [
-    bowler,
-    setBowler
-  ] = useState(null);
+  const [bowler, setBowler] = useState(null);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -3408,33 +3183,17 @@ function NextBowlerModal({
             <div className="flex items-center justify-between">
 
               <div>
-
                 <div className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
-
-                  {isInitial
-                    ? 'Match Start'
-                    : 'Over Complete'}
-
+                  Over Complete
                 </div>
 
                 <h2 className="text-2xl font-extrabold text-white mt-1">
-
-                  🎯{' '}
-
-                  {isInitial
-                    ? 'Select Bowler'
-                    : 'Select Next Bowler'}
-
+                  🎯 Select Next Bowler
                 </h2>
 
                 <p className="text-sm text-slate-400 mt-1">
-
-                  {isInitial
-                    ? 'Choose the bowler for the first over'
-                    : 'Choose the bowler for the new over'}
-
+                  Choose the bowler for the new over
                 </p>
-
               </div>
 
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-2xl">
@@ -3448,32 +3207,18 @@ function NextBowlerModal({
           <div className="p-5">
 
             <div className="mb-4">
-
               <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">
-                {isInitial
-                  ? 'Opening Bowler'
-                  : 'Next Bowler'}
+                Next Bowler
               </div>
 
               <PlayerAutocomplete
                 players={team}
                 value={bowler}
-                onChange={
-                  setBowler
-                }
-                teamId={
-                  teamId
-                }
-                onCreated={
-                  onPlayerCreated
-                }
-                placeholder={
-                  isInitial
-                    ? 'Type or select opening bowler…'
-                    : 'Type or select bowler…'
-                }
+                onChange={setBowler}
+                teamId={teamId}
+                onCreated={onPlayerCreated}
+                placeholder="Type or select bowler…"
               />
-
             </div>
 
             {error && (
@@ -3484,18 +3229,10 @@ function NextBowlerModal({
 
             <button
               className="btn btn-primary w-full h-12 text-base font-bold"
-              disabled={
-                !bowler
-              }
-              onClick={() =>
-                onSelect(
-                  bowler
-                )
-              }
+              disabled={!bowler}
+              onClick={() => onSelect(bowler)}
             >
-              {isInitial
-                ? 'Start Innings →'
-                : 'Start New Over →'}
+              Start New Over →
             </button>
 
             {!bowler && (
@@ -3516,19 +3253,13 @@ function NextBowlerModal({
 
 
 /*
- * ============================================================
+ * --------------------------------
  * FALL OF WICKETS
- * ============================================================
+ * --------------------------------
  */
 
-function FallOfWickets({
-  wickets,
-  players
-}) {
-  if (
-    !wickets ||
-    wickets.length === 0
-  ) {
+function FallOfWickets({ wickets, players }) {
+  if (!wickets || wickets.length === 0) {
     return null;
   }
 
@@ -3536,100 +3267,64 @@ function FallOfWickets({
     <div className="mt-3 bg-slate-900/70 rounded-xl p-3 border border-slate-700">
 
       <div className="flex items-center justify-between mb-3">
-
         <div>
-
           <div className="text-xs text-slate-500 uppercase tracking-wide">
             Fall of Wickets
           </div>
-
           <div className="text-sm font-semibold text-white mt-1">
             Wicket timeline
           </div>
-
         </div>
 
         <div className="text-xl">
           📉
         </div>
-
       </div>
 
       <div className="space-y-2">
+        {wickets.map((item, index) => {
+          const player = players.find(
+            p => p.id === item.player_id
+          );
 
-        {wickets.map(
-          (item, index) => {
+          return (
+            <div
+              key={
+                item.id ||
+                `${item.wicket_number}-${item.player_id}-${index}`
+              }
+              className="flex items-center justify-between bg-slate-800/80 rounded-lg px-3 py-2 border border-slate-700"
+            >
 
-            const player =
-              players.find(
-                (p) =>
-                  p.id ===
-                  item.player_id
-              );
-
-            return (
-              <div
-                key={
-                  item.id ||
-                  `${item.wicket_number}-${item.player_id}-${index}`
-                }
-                className="flex items-center justify-between bg-slate-800/80 rounded-lg px-3 py-2 border border-slate-700"
-              >
-
-                <div className="flex items-center gap-3 min-w-0">
-
-                  <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 text-red-300 flex items-center justify-center text-xs font-bold">
-                    {
-                      item.wicket_number
-                    }
-                  </div>
-
-                  <div className="min-w-0">
-
-                    <div className="text-sm font-semibold text-white truncate">
-                      {
-                        player?.name ||
-                        'Batsman'
-                      }
-                    </div>
-
-                    <div className="text-[11px] text-slate-500">
-
-                      {
-                        item.wicket_type ||
-                        'Wicket'
-                      }
-
-                      {item.overs !=
-                        null
-                        ? ` · ${item.overs} ov`
-                        : ''}
-
-                    </div>
-
-                  </div>
-
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-red-600/20 border border-red-500/30 text-red-300 flex items-center justify-center text-xs font-bold">
+                  {item.wicket_number}
                 </div>
 
-                <div className="text-right ml-3">
-
-                  <div className="text-base font-extrabold text-white">
-                    {
-                      item.score
-                    }
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white truncate">
+                    {player?.name || 'Batsman'}
                   </div>
 
-                  <div className="text-[10px] text-slate-500">
-                    TEAM SCORE
+                  <div className="text-[11px] text-slate-500">
+                    {item.wicket_type || 'Wicket'}
+                    {item.overs != null ? ` · ${item.overs} ov` : ''}
                   </div>
-
                 </div>
-
               </div>
-            );
-          }
-        )}
 
+              <div className="text-right ml-3">
+                <div className="text-base font-extrabold text-white">
+                  {item.score}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  TEAM SCORE
+                </div>
+              </div>
+
+            </div>
+          );
+        })}
       </div>
 
     </div>
@@ -3638,9 +3333,9 @@ function FallOfWickets({
 
 
 /*
- * ============================================================
+ * --------------------------------
  * STAT
- * ============================================================
+ * --------------------------------
  */
 
 function Stat({
@@ -3650,7 +3345,6 @@ function Stat({
 }) {
   return (
     <div>
-
       <div
         className={
           large
@@ -3664,16 +3358,15 @@ function Stat({
       <div className="text-xs text-slate-400">
         {label}
       </div>
-
     </div>
   );
 }
 
 
 /*
- * ============================================================
+ * --------------------------------
  * BOWLING STAT
- * ============================================================
+ * --------------------------------
  */
 
 function BowlingStat({
@@ -3682,7 +3375,6 @@ function BowlingStat({
 }) {
   return (
     <div>
-
       <div className="text-base font-bold">
         {value}
       </div>
@@ -3690,16 +3382,15 @@ function BowlingStat({
       <div className="text-[10px] text-slate-500">
         {label}
       </div>
-
     </div>
   );
 }
 
 
 /*
- * ============================================================
+ * --------------------------------
  * BALL DISPLAY
- * ============================================================
+ * --------------------------------
  */
 
 function BallDisplay({
@@ -3707,8 +3398,7 @@ function BallDisplay({
 }) {
   let label =
     String(
-      ball.runs_batsman ??
-        0
+      ball.runs_batsman ?? 0
     );
 
   let className =
@@ -3725,6 +3415,7 @@ function BallDisplay({
     ball.extra_type ===
     'wide'
   ) {
+
     label =
       `Wd${
         Number(
@@ -3743,6 +3434,7 @@ function BallDisplay({
     ball.extra_type ===
     'noball'
   ) {
+
     label =
       `Nb${
         ball.runs_batsman
@@ -3757,6 +3449,7 @@ function BallDisplay({
     ball.extra_type ===
     'bye'
   ) {
+
     label =
       `${ball.extra_runs}B`;
 
@@ -3767,6 +3460,7 @@ function BallDisplay({
     ball.extra_type ===
     'legbye'
   ) {
+
     label =
       `${ball.extra_runs}Lb`;
 
@@ -3778,6 +3472,7 @@ function BallDisplay({
       ball.runs_batsman
     ) === 4
   ) {
+
     label = '4';
 
     className =
@@ -3788,6 +3483,7 @@ function BallDisplay({
       ball.runs_batsman
     ) === 6
   ) {
+
     label = '6';
 
     className =
@@ -3815,9 +3511,9 @@ function BallDisplay({
 
 
 /*
- * ============================================================
+ * --------------------------------
  * BATSMEN SELECTION
- * ============================================================
+ * --------------------------------
  */
 
 function SelectBatsmen({
@@ -3840,8 +3536,8 @@ function SelectBatsmen({
   ] = useState(null);
 
   const available =
-    safeArray(team).filter(
-      (player) =>
+    team.filter(
+      player =>
         !outIds.has(
           player.id
         )
@@ -3865,23 +3561,19 @@ function SelectBatsmen({
       <div className="flex items-center justify-between">
 
         <div>
-
           <h1 className="text-xl font-bold">
-
             {hasStriker &&
             !hasNonStriker
               ? 'Select New Batsman'
               : !hasStriker &&
-                  hasNonStriker
-                ? 'Select New Batsman'
-                : 'Select Batsmen'}
-
+                hasNonStriker
+              ? 'Select New Batsman'
+              : 'Select Batsmen'}
           </h1>
 
           <p className="text-xs text-slate-500 mt-1">
             Choose the player to continue the innings
           </p>
-
         </div>
 
         <div className="text-2xl">
@@ -3898,26 +3590,16 @@ function SelectBatsmen({
           </label>
 
           <PlayerAutocomplete
-            players={
-              available
-            }
-            value={
-              striker
-            }
-            onChange={
-              setStriker
-            }
-            teamId={
-              teamId
-            }
+            players={available}
+            value={striker}
+            onChange={setStriker}
+            teamId={teamId}
             onCreated={
               onPlayerCreated
             }
             excludeIds={
               nonStrikerId
-                ? [
-                    nonStrikerId
-                  ]
+                ? [nonStrikerId]
                 : []
             }
             placeholder="Type or add striker's name…"
@@ -3934,26 +3616,16 @@ function SelectBatsmen({
           </label>
 
           <PlayerAutocomplete
-            players={
-              available
-            }
-            value={
-              nonStriker
-            }
-            onChange={
-              setNonStriker
-            }
-            teamId={
-              teamId
-            }
+            players={available}
+            value={nonStriker}
+            onChange={setNonStriker}
+            teamId={teamId}
             onCreated={
               onPlayerCreated
             }
             excludeIds={
               strikerId
-                ? [
-                    strikerId
-                  ]
+                ? [strikerId]
                 : []
             }
             placeholder="Type or add non-striker's name…"
