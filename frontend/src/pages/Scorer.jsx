@@ -196,22 +196,32 @@ export default function Scorer() {
    * ---------------------------------------------------------
    */
 
-  const act = async (fn) => {
+  const act = useCallback((fn, options = {}) => {
     setError('');
 
-    try {
-      await fn();
-      await loadFull();
-    } catch (err) {
-      setError(
-        err?.response?.data?.error ||
-        err?.message ||
-        'Something went wrong'
-      );
+    const { refresh = true } = options;
 
-      await loadFull();
-    }
-  };
+    Promise.resolve()
+      .then(() => fn())
+      .then(() => {
+        if (refresh) {
+          // Let the socket update the UI first. This fallback sync
+          // runs after the request instead of blocking the button.
+          window.setTimeout(() => {
+            loadFull();
+          }, 120);
+        }
+      })
+      .catch(async (err) => {
+        setError(
+          err?.response?.data?.error ||
+          err?.message ||
+          'Something went wrong'
+        );
+
+        await loadFull();
+      });
+  }, [loadFull]);
 
   /*
    * ---------------------------------------------------------
@@ -1372,73 +1382,13 @@ export default function Scorer() {
 
   /*
    * ---------------------------------------------------------
-   * INNINGS BREAK
+   * INNINGS BREAK / TARGET
    * ---------------------------------------------------------
+   * Keep the target on the SAME scorer page. Do not navigate to
+   * another page or replace the scorer with a separate break page.
    */
-
-  if (
-    match.status === 'innings-break' &&
-    pendingCount === 0
-  ) {
-    if (!currentInnings) {
-      return (
-        <p className="text-slate-400">
-          Loading…
-        </p>
-      );
-    }
-
-    return (
-      <div className="max-w-lg mx-auto card text-center space-y-3 fade-in">
-
-        <h1 className="text-2xl font-bold">
-          Innings Break
-        </h1>
-
-        <p className="text-slate-300 text-lg">
-          {currentInnings.innings.total_runs}
-          /
-          {currentInnings.innings.total_wickets}
-          {' '}
-          in{' '}
-          {currentInnings.overs}
-          {' '}
-          overs
-        </p>
-
-        <button
-          className="btn btn-primary"
-          onClick={async () => {
-            try {
-              setError('');
-
-              await Matches.startSecondInnings(
-                matchId
-              );
-
-              await loadFull();
-
-            } catch (err) {
-              setError(
-                err?.response?.data?.error ||
-                err?.message ||
-                'Unable to start second innings'
-              );
-            }
-          }}
-        >
-          Start 2nd Innings
-        </button>
-
-        {error && (
-          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-2 text-sm">
-            {error}
-          </div>
-        )}
-
-      </div>
-    );
-  }
+  const isInningsBreak =
+    match.status === 'innings-break';
 
   if (!currentInnings) {
     return (
@@ -1450,6 +1400,16 @@ export default function Scorer() {
 
   const inn =
     currentInnings.innings;
+
+  const targetValue =
+    inn.target != null
+      ? Number(inn.target)
+      : null;
+
+  const runsNeeded =
+    targetValue != null
+      ? Math.max(0, targetValue - Number(inn.total_runs || 0))
+      : null;
 
   /*
    * ---------------------------------------------------------
@@ -1863,6 +1823,37 @@ export default function Scorer() {
         </div>
       )}
 
+      {isInningsBreak && (
+        <div className="card border border-amber-500/40 bg-amber-500/5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-xs font-semibold text-amber-400 uppercase tracking-wide">
+                Innings Break
+              </div>
+              <div className="text-xl font-extrabold text-white mt-1">
+                Target: {targetValue != null ? targetValue : '—'}
+              </div>
+              <div className="text-sm text-slate-400 mt-1">
+                {inn.total_runs || 0}/{inn.total_wickets || 0} in {currentInnings.overs || '0.0'} overs
+              </div>
+            </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setError('');
+                act(
+                  () => Matches.startSecondInnings(matchId),
+                  { refresh: true }
+                );
+              }}
+            >
+              Start 2nd Innings →
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className={`card ${
           flashWicket
@@ -1909,9 +1900,15 @@ export default function Scorer() {
               RR: {displayRunRate}
             </div>
 
-            {inn.target != null && (
+            {targetValue != null && (
               <div>
-                Target: {inn.target}
+                Target: {targetValue}
+              </div>
+            )}
+
+            {runsNeeded != null && !isInningsBreak && (
+              <div>
+                Need: {runsNeeded} runs
               </div>
             )}
 
@@ -2055,7 +2052,7 @@ export default function Scorer() {
 
       {/* SCORING CONTROLS */}
 
-      {!needsNextBowler && (
+      {!needsNextBowler && !isInningsBreak && (
         <>
 
           <div className="card !p-3">
