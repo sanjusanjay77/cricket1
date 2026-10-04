@@ -1317,6 +1317,113 @@ export default function Scorer() {
 
   /*
    * ---------------------------------------------------------
+   * FAST UNDO / SWAP
+   * ---------------------------------------------------------
+   * These actions update the scorer UI immediately and save in
+   * the background. We deliberately do not call Matches.get()
+   * here; the socket update remains the authoritative refresh.
+   */
+
+  const fastSwap = useCallback(() => {
+    if (pendingCountRef.current > 0) return;
+
+    setError('');
+
+    const current = innings[innings.length - 1]?.innings;
+    if (!current) return;
+
+    const previous = optimisticRef.current;
+    const strikerId = previous?.strikerId ?? current.striker_id;
+    const nonStrikerId = previous?.nonStrikerId ?? current.non_striker_id;
+
+    if (!strikerId || !nonStrikerId) return;
+
+    const previousStrikerStats =
+      previous?.strikerStats ??
+      safeArray(innings[innings.length - 1]?.battingCard).find(b => b.player_id === strikerId) ??
+      { player_id: strikerId, runs: 0, balls: 0, fours: 0, sixes: 0, strike_rate: 0 };
+
+    const previousNonStrikerStats =
+      previous?.nonStrikerStats ??
+      safeArray(innings[innings.length - 1]?.battingCard).find(b => b.player_id === nonStrikerId) ??
+      { player_id: nonStrikerId, runs: 0, balls: 0, fours: 0, sixes: 0, strike_rate: 0 };
+
+    const next = {
+      ...(previous || {}),
+      strikerId: nonStrikerId,
+      nonStrikerId: strikerId,
+      strikerStats: { ...previousNonStrikerStats, player_id: nonStrikerId },
+      nonStrikerStats: { ...previousStrikerStats, player_id: strikerId }
+    };
+
+    optimisticRef.current = next;
+    setOptimistic(next);
+
+    Innings.swapStrike(current.id).catch(err => {
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to swap batsmen'
+      );
+      loadFull();
+    });
+  }, [innings, loadFull]);
+
+  const fastUndo = useCallback(() => {
+    if (pendingCountRef.current > 0) return;
+
+    setError('');
+
+    const currentInningsData = innings[innings.length - 1];
+    const current = currentInningsData?.innings;
+    if (!current) return;
+
+    const previous = optimisticRef.current;
+    const balls = previous?.recentBalls ?? safeArray(currentInningsData.recentBalls);
+    const lastBall = balls[balls.length - 1];
+
+    if (!lastBall) {
+      Innings.undo(current.id).then(loadFull).catch(err => {
+        setError(err?.response?.data?.error || err?.message || 'Unable to undo');
+      });
+      return;
+    }
+
+    const batsmanRuns = Number(lastBall.runs_batsman || 0);
+    const extraType = lastBall.extra_type;
+    const extraRuns = Number(lastBall.extra_runs || 0);
+    const teamRuns =
+      extraType === 'wide' || extraType === 'noball'
+        ? extraRuns + (extraType === 'noball' ? batsmanRuns : 0)
+        : extraRuns + batsmanRuns;
+    const legal = Number(lastBall.is_legal) === 1;
+    const wicket = !!lastBall.is_wicket;
+
+    const next = {
+      ...(previous || {}),
+      total_runs: Math.max(0, Number(previous?.total_runs ?? current.total_runs ?? 0) - teamRuns),
+      total_wickets: Math.max(0, Number(previous?.total_wickets ?? current.total_wickets ?? 0) - (wicket ? 1 : 0)),
+      total_balls: Math.max(0, Number(previous?.total_balls ?? current.total_balls ?? 0) - (legal ? 1 : 0)),
+      recentBalls: balls.slice(0, -1),
+      strikerId: lastBall.batsman_id ?? current.striker_id,
+      nonStrikerId: lastBall.non_striker_id ?? current.non_striker_id
+    };
+
+    optimisticRef.current = next;
+    setOptimistic(next);
+
+    Innings.undo(current.id).catch(err => {
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to undo last ball'
+      );
+      loadFull();
+    });
+  }, [innings, loadFull]);
+
+  /*
+   * ---------------------------------------------------------
    * LOADING
    * ---------------------------------------------------------
    */
@@ -1370,17 +1477,7 @@ export default function Scorer() {
     );
   }
 
-  /*
-   * ---------------------------------------------------------
-   * INNINGS BREAK
-   * ---------------------------------------------------------
-   */
-
-  if (
-    match.status === 'innings-break' &&
-    pendingCount === 0
-  ) {
-    if (!currentInnings) {
+  if (!currentInnings) {
       return (
         <p className="text-slate-400">
           Loading…
@@ -1450,6 +1547,18 @@ export default function Scorer() {
 
   const inn =
     currentInnings.innings;
+
+  const isInningsBreak =
+    match.status === 'innings-break' &&
+    pendingCount === 0;
+
+  const inningsTarget =
+    Number(inn.target ?? Number(inn.total_runs || 0) + 1);
+
+  const targetRunsNeeded = Math.max(
+    0,
+    inningsTarget - Number(inn.total_runs || 0)
+  );
 
   /*
    * ---------------------------------------------------------
@@ -1586,8 +1695,9 @@ export default function Scorer() {
     !effectiveNonStrikerId;
 
   if (
-    needStriker ||
-    needNonStriker
+    !isInningsBreak &&
+    (needStriker ||
+      needNonStriker)
   ) {
     return (
       <div className="max-w-2xl mx-auto space-y-4 fade-in">
@@ -1812,8 +1922,9 @@ export default function Scorer() {
    */
 
   const needsNextBowler =
-    optimistic?.needsNextBowler ||
-    !effectiveBowlerId;
+    !isInningsBreak &&
+    (optimistic?.needsNextBowler ||
+      !effectiveBowlerId);
 
   /*
    * ---------------------------------------------------------
@@ -2053,9 +2164,69 @@ export default function Scorer() {
         </div>
       )}
 
+      {/* =====================================================
+          TARGET / INNINGS BREAK — SAME SCORER PAGE
+          ===================================================== */}
+
+      {isInningsBreak && (
+        <div className="card border border-emerald-500/30 bg-emerald-950/20 text-center space-y-4 fade-in">
+
+          <div>
+            <div className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+              1st Innings Complete
+            </div>
+
+            <h2 className="text-3xl font-extrabold text-white mt-1">
+              Target: {inningsTarget}
+            </h2>
+
+            <p className="text-slate-300 mt-1">
+              {Number(inn.total_runs || 0)}/{Number(inn.total_wickets || 0)}
+              {' '}in{' '}
+              {currentInnings.overs || displayOvers}
+              {' '}overs
+            </p>
+
+            <p className="text-sm text-amber-300 mt-2">
+              {targetRunsNeeded > 0
+                ? `${targetRunsNeeded} runs required to win`
+                : 'Target reached'}
+            </p>
+          </div>
+
+          <button
+            className="btn btn-primary w-full h-12 text-base font-bold"
+            onClick={async () => {
+              try {
+                setError('');
+                await Matches.startSecondInnings(matchId);
+                optimisticRef.current = null;
+                setOptimistic(null);
+                await loadFull();
+              } catch (err) {
+                setError(
+                  err?.response?.data?.error ||
+                  err?.message ||
+                  'Unable to start second innings'
+                );
+              }
+            }}
+          >
+            Continue to 2nd Innings →
+          </button>
+
+          {error && (
+            <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-2 text-sm">
+              {error}
+            </div>
+          )}
+
+        </div>
+      )}
+
       {/* SCORING CONTROLS */}
 
-      {!needsNextBowler && (
+      {!isInningsBreak && !needsNextBowler && (
         <>
 
           <div className="card !p-3">
@@ -2109,16 +2280,8 @@ export default function Scorer() {
 
               <button
                 className="h-10 rounded-xl bg-indigo-600/80 hover:bg-indigo-500 font-semibold text-sm active:scale-95 transition-transform"
-                onClick={() =>
-                  act(() =>
-                    Innings.swapStrike(
-                      inn.id
-                    )
-                  )
-                }
-                disabled={
-                  pendingCount > 0
-                }
+                onClick={fastSwap}
+                disabled={pendingCount > 0}
               >
                 ⇄ Swap
               </button>
@@ -2306,32 +2469,16 @@ export default function Scorer() {
 
             <button
               className="btn btn-secondary"
-              disabled={
-                pendingCount > 0
-              }
-              onClick={() =>
-                act(() =>
-                  Innings.undo(
-                    inn.id
-                  )
-                )
-              }
+              disabled={pendingCount > 0}
+              onClick={fastUndo}
             >
               ↺ Undo
             </button>
 
             <button
               className="btn btn-secondary"
-              disabled={
-                pendingCount > 0
-              }
-              onClick={() =>
-                act(() =>
-                  Innings.swapStrike(
-                    inn.id
-                  )
-                )
-              }
+              disabled={pendingCount > 0}
+              onClick={fastSwap}
             >
               ⇄ Swap Batsmen
             </button>
