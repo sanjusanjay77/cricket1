@@ -1,4 +1,3 @@
-
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
@@ -42,6 +41,10 @@ export default function Scorer() {
   const pendingCountRef = useRef(0);
 
   const [pendingCount, setPendingCount] = useState(0);
+
+  // Keeps the exact pre-action scorer state so Undo can react instantly.
+  const lastActionSnapshotRef = useRef(null);
+  const fastActionTimerRef = useRef(null);
 
   const boundaryTimer = useRef(null);
   const wicketTimer = useRef(null);
@@ -136,6 +139,7 @@ export default function Scorer() {
     return () => {
       clearTimeout(boundaryTimer.current);
       clearTimeout(wicketTimer.current);
+      clearTimeout(fastActionTimerRef.current);
 
       scoreQueueRef.current = [];
       processingQueueRef.current = false;
@@ -241,6 +245,69 @@ export default function Scorer() {
     }
 
     return null;
+  };
+
+  /*
+   * Build a complete local scorer snapshot from the server state.
+   * This lets Undo/Swap update the screen before the API finishes.
+   */
+  const createBaseOptimisticState = (sourceInnings) => {
+    const current = sourceInnings?.innings;
+    if (!current) return null;
+
+    const battingCard = safeArray(sourceInnings.battingCard);
+    const bowlingCard = safeArray(sourceInnings.bowlingCard);
+
+    const strikerStats = battingCard.find(
+      b => b.player_id === current.striker_id
+    ) || null;
+
+    const nonStrikerStats = battingCard.find(
+      b => b.player_id === current.non_striker_id
+    ) || null;
+
+    const bowlerStats = bowlingCard.find(
+      b => b.player_id === current.current_bowler_id
+    ) || null;
+
+    const oversText = String(bowlerStats?.overs || '0.0');
+    const [overs, balls] = oversText.split('.');
+
+    return {
+      total_runs: Number(current.total_runs || 0),
+      total_wickets: Number(current.total_wickets || 0),
+      total_balls: Number(current.total_balls || 0),
+      strikerId: current.striker_id || null,
+      nonStrikerId: current.non_striker_id || null,
+      activeBowlerId: current.current_bowler_id || null,
+      needsNextBowler: false,
+      bowlerStats: bowlerStats ? { ...bowlerStats } : null,
+      bowlerBalls:
+        (Number(overs) || 0) * 6 + (Number(balls) || 0),
+      strikerStats: strikerStats ? { ...strikerStats } : null,
+      nonStrikerStats: nonStrikerStats ? { ...nonStrikerStats } : null,
+      recentBalls: safeArray(sourceInnings.recentBalls).slice(-24),
+      extras: sourceInnings.extras || {},
+      partnership: sourceInnings.partnership || { runs: 0, balls: 0 },
+      fallOfWickets: safeArray(sourceInnings.fallOfWickets),
+      runRate: current.total_balls > 0
+        ? Number((Number(current.total_runs || 0) / (Number(current.total_balls) / 6)).toFixed(2))
+        : 0
+    };
+  };
+
+  const cloneOptimisticState = (value) => {
+    if (!value) return null;
+    return {
+      ...value,
+      bowlerStats: value.bowlerStats ? { ...value.bowlerStats } : value.bowlerStats,
+      strikerStats: value.strikerStats ? { ...value.strikerStats } : value.strikerStats,
+      nonStrikerStats: value.nonStrikerStats ? { ...value.nonStrikerStats } : value.nonStrikerStats,
+      recentBalls: safeArray(value.recentBalls).map(ball => ({ ...ball })),
+      extras: value.extras ? { ...value.extras } : value.extras,
+      partnership: value.partnership ? { ...value.partnership } : value.partnership,
+      fallOfWickets: safeArray(value.fallOfWickets).map(item => ({ ...item }))
+    };
   };
 
   /*
@@ -1288,6 +1355,13 @@ export default function Scorer() {
         popBoundary('six');
       }
 
+      // Save the exact state BEFORE this ball. If the scorer taps Undo,
+      // we can restore this state immediately without waiting for the API.
+      lastActionSnapshotRef.current = cloneOptimisticState(
+        optimisticRef.current ||
+        createBaseOptimisticState(currentInnings)
+      );
+
       const nextOptimistic =
         buildOptimisticBall({
           current,
@@ -1410,6 +1484,86 @@ export default function Scorer() {
     targetValue != null
       ? Math.max(0, targetValue - Number(inn.total_runs || 0))
       : null;
+
+  /*
+   * ---------------------------------------------------------
+   * INSTANT UNDO / SWAP
+   * ---------------------------------------------------------
+   * These handlers update React state FIRST, then call the API.
+   * The old `act()` path waited for the request before the UI could
+   * visibly change, which made the buttons feel slow.
+   */
+
+  const runFastAction = (serverFn) => {
+    Promise.resolve()
+      .then(() => serverFn())
+      .then(() => {
+        clearTimeout(fastActionTimerRef.current);
+        fastActionTimerRef.current = window.setTimeout(() => {
+          if (pendingCountRef.current === 0) {
+            loadFull();
+          }
+        }, 700);
+      })
+      .catch(async (err) => {
+        setError(
+          err?.response?.data?.error ||
+          err?.message ||
+          'Action failed'
+        );
+        await loadFull();
+      });
+  };
+
+  const handleInstantSwap = () => {
+    if (!inn?.id || isInningsBreak || pendingCountRef.current > 0) return;
+
+    const base =
+      optimisticRef.current ||
+      createBaseOptimisticState(currentInnings);
+
+    if (!base?.strikerId || !base?.nonStrikerId) return;
+
+    const next = {
+      ...base,
+      strikerId: base.nonStrikerId,
+      nonStrikerId: base.strikerId,
+      strikerStats: base.nonStrikerStats
+        ? { ...base.nonStrikerStats }
+        : base.nonStrikerStats,
+      nonStrikerStats: base.strikerStats
+        ? { ...base.strikerStats }
+        : base.strikerStats
+    };
+
+    optimisticRef.current = next;
+    setOptimistic(next);
+    setError('');
+
+    runFastAction(() =>
+      Innings.swapStrike(inn.id)
+    );
+  };
+
+  const handleInstantUndo = () => {
+    if (!inn?.id || isInningsBreak || pendingCountRef.current > 0) return;
+
+    const snapshot = lastActionSnapshotRef.current;
+
+    // React immediately returns to the state before the last ball.
+    if (snapshot) {
+      const restored = cloneOptimisticState(snapshot);
+      optimisticRef.current = restored;
+      setOptimistic(restored);
+      lastActionSnapshotRef.current = null;
+    }
+
+    setError('');
+
+    runFastAction(() =>
+      Innings.undo(inn.id)
+    );
+  };
 
   /*
    * ---------------------------------------------------------
@@ -2304,15 +2458,9 @@ export default function Scorer() {
             <button
               className="btn btn-secondary"
               disabled={
-                pendingCount > 0
+                pendingCount > 0 || isInningsBreak
               }
-              onClick={() =>
-                act(() =>
-                  Innings.undo(
-                    inn.id
-                  )
-                )
-              }
+              onClick={handleInstantUndo}
             >
               ↺ Undo
             </button>
@@ -2320,15 +2468,9 @@ export default function Scorer() {
             <button
               className="btn btn-secondary"
               disabled={
-                pendingCount > 0
+                pendingCount > 0 || isInningsBreak
               }
-              onClick={() =>
-                act(() =>
-                  Innings.swapStrike(
-                    inn.id
-                  )
-                )
-              }
+              onClick={handleInstantSwap}
             >
               ⇄ Swap Batsmen
             </button>
