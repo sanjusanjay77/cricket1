@@ -1,4 +1,4 @@
-```jsx
+
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Matches, Innings } from '../api/api.js';
