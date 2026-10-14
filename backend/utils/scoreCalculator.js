@@ -1143,7 +1143,7 @@ async function undoLastBall(
             UPDATE matches
             SET
               status = 'innings-break',
-              current_innings = 1
+              current_innings = 2
             WHERE id = ?
           `).run(
             beforeUndo.match_id
