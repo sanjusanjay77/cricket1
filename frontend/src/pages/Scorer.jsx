@@ -32,6 +32,7 @@ export default function Scorer() {
    * when there is no current bowler.
    */
   const [showNextBowler, setShowNextBowler] = useState(false);
+  const [inningsBreakDismissed, setInningsBreakDismissed] = useState(false);
 
   const [optimistic, setOptimistic] = useState(null);
   const optimisticRef = useRef(null);
@@ -1467,8 +1468,19 @@ const currentInnings =
    * Keep the target on the SAME scorer page. Do not navigate to
    * another page or replace the scorer with a separate break page.
    */
-  const isInningsBreak =
-    match.status === 'innings-break';
+  const inningsData = currentInnings?.innings;
+
+const secondInningsNeedsSetup =
+  Number(match.current_innings) === 2 &&
+  !inningsData?.striker_id &&
+  !inningsData?.non_striker_id &&
+  !inningsData?.current_bowler_id &&
+  Number(inningsData?.total_balls || 0) === 0 &&
+  Number(inningsData?.total_runs || 0) === 0;
+
+const isInningsBreak =
+  match.status === 'innings-break' ||
+  (secondInningsNeedsSetup && !inningsBreakDismissed);
 
   if (!currentInnings) {
     return (
@@ -1518,17 +1530,25 @@ const currentInnings =
         )}
 
         
+
 <button
   className="btn btn-primary w-full"
   onClick={async () => {
     try {
       setError('');
-      const result = await Matches.startSecondInnings(matchId);
-      console.log('SECOND INNINGS RESPONSE:', result);
 
+      // If the second innings already exists, just open its setup.
+      if (Number(match.current_innings) === 2) {
+        setInningsBreakDismissed(true);
+        return;
+      }
+
+      // Otherwise, create the second innings.
+      await Matches.startSecondInnings(matchId);
+
+      setInningsBreakDismissed(true);
       await loadFull();
-    } 
-    catch (err) {
+    } catch (err) {
       setError(
         err?.response?.data?.error ||
         err?.message ||
@@ -1543,6 +1563,7 @@ const currentInnings =
       </div>
     );
   }
+
 
   /*
    * ---------------------------------------------------------
