@@ -1498,10 +1498,18 @@ const isInningsBreak =
       ? Number(inn.target)
       : null;
 
-  const runsNeeded =
-    targetValue != null
-      ? Math.max(0, targetValue - Number(inn.total_runs || 0))
-      : null;
+   
+const displayedRuns = Number(
+  optimistic?.total_runs ??
+  inn.total_runs ??
+  0
+);
+
+const runsNeeded =
+  targetValue != null
+    ? Math.max(0, targetValue - displayedRuns)
+    : null;
+
 
   /*
    * Show only the target at the end of the first innings.
@@ -1518,10 +1526,38 @@ const isInningsBreak =
           Target: {targetValue != null ? targetValue : '—'}
         </h1>
 
-        <p className="text-slate-400">
-          First innings score: {inn.total_runs || 0}/{inn.total_wickets || 0}
-          {' '}({currentInnings.overs || '0.0'} overs)
-        </p>
+        
+<p className="text-slate-400">
+  First innings score:{' '}
+  {Number(
+    innings.find(
+      item =>
+        Number(
+          item?.innings?.innings_number ??
+          item?.innings_number
+        ) === 1
+    )?.innings?.total_runs || 0
+  )}
+  /
+  {Number(
+    innings.find(
+      item =>
+        Number(
+          item?.innings?.innings_number ??
+          item?.innings_number
+        ) === 1
+    )?.innings?.total_wickets || 0
+  )}
+  {' '}(
+  {innings.find(
+    item =>
+      Number(
+        item?.innings?.innings_number ??
+        item?.innings_number
+      ) === 1
+  )?.overs || '0.0'} overs)
+</p>
+
 
         {error && (
           <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
@@ -2338,22 +2374,7 @@ const isInningsBreak =
 
             <div className="grid grid-cols-2 gap-1.5 mt-1.5">
 
-              <button
-                className="h-10 rounded-xl bg-indigo-600/80 hover:bg-indigo-500 font-semibold text-sm active:scale-95 transition-transform"
-                onClick={() =>
-                  act(() =>
-                    Innings.swapStrike(
-                      inn.id
-                    )
-                  )
-                }
-                disabled={
-                  pendingCount > 0
-                }
-              >
-                ⇄ Swap
-              </button>
-
+              
               <button
                 className="h-10 rounded-xl bg-red-700 hover:bg-red-600 font-semibold text-sm active:scale-95 transition-transform"
                 onClick={() =>
