@@ -1032,350 +1032,279 @@ async function recordBall(
    UNDO
 ========================================================= */
 
-async function undoLastBall(
-  inningsId
-) {
 
-  return withInningsLock(
-    inningsId,
-    async () => {
+async function undoLastBall(inningsId) {
+  return withInningsLock(inningsId, async () => {
+    const beforeUndo = await getInnings(inningsId);
 
-      const beforeUndo =
-        await getInnings(
-          inningsId
-        );
+    if (!beforeUndo) {
+      throw new Error('Innings not found');
+    }
 
-      if (!beforeUndo) {
+    const last = await db.prepare(`
+      SELECT *
+      FROM balls
+      WHERE innings_id = ?
+      ORDER BY ball_sequence DESC
+      LIMIT 1
+    `).get(inningsId);
 
-        throw new Error(
-          'Innings not found'
-        );
-      }
+    if (!last) {
+      throw new Error('No balls to undo');
+    }
 
-      const last =
-        await db.prepare(`
-          SELECT *
+    // Preserve the existing first-innings safety rule.
+    if (
+      Number(beforeUndo.innings_number) === 1 &&
+      Number(beforeUndo.is_completed) === 1
+    ) {
+      const secondInnings = await db.prepare(`
+        SELECT *
+        FROM innings
+        WHERE match_id = ?
+          AND innings_number = 2
+        LIMIT 1
+      `).get(beforeUndo.match_id);
+
+      if (secondInnings) {
+        const secondBalls = await db.prepare(`
+          SELECT COUNT(*) AS c
           FROM balls
           WHERE innings_id = ?
-          ORDER BY ball_sequence DESC
-          LIMIT 1
-        `).get(inningsId);
+        `).get(secondInnings.id);
 
-      if (!last) {
-
-        throw new Error(
-          'No balls to undo'
-        );
-      }
-
-      /*
-       * -----------------------------------------------------
-       * IMPORTANT FIRST-INNINGS UNDO SAFETY
-       * -----------------------------------------------------
-       *
-       * If innings #1 already caused innings #2
-       * to be created, we only allow removing
-       * innings #1's final ball if innings #2
-       * has not started yet.
-       */
-
-      if (
-        Number(
-          beforeUndo.innings_number
-        ) === 1 &&
-        Number(
-          beforeUndo.is_completed
-        ) === 1
-      ) {
-
-        const secondInnings =
-          await db.prepare(`
-            SELECT *
-            FROM innings
-            WHERE match_id = ?
-              AND innings_number = 2
-            LIMIT 1
-          `).get(
-            beforeUndo.match_id
-          );
-
-        if (
-          secondInnings
-        ) {
-
-          const secondBalls =
-            await db.prepare(`
-              SELECT COUNT(*) AS c
-              FROM balls
-              WHERE innings_id = ?
-            `).get(
-              secondInnings.id
-            );
-
-          const secondBallCount =
-            Number(
-              secondBalls?.c || 0
-            );
-
-          if (
-            secondBallCount > 0
-          ) {
-
-            throw new Error(
-              'Cannot undo the first innings after the second innings has started.'
-            );
-          }
-
-          /*
-           * Delete empty second innings.
-           */
-          await db.prepare(`
-            DELETE FROM innings
-            WHERE id = ?
-          `).run(
-            secondInnings.id
-          );
-
-          /*
-           * Put match back into innings break.
-           */
-          await db.prepare(`
-            UPDATE matches
-            SET
-              status = 'innings-break',
-              current_innings = 2
-            WHERE id = ?
-          `).run(
-            beforeUndo.match_id
+        if (Number(secondBalls?.c || 0) > 0) {
+          throw new Error(
+            'Cannot undo the first innings after the second innings has started.'
           );
         }
-      }
-
-      const wasFirstBall =
-        Number(
-          beforeUndo.total_balls || 0
-        ) <= 1 &&
-        Number(
-          last.ball_sequence || 0
-        ) === 1;
-
-      /*
-       * Preserve selections.
-       */
-      const preservedStriker =
-        beforeUndo.striker_id ||
-        null;
-
-      const preservedNonStriker =
-        beforeUndo.non_striker_id ||
-        null;
-
-      const preservedBowler =
-        beforeUndo.current_bowler_id ||
-        last.bowler_id ||
-        null;
-
-      /* -----------------------------------------------------
-         DELETE LAST BALL
-      ----------------------------------------------------- */
-
-      await db.prepare(`
-        DELETE FROM balls
-        WHERE id = ?
-      `).run(
-        last.id
-      );
-
-      /* -----------------------------------------------------
-         RECOMPUTE
-      ----------------------------------------------------- */
-
-      await recomputeInningsFromBalls(
-        inningsId
-      );
-
-      /* -----------------------------------------------------
-         FIRST BALL UNDO
-      ----------------------------------------------------- */
-
-      if (
-        wasFirstBall
-      ) {
 
         await db.prepare(`
-          UPDATE innings
-          SET
-            striker_id = ?,
-            non_striker_id = ?,
-            current_bowler_id = ?
+          DELETE FROM innings
           WHERE id = ?
-        `).run(
-          preservedStriker,
-          preservedNonStriker,
-          preservedBowler,
-          inningsId
-        );
-      }
-
-      /*
-       * Undo must reopen the innings.
-       */
-      await db.prepare(`
-        UPDATE innings
-        SET
-          is_completed = 0,
-          current_bowler_id =
-            COALESCE(
-              current_bowler_id,
-              ?
-            )
-        WHERE id = ?
-      `).run(
-        preservedBowler,
-        inningsId
-      );
-
-      const innings =
-        await getInnings(
-          inningsId
-        );
-
-      /*
-       * Restore live state.
-       */
-      if (
-        innings
-      ) {
+        `).run(secondInnings.id);
 
         await db.prepare(`
           UPDATE matches
-          SET status = 'live'
+          SET status = 'innings-break',
+              current_innings = 2
           WHERE id = ?
-            AND status = 'innings-break'
-        `).run(
-          innings.match_id
-        );
+        `).run(beforeUndo.match_id);
       }
-
-      const updatedInnings =
-        await getInnings(
-          inningsId
-        );
-
-      return {
-
-        removedBallId:
-          last.id,
-
-        innings:
-          updatedInnings
-      };
     }
-  );
+
+    const wasFirstBall =
+      Number(beforeUndo.total_balls || 0) <= 1 &&
+      Number(last.ball_sequence || 0) === 1;
+
+    const preservedStriker = beforeUndo.striker_id || null;
+    const preservedNonStriker = beforeUndo.non_striker_id || null;
+    const preservedBowler =
+      beforeUndo.current_bowler_id || last.bowler_id || null;
+
+    // Delete only the latest recorded delivery.
+    await db.prepare(`
+      DELETE FROM balls
+      WHERE id = ?
+    `).run(last.id);
+
+    // Recalculate and reopen the innings in one database update.
+    await recomputeInningsFromBalls(inningsId, {
+      innings: beforeUndo,
+      preserveSelections: wasFirstBall,
+      preservedStriker,
+      preservedNonStriker,
+      preservedBowler
+    });
+
+    // Undoing the final delivery of a completed second innings
+    // must reopen the match and remove the previous result.
+    await db.prepare(`
+      UPDATE matches
+      SET status = 'live',
+          result_text = NULL,
+          winner_id = NULL
+      WHERE id = ?
+        AND status IN ('innings-break', 'completed')
+    `).run(beforeUndo.match_id);
+
+    // Only one final innings read is needed for the response.
+    const updatedInnings = await getInnings(inningsId);
+
+    return {
+      removedBallId: last.id,
+      innings: updatedInnings
+    };
+  });
 }
+
 
 /* =========================================================
    RECOMPUTE INNINGS
 ========================================================= */
 
 async function recomputeInningsFromBalls(
-  inningsId
+  inningsId,
+  options = {}
 ) {
-
   const innings =
-    await getInnings(
-      inningsId
-    );
+    options.innings || await getInnings(inningsId);
 
   if (!innings) {
-
-    throw new Error(
-      'Innings not found'
-    );
+    throw new Error('Innings not found');
   }
 
-  const balls =
-    await db.prepare(`
-      SELECT *
-      FROM balls
-      WHERE innings_id = ?
-      ORDER BY ball_sequence ASC
-    `).all(inningsId);
+  const balls = await db.prepare(`
+    SELECT *
+    FROM balls
+    WHERE innings_id = ?
+    ORDER BY ball_sequence ASC
+  `).all(inningsId);
 
   let totalRuns = 0;
   let totalWickets = 0;
   let totalBalls = 0;
 
   const extras = {
-
-    wide:
-      0,
-
-    noball:
-      0,
-
-    bye:
-      0,
-
-    legbye:
-      0,
-
-    penalty:
-      0
+    wide: 0,
+    noball: 0,
+    bye: 0,
+    legbye: 0,
+    penalty: 0
   };
 
   let striker = null;
   let nonStriker = null;
   let bowler = null;
 
-  if (
-    balls.length > 0
-  ) {
-
-    striker =
-      balls[0].batsman_id;
-
-    nonStriker =
-      balls[0].non_striker_id;
-
-    bowler =
-      balls[0].bowler_id;
+  if (balls.length > 0) {
+    striker = balls[0].batsman_id;
+    nonStriker = balls[0].non_striker_id;
+    bowler = balls[0].bowler_id;
   }
 
-  for (
-    const b of balls
-  ) {
+  for (const b of balls) {
+    const effect = computeRunEffects({
+      runs: b.runs_batsman,
+      extra_type: b.extra_type,
+      extra_runs: b.extra_runs
+    });
 
-    const effect =
-      computeRunEffects({
-        runs:
-          b.runs_batsman,
+    totalRuns += effect.teamRuns;
 
-        extra_type:
-          b.extra_type,
-
-        extra_runs:
-          b.extra_runs
-      });
-
-    totalRuns +=
-      effect.teamRuns;
-
-    if (
-      Number(b.is_legal) === 1
-    ) {
-
-      totalBalls +=
-        1;
+    if (Number(b.is_legal) === 1) {
+      totalBalls += 1;
     }
 
-    if (
-      Number(b.is_wicket) === 1
-    ) {
-
-      totalWickets +=
-        1;
+    if (Number(b.is_wicket) === 1) {
+      totalWickets += 1;
     }
+
+    /* EXTRAS */
+    if (
+      b.extra_type &&
+      Object.prototype.hasOwnProperty.call(
+        extras,
+        b.extra_type
+      )
+    ) {
+      if (b.extra_type === 'wide') {
+        extras.wide += effect.teamRuns;
+      } else {
+        extras[b.extra_type] += Number(b.extra_runs || 0);
+      }
+    }
+
+    /* BATSMEN AND STRIKE ROTATION */
+    let ballStriker = b.batsman_id;
+    let ballNonStriker = b.non_striker_id;
+
+    if (Number(b.is_wicket) === 1 && b.dismissed_id) {
+      if (b.dismissed_id === ballStriker) {
+        ballStriker = null;
+      } else if (b.dismissed_id === ballNonStriker) {
+        ballNonStriker = null;
+      }
+    } else if (effect.runsRun % 2 === 1) {
+      [ballStriker, ballNonStriker] = [
+        ballNonStriker,
+        ballStriker
+      ];
+    }
+
+    striker = ballStriker;
+    nonStriker = ballNonStriker;
+
+    /* BOWLER */
+    bowler = b.bowler_id;
+
+    /* END OF OVER */
+    if (
+      Number(b.is_legal) === 1 &&
+      totalBalls % 6 === 0
+    ) {
+      if (striker && nonStriker) {
+        [striker, nonStriker] = [
+          nonStriker,
+          striker
+        ];
+      }
+
+      bowler = null;
+    }
+  }
+
+  /*
+   * Preserve the selected players when undoing the first ball.
+   * Otherwise use the selections reconstructed from the balls.
+   */
+  const finalStriker = options.preserveSelections
+    ? options.preservedStriker
+    : striker;
+
+  const finalNonStriker = options.preserveSelections
+    ? options.preservedNonStriker
+    : nonStriker;
+
+  const finalBowler =
+    bowler || options.preservedBowler || null;
+
+  /*
+   * Update the recalculated totals and reopen the innings
+   * in the same database statement.
+   */
+  await db.prepare(`
+    UPDATE innings
+    SET
+      total_runs = ?,
+      total_wickets = ?,
+      total_balls = ?,
+      extras_wide = ?,
+      extras_noball = ?,
+      extras_bye = ?,
+      extras_legbye = ?,
+      extras_penalty = ?,
+      striker_id = ?,
+      non_striker_id = ?,
+      current_bowler_id = ?,
+      is_completed = 0
+    WHERE id = ?
+  `).run(
+    totalRuns,
+    totalWickets,
+    totalBalls,
+    extras.wide,
+    extras.noball,
+    extras.bye,
+    extras.legbye,
+    extras.penalty,
+    finalStriker,
+    finalNonStriker,
+    finalBowler,
+    inningsId
+  );
+}
+
 
     /* -----------------------------------------------------
        EXTRAS
