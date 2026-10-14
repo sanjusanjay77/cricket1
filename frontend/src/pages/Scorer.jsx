@@ -1886,14 +1886,21 @@ const runsNeeded =
   // Select an existing player or a newly-created player for the active role.
   // This changes the active player ID; it does not create a duplicate for an
   // existing name or alter any player's historical statistics.
-  const handleSelectPlayerForRole = useCallback(async (selectedPlayer) => {
+  
+  // Select an existing player or newly-created player for the active role.
+  // This changes the active player ID without changing historical statistics.
+  // IMPORTANT: This is a regular function, NOT a React hook.
+  const handleSelectPlayerForRole = async (selectedPlayer) => {
     const selectedId = getPlayerId(selectedPlayer);
     const role = nameEditTarget?.role;
+
     if (!selectedId || !role || !inn?.id) return;
 
     const duplicateActiveRole =
-      (role === 'striker' && String(selectedId) === String(effectiveNonStrikerId)) ||
-      (role === 'nonStriker' && String(selectedId) === String(effectiveStrikerId));
+      (role === 'striker' &&
+        String(selectedId) === String(effectiveNonStrikerId)) ||
+      (role === 'nonStriker' &&
+        String(selectedId) === String(effectiveStrikerId));
 
     if (duplicateActiveRole) {
       setError('That player is already selected as the other batsman.');
@@ -1902,30 +1909,51 @@ const runsNeeded =
 
     setSavingPlayerName(true);
     setError('');
+
     try {
       if (role === 'bowler') {
-        await Innings.setBowler(inn.id, { bowler_id: selectedId });
+        await Innings.setBowler(inn.id, {
+          bowler_id: selectedId
+        });
+
         const nextState = {
           ...(optimisticRef.current || {}),
           activeBowlerId: selectedId
         };
+
         optimisticRef.current = nextState;
         setOptimistic(nextState);
       } else {
         await Innings.setBatsmen(inn.id, {
-          striker_id: role === 'striker' ? selectedId : effectiveStrikerId,
-          non_striker_id: role === 'nonStriker' ? selectedId : effectiveNonStrikerId
+          striker_id:
+            role === 'striker'
+              ? selectedId
+              : effectiveStrikerId,
+
+          non_striker_id:
+            role === 'nonStriker'
+              ? selectedId
+              : effectiveNonStrikerId
         });
       }
+
       setNameEditTarget(null);
       setNameDraft('');
+
       await loadFull();
     } catch (err) {
-      setError(err?.response?.data?.error || err?.message || `Unable to select ${role === 'bowler' ? 'bowler' : 'batsman'}.`);
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        `Unable to select ${
+          role === 'bowler' ? 'bowler' : 'batsman'
+        }.`
+      );
     } finally {
       setSavingPlayerName(false);
     }
-  }, [nameEditTarget, inn?.id, players, effectiveStrikerId, effectiveNonStrikerId, loadFull]);
+  };
+
 
   /*
    * ---------------------------------------------------------
