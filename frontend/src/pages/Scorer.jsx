@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Matches, Innings } from '../api/api.js';
+import { Matches, Innings, Players } from '../api/api.js';
 import WicketModal from '../components/WicketModal.jsx';
 import PlayerAutocomplete from '../components/PlayerAutocomplete.jsx';
 import socket from '../socket.js';
@@ -21,6 +21,7 @@ export default function Scorer() {
   const [showNextBowler, setShowNextBowler] = useState(false);
   const [editingBatsman, setEditingBatsman] = useState(null);
   const [editingBowler, setEditingBowler] = useState(false);
+  const [savingPlayerName, setSavingPlayerName] = useState(false);
 
   const [optimistic, setOptimistic] = useState(null);
   const optimisticRef = useRef(null);
@@ -62,6 +63,40 @@ export default function Scorer() {
   useEffect(() => {
     loadFull();
   }, [loadFull]);
+
+  const handleSavePlayerName = useCallback(async (playerId, newName) => {
+    const id = playerId == null ? '' : String(playerId);
+    const name = String(newName || '').trim();
+
+    if (!id) throw new Error('Player ID is missing.');
+    if (!name) throw new Error('Player name cannot be empty.');
+
+    const existing = players.find(player => String(player.id) === id);
+    if (!existing) throw new Error('Player was not found. Refresh the scoreboard and try again.');
+    if (String(existing.name || '').trim() === name) return;
+
+    setSavingPlayerName(true);
+    try {
+      // Update the existing player record by ID. This must not create a new player
+      // or touch innings/delivery/statistics records.
+      const response = await Players.update(playerId, { name });
+      const responseData = response?.data ?? response;
+      const updatedPlayer = responseData?.player ?? responseData;
+      const savedName = typeof updatedPlayer?.name === 'string'
+        ? updatedPlayer.name
+        : name;
+
+      setPlayers(previous => previous.map(player =>
+        String(player.id) === id ? { ...player, ...updatedPlayer, id: player.id, name: savedName } : player
+      ));
+    } catch (err) {
+      throw new Error(
+        err?.response?.data?.error || err?.message || 'Unable to update player name.'
+      );
+    } finally {
+      setSavingPlayerName(false);
+    }
+  }, [players]);
 
   const handlePlayerCreated = useCallback((player) => {
     setPlayers(prev => {
@@ -1754,13 +1789,15 @@ export default function Scorer() {
             player={striker}
             stats={strikerStats}
             striker
-            onEdit={() => setEditingBatsman('striker')}
+            onSaveName={handleSavePlayerName}
+            savingName={savingPlayerName}
           />
 
           <BatsmanCard
             player={nonStriker}
             stats={nonStrikerStats}
-            onEdit={() => setEditingBatsman('nonStriker')}
+            onSaveName={handleSavePlayerName}
+            savingName={savingPlayerName}
           />
 
         </div>
@@ -1812,8 +1849,7 @@ export default function Scorer() {
               <div>
 
                 <div className="flex items-center gap-2">
-                  <div className="font-semibold text-white">🎯 {bowler?.name || '—'}</div>
-                  <button type="button" className="text-xs text-indigo-400 hover:text-indigo-300" onClick={() => { setEditingBowler(true); setShowNextBowler(true); }}>Edit</button>
+                  <div className="font-semibold text-white">🎯 <PlayerNamePopover player={bowler} onSave={handleSavePlayerName} disabled={savingPlayerName} /></div>
                 </div>
 
                 <div className="text-xs text-slate-500 mt-1">
@@ -2367,12 +2403,149 @@ export default function Scorer() {
 
 
 /*
+ * Compact click-to-edit player-name popover.
+ * Only the player's name is updated; the player ID and scoring records remain unchanged.
+ */
+function PlayerNamePopover({ player, onSave, disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(player?.name || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const rootRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    setDraft(player?.name || '');
+  }, [player?.name, player?.id]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    inputRef.current?.focus();
+    inputRef.current?.select();
+
+    const handlePointerDown = event => {
+      if (!rootRef.current?.contains(event.target)) {
+        setOpen(false);
+        setDraft(player?.name || '');
+        setError('');
+      }
+    };
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        setDraft(player?.name || '');
+        setError('');
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, player?.name]);
+
+  async function submit(event) {
+    event.preventDefault();
+    const correctedName = draft.trim();
+    if (!correctedName) {
+      setError('Name cannot be empty.');
+      return;
+    }
+    if (!player?.id) {
+      setError('Player ID is missing.');
+      return;
+    }
+    if (correctedName === String(player.name || '').trim()) {
+      setOpen(false);
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError('');
+      await onSave(player.id, correctedName);
+      setDraft(correctedName);
+      setOpen(false);
+    } catch (err) {
+      setError(err?.message || 'Unable to update name.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <span ref={rootRef} className="relative inline-flex max-w-full align-middle">
+      <button
+        type="button"
+        disabled={disabled || !player?.id}
+        title="Click to correct player name"
+        aria-label={`Edit name for ${player?.name || 'player'}`}
+        onClick={() => {
+          setDraft(player?.name || '');
+          setError('');
+          setOpen(value => !value);
+        }}
+        className="cursor-pointer rounded-sm text-left underline decoration-dotted decoration-slate-500 underline-offset-4 hover:text-emerald-300 focus:outline-none focus:ring-1 focus:ring-emerald-400 disabled:cursor-default"
+      >
+        {player?.name || '—'}
+      </button>
+
+      {open && (
+        <form
+          onSubmit={submit}
+          className="absolute left-0 top-full z-[120] mt-2 w-60 rounded-xl border border-slate-600 bg-slate-950 p-3 text-left text-white shadow-2xl"
+          onClick={event => event.stopPropagation()}
+        >
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+            Edit player name
+          </div>
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={event => setDraft(event.target.value)}
+            maxLength={80}
+            aria-label="Corrected player name"
+            className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+            placeholder="Enter correct name"
+          />
+          {error && <div role="alert" className="mt-2 text-xs text-red-400">{error}</div>}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                setOpen(false);
+                setDraft(player?.name || '');
+                setError('');
+              }}
+              className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !draft.trim()}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      )}
+    </span>
+  );
+}
+
+/*
  * --------------------------------
  * BATSMAN CARD
  * --------------------------------
  */
 
-function BatsmanCard({ player, stats, striker = false, onEdit }) {
+function BatsmanCard({ player, stats, striker = false, onSaveName, savingName = false }) {
   return (
     <div className="bg-slate-900/70 rounded-xl p-3 border border-slate-700">
 
@@ -2380,7 +2553,7 @@ function BatsmanCard({ player, stats, striker = false, onEdit }) {
 
         <div className="font-semibold text-white">
 
-          🏏 {player?.name || '—'}
+          🏏 <PlayerNamePopover player={player} onSave={onSaveName} disabled={savingName} />
 
           {striker && (
             <span className="text-emerald-400 ml-1">
@@ -2392,7 +2565,6 @@ function BatsmanCard({ player, stats, striker = false, onEdit }) {
 
         <div className="flex items-center gap-2 shrink-0">
           <div className="text-xs text-slate-400">{striker ? 'STRIKER' : 'NON-STRIKER'}</div>
-          <button type="button" className="text-xs text-indigo-400 hover:text-indigo-300" onClick={onEdit}>Edit</button>
         </div>
 
       </div>
