@@ -1413,10 +1413,16 @@ export default function Scorer() {
     );
   }
 
-  const currentInnings =
-    innings[
-      innings.length - 1
-    ];
+  
+const currentInnings =
+  innings.find(
+    item =>
+      Number(
+        item?.innings?.innings_number ??
+        item?.innings_number
+      ) === Number(match?.current_innings)
+  ) || innings[innings.length - 1];
+
 
   /*
    * ---------------------------------------------------------
