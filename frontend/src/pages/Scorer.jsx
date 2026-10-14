@@ -1511,18 +1511,26 @@ export default function Scorer() {
           </div>
         )}
 
-        <button
-          className="btn btn-primary w-full"
-          onClick={() => {
-            setError('');
-            act(
-              () => Matches.startSecondInnings(matchId),
-              { refresh: true }
-            );
-          }}
-        >
-          Continue →
-        </button>
+        
+<button
+  className="btn btn-primary w-full"
+  onClick={async () => {
+    try {
+      setError('');
+      await Matches.startSecondInnings(matchId);
+      await loadFull();
+    } catch (err) {
+      setError(
+        err?.response?.data?.error ||
+        err?.message ||
+        'Unable to start second innings'
+      );
+    }
+  }}
+>
+  Continue →
+</button>
+
       </div>
     );
   }
