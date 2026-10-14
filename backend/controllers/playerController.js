@@ -133,92 +133,37 @@ exports.createPlayer = async (req, res) => {
  * Updates the existing player record using the same ID.
  * Does not create a new player or modify delivery records.
  */
+
+/**
+ * UPDATE EXISTING PLAYER
+ *
+ * A name-only request changes only the name.
+ * Player ID and historical score records remain unchanged.
+ */
 exports.updatePlayer = async (req, res) => {
   try {
     const playerId = req.params.id;
+    const { name } = req.body;
 
-    const existing = await db.prepare(`
-      SELECT *
-      FROM players
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({
+        error: 'Player name cannot be empty'
+      });
+    }
+
+    const playerName = name.trim();
+
+    const result = await db.prepare(`
+      UPDATE players
+      SET name = ?
       WHERE id = ?
-    `).get(playerId);
+    `).run(playerName, playerId);
 
-    if (!existing) {
+    if (result.changes === 0) {
       return res.status(404).json({
         error: 'Player not found'
       });
     }
-
-    const {
-      name,
-      role,
-      batting_style,
-      bowling_style,
-      jersey_no
-    } = req.body;
-
-    let playerName = existing.name;
-
-    if (name !== undefined) {
-      if (typeof name !== 'string' || !name.trim()) {
-        return res.status(400).json({
-          error: 'Player name cannot be empty'
-        });
-      }
-
-      playerName = name.trim();
-    }
-
-    const nextJerseyNo =
-      jersey_no === undefined
-        ? existing.jersey_no
-        : jersey_no === ''
-          ? null
-          : jersey_no;
-
-    if (nextJerseyNo !== null && nextJerseyNo !== undefined) {
-      const duplicate = await db.prepare(`
-        SELECT id
-        FROM players
-        WHERE team_id = ?
-          AND jersey_no = ?
-          AND active = 1
-          AND id != ?
-        LIMIT 1
-      `).get(
-        existing.team_id,
-        nextJerseyNo,
-        playerId
-      );
-
-      if (duplicate) {
-        return res.status(409).json({
-          error: 'Jersey number is already used by another active player'
-        });
-      }
-    }
-
-    await db.prepare(`
-      UPDATE players
-      SET
-        name = ?,
-        role = ?,
-        batting_style = ?,
-        bowling_style = ?,
-        jersey_no = ?
-      WHERE id = ?
-    `).run(
-      playerName,
-      role !== undefined ? role : existing.role,
-      batting_style !== undefined
-        ? batting_style
-        : existing.batting_style,
-      bowling_style !== undefined
-        ? bowling_style
-        : existing.bowling_style,
-      nextJerseyNo,
-      playerId
-    );
 
     const updated = await db.prepare(`
       SELECT *
