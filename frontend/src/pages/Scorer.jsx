@@ -178,10 +178,10 @@ export default function Scorer() {
    * Rename an existing player without creating a new player or
    * changing any innings/statistics records. The player's ID stays the same.
    */
-  const openPlayerNameEditor = useCallback((player) => {
+  const openPlayerNameEditor = useCallback((player, role) => {
     if (!player?.id) return;
     setError('');
-    setNameEditTarget({ id: player.id });
+    setNameEditTarget({ id: player.id, role });
     setNameDraft(String(player.name || ''));
   }, []);
 
@@ -211,6 +211,15 @@ export default function Scorer() {
     if (String(existingPlayer.name || '').trim() === newName) {
       setNameEditTarget(null);
       setNameDraft('');
+      return;
+    }
+
+    const duplicateName = players.find(player =>
+      String(player.id) !== String(playerId) &&
+      String(player.name || '').trim().toLocaleLowerCase() === newName.toLocaleLowerCase()
+    );
+    if (duplicateName) {
+      setError(`“${duplicateName.name}” already exists. Choose it from the existing-player list instead of creating or renaming a duplicate.`);
       return;
     }
 
@@ -1874,6 +1883,50 @@ const runsNeeded =
         effectiveBowlerId
     );
 
+  // Select an existing player or a newly-created player for the active role.
+  // This changes the active player ID; it does not create a duplicate for an
+  // existing name or alter any player's historical statistics.
+  const handleSelectPlayerForRole = useCallback(async (selectedPlayer) => {
+    const selectedId = getPlayerId(selectedPlayer);
+    const role = nameEditTarget?.role;
+    if (!selectedId || !role || !inn?.id) return;
+
+    const duplicateActiveRole =
+      (role === 'striker' && String(selectedId) === String(effectiveNonStrikerId)) ||
+      (role === 'nonStriker' && String(selectedId) === String(effectiveStrikerId));
+
+    if (duplicateActiveRole) {
+      setError('That player is already selected as the other batsman.');
+      return;
+    }
+
+    setSavingPlayerName(true);
+    setError('');
+    try {
+      if (role === 'bowler') {
+        await Innings.setBowler(inn.id, { bowler_id: selectedId });
+        const nextState = {
+          ...(optimisticRef.current || {}),
+          activeBowlerId: selectedId
+        };
+        optimisticRef.current = nextState;
+        setOptimistic(nextState);
+      } else {
+        await Innings.setBatsmen(inn.id, {
+          striker_id: role === 'striker' ? selectedId : effectiveStrikerId,
+          non_striker_id: role === 'nonStriker' ? selectedId : effectiveNonStrikerId
+        });
+      }
+      setNameEditTarget(null);
+      setNameDraft('');
+      await loadFull();
+    } catch (err) {
+      setError(err?.response?.data?.error || err?.message || `Unable to select ${role === 'bowler' ? 'bowler' : 'batsman'}.`);
+    } finally {
+      setSavingPlayerName(false);
+    }
+  }, [nameEditTarget, inn?.id, players, effectiveStrikerId, effectiveNonStrikerId, loadFull]);
+
   /*
    * ---------------------------------------------------------
    * NEED BATSMEN
@@ -2280,12 +2333,38 @@ const runsNeeded =
   stats={strikerStats}
   striker
   onEdit={() => setEditingBatsman('striker')}
+  nameEditTarget={nameEditTarget}
+  nameDraft={nameDraft}
+  setNameDraft={setNameDraft}
+  savingPlayerName={savingPlayerName}
+  onNameClick={openPlayerNameEditor}
+  onSaveName={handleSavePlayerName}
+  onCancelName={closePlayerNameEditor}
+  role="striker"
+  team={battingTeamPlayers.filter(p => String(p.id) !== String(effectiveNonStrikerId) && !outIds.has(p.id))}
+  teamId={inn.batting_team_id}
+  onSelectPlayer={handleSelectPlayerForRole}
+  onPlayerCreated={handlePlayerCreated}
+  excludeIds={effectiveNonStrikerId ? [effectiveNonStrikerId] : []}
 />
 
 <BatsmanCard
   player={nonStriker}
   stats={nonStrikerStats}
   onEdit={() => setEditingBatsman('nonStriker')}
+  nameEditTarget={nameEditTarget}
+  nameDraft={nameDraft}
+  setNameDraft={setNameDraft}
+  savingPlayerName={savingPlayerName}
+  onNameClick={openPlayerNameEditor}
+  onSaveName={handleSavePlayerName}
+  onCancelName={closePlayerNameEditor}
+  role="nonStriker"
+  team={battingTeamPlayers.filter(p => String(p.id) !== String(effectiveStrikerId) && !outIds.has(p.id))}
+  teamId={inn.batting_team_id}
+  onSelectPlayer={handleSelectPlayerForRole}
+  onPlayerCreated={handlePlayerCreated}
+  excludeIds={effectiveStrikerId ? [effectiveStrikerId] : []}
 />
 
         </div>
@@ -2308,7 +2387,7 @@ const runsNeeded =
       className="font-semibold text-white text-left hover:text-emerald-300 focus:outline-none focus:ring-1 focus:ring-emerald-400 rounded"
       title={bowler?.id ? 'Click to edit player name' : 'Select a bowler first'}
       disabled={!bowler?.id}
-      onClick={() => openPlayerNameEditor(bowler)}
+      onClick={() => openPlayerNameEditor(bowler, 'bowler')}
     >
       🎯 {bowler?.name || 'Select bowler'}
       {bowler?.id && <span className="ml-1 text-[10px] text-slate-500">✎</span>}
@@ -2321,6 +2400,12 @@ const runsNeeded =
       savingPlayerName={savingPlayerName}
       onSave={handleSavePlayerName}
       onCancel={closePlayerNameEditor}
+      role="bowler"
+      team={bowlingTeamPlayers}
+      teamId={inn.bowling_team_id}
+      onSelectPlayer={handleSelectPlayerForRole}
+      onPlayerCreated={handlePlayerCreated}
+      excludeIds={[]}
     />
   </div>
 
@@ -2950,7 +3035,13 @@ function BatsmanCard({
   savingPlayerName,
   onNameClick,
   onSaveName,
-  onCancelName
+  onCancelName,
+  role,
+  team,
+  teamId,
+  onSelectPlayer,
+  onPlayerCreated,
+  excludeIds
 }) {
   return (
     <div className="bg-slate-900/70 rounded-xl p-2 border border-slate-700">
@@ -2961,7 +3052,7 @@ function BatsmanCard({
             className="text-left hover:text-emerald-300 focus:outline-none focus:ring-1 focus:ring-emerald-400 rounded"
             title={player?.id ? 'Click to edit player name' : 'No player selected'}
             disabled={!player?.id}
-            onClick={() => onNameClick(player)}
+            onClick={() => onNameClick(player, role)}
           >
             🏏 {player?.name || '—'}
             {striker && <span className="text-emerald-400 ml-1">●</span>}
@@ -2976,6 +3067,12 @@ function BatsmanCard({
             savingPlayerName={savingPlayerName}
             onSave={onSaveName}
             onCancel={onCancelName}
+            role={role}
+            team={team}
+            teamId={teamId}
+            onSelectPlayer={onSelectPlayer}
+            onPlayerCreated={onPlayerCreated}
+            excludeIds={excludeIds}
           />
         </div>
 
@@ -3011,62 +3108,127 @@ function PlayerNamePopover({
   setNameDraft,
   savingPlayerName,
   onSave,
-  onCancel
+  onCancel,
+  role,
+  team = [],
+  teamId,
+  onSelectPlayer,
+  onPlayerCreated,
+  excludeIds = []
 }) {
+  const [selection, setSelection] = useState(null);
+  const [renameMode, setRenameMode] = useState(false);
+
   const isOpen = Boolean(
     player?.id &&
     nameEditTarget?.id &&
-    String(player.id) === String(nameEditTarget.id)
+    String(player.id) === String(nameEditTarget.id) &&
+    nameEditTarget?.role === role
   );
 
   if (!isOpen) return null;
 
   return (
     <div
-      className="absolute left-0 top-full mt-2 z-[90] w-64 max-w-[85vw] rounded-xl border border-slate-600 bg-slate-950 p-3 shadow-2xl"
+      className="absolute left-0 top-full mt-2 z-[90] w-72 max-w-[88vw] rounded-xl border border-slate-600 bg-slate-950 p-3 shadow-2xl"
       onClick={event => event.stopPropagation()}
     >
-      <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">
-        Edit player name
+      <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-2">
+        Choose {role === 'bowler' ? 'bowler' : 'batsman'}
       </label>
-      <input
-        autoFocus
-        type="text"
-        value={nameDraft}
-        maxLength={80}
-        disabled={savingPlayerName}
-        onChange={event => setNameDraft(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            onSave();
-          }
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            onCancel();
-          }
-        }}
-        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-emerald-500"
-        placeholder="Enter player name"
-      />
-      <div className="mt-2 flex justify-end gap-2">
+
+      {!renameMode ? (
+        <>
+          <PlayerAutocomplete
+            players={team}
+            value={selection}
+            onChange={selected => {
+              setSelection(selected);
+              if (selected && (typeof selected === 'object' ? selected.id : selected)) {
+                onSelectPlayer(selected);
+              }
+            }}
+            teamId={teamId}
+            onCreated={playerCreated => {
+              // PlayerAutocomplete reports newly-created players here and
+              // also sends the selected player through onChange. Keep this
+              // callback limited to refreshing the local player list so the
+              // role assignment is performed exactly once.
+              if (playerCreated) onPlayerCreated?.(playerCreated);
+            }}
+            excludeIds={excludeIds}
+            placeholder="Search existing or create new…"
+          />
+          <p className="mt-2 text-[11px] leading-4 text-slate-500">
+            Select an existing player to reuse their ID and records. Use the create-new option only if this is a different player.
+          </p>
+          <button
+            type="button"
+            className="mt-3 text-xs text-amber-300 hover:text-amber-200 underline underline-offset-2"
+            onClick={() => setRenameMode(true)}
+          >
+            Rename this player everywhere
+          </button>
+        </>
+      ) : (
+        <>
+          <label className="block text-xs text-slate-400 mb-1">
+            New display name for this same player
+          </label>
+          <input
+            autoFocus
+            type="text"
+            value={nameDraft}
+            maxLength={80}
+            disabled={savingPlayerName}
+            onChange={event => setNameDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                onSave();
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                onCancel();
+              }
+            }}
+            className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-emerald-500"
+            placeholder="Enter corrected name"
+          />
+          <p className="mt-2 text-[11px] leading-4 text-slate-500">
+            This keeps the same player ID. A name already used by another player cannot be saved as a duplicate.
+          </p>
+          <div className="mt-3 flex justify-between gap-2">
+            <button
+              type="button"
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+              disabled={savingPlayerName}
+              onClick={() => setRenameMode(false)}
+            >
+              Back to player list
+            </button>
+            <button
+              type="button"
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              disabled={savingPlayerName || !nameDraft.trim()}
+              onClick={onSave}
+            >
+              {savingPlayerName ? 'Saving…' : 'Rename'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {!renameMode && (
         <button
           type="button"
-          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+          className="mt-3 w-full rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
           disabled={savingPlayerName}
           onClick={onCancel}
         >
           Cancel
         </button>
-        <button
-          type="button"
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-          disabled={savingPlayerName || !nameDraft.trim()}
-          onClick={onSave}
-        >
-          {savingPlayerName ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+      )}
     </div>
   );
 }
