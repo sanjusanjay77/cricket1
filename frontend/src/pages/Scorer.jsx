@@ -1486,6 +1486,48 @@ export default function Scorer() {
       : null;
 
   /*
+   * Show only the target at the end of the first innings.
+   * Continue starts the second innings; the normal scorer then renders.
+   */
+  if (isInningsBreak) {
+    return (
+      <div className="max-w-lg mx-auto card text-center space-y-4 fade-in">
+        <div className="text-sm font-semibold text-amber-400 uppercase tracking-wide">
+          Innings Break
+        </div>
+
+        <h1 className="text-3xl font-extrabold">
+          Target: {targetValue != null ? targetValue : '—'}
+        </h1>
+
+        <p className="text-slate-400">
+          First innings score: {inn.total_runs || 0}/{inn.total_wickets || 0}
+          {' '}({currentInnings.overs || '0.0'} overs)
+        </p>
+
+        {error && (
+          <div className="bg-red-900/50 border border-red-600 text-red-200 rounded-xl p-3 text-sm">
+            {error}
+          </div>
+        )}
+
+        <button
+          className="btn btn-primary w-full"
+          onClick={() => {
+            setError('');
+            act(
+              () => Matches.startSecondInnings(matchId),
+              { refresh: true }
+            );
+          }}
+        >
+          Continue →
+        </button>
+      </div>
+    );
+  }
+
+  /*
    * ---------------------------------------------------------
    * INSTANT UNDO / SWAP
    * ---------------------------------------------------------
