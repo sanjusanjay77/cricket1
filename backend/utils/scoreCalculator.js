@@ -1201,13 +1201,6 @@ async function recomputeInningsFromBalls(
     }
 
     /* EXTRAS */
-    if (
-      b.extra_type &&
-      Object.prototype.hasOwnProperty.call(
-        extras,
-        b.extra_type
-      )
-    ) {
       if (b.extra_type === 'wide') {
         extras.wide += effect.teamRuns;
       } else {
@@ -1466,7 +1459,7 @@ async function recomputeInningsFromBalls(
 }
 
 /* =========================================================
-   CHECK + FINALIZE INNINGS
+  
 ========================================================= */
 
 async function checkAndFinalizeInnings(
