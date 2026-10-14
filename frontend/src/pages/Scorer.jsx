@@ -2176,11 +2176,19 @@ const runsNeeded =
               </div>
             )}
 
-            {runsNeeded != null && !isInningsBreak && (
-              <div>
-                Need: {runsNeeded} runs
-              </div>
-            )}
+            
+{runsNeeded != null && !isInningsBreak && (
+  <div>
+    Need: {runsNeeded} runs
+    {' '}|{' '}
+    {Math.max(
+      0,
+      (Number(match.overs_limit || 0) * 6) -
+      Number(optimistic?.total_balls ?? inn.total_balls ?? 0)
+    )} balls left
+  </div>
+)}
+
 
             {pendingCount > 0 && (
               <div className="text-emerald-400 text-xs mt-1 font-medium">
@@ -2219,9 +2227,20 @@ const runsNeeded =
 
               <div>
 
-                <div className="font-semibold text-white">
-                  🎯 {bowler?.name || 'Select bowler'}
-                </div>
+                
+<div className="flex items-center gap-2">
+  <div className="font-semibold text-white">
+    🎯 {bowler?.name || 'Select bowler'}
+  </div>
+
+  <button
+    type="button"
+    className="text-xs text-indigo-400 hover:text-indigo-300"
+    onClick={() => setShowNextBowler(true)}
+  >
+    Edit
+  </button>
+</div>
 
                 <div className="text-xs text-slate-500 mt-1">
                   {needsNextBowler
@@ -2911,15 +2930,15 @@ const runsNeeded =
 function BatsmanCard({
   player,
   stats,
-  striker = false
+  striker = false,
+  onEdit
 }) {
   return (
     <div className="bg-slate-900/70 rounded-xl p-2 border border-slate-700">
 
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-2">
 
-        <div className="font-semibold text-white">
-
+        <div className="font-semibold text-white min-w-0">
           🏏 {player?.name || '—'}
 
           {striker && (
@@ -2927,61 +2946,37 @@ function BatsmanCard({
               ●
             </span>
           )}
-
         </div>
 
-        <div className="text-xs text-slate-400">
-          {striker
-            ? 'STRIKER'
-            : 'NON-STRIKER'}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="text-xs text-slate-400">
+            {striker ? 'STRIKER' : 'NON-STRIKER'}
+          </div>
+
+          <button
+            type="button"
+            className="text-xs text-indigo-400 hover:text-indigo-300"
+            onClick={onEdit}
+          >
+            Edit
+          </button>
         </div>
 
       </div>
 
       <div className="mt-1 flex items-center gap-2 flex-wrap">
 
-        <Stat
-          value={
-            stats?.runs ?? 0
-          }
-          label="Runs"
-          large
-        />
-
-        <Stat
-          value={
-            stats?.balls ?? 0
-          }
-          label="Balls"
-        />
-
-        <Stat
-          value={
-            stats?.fours ?? 0
-          }
-          label="4s"
-        />
-
-        <Stat
-          value={
-            stats?.sixes ?? 0
-          }
-          label="6s"
-        />
-
-        <Stat
-          value={
-            stats?.strike_rate ?? 0
-          }
-          label="SR"
-        />
+        <Stat value={stats?.runs ?? 0} label="Runs" large />
+        <Stat value={stats?.balls ?? 0} label="Balls" />
+        <Stat value={stats?.fours ?? 0} label="4s" />
+        <Stat value={stats?.sixes ?? 0} label="6s" />
+        <Stat value={stats?.strike_rate ?? 0} label="SR" />
 
       </div>
 
     </div>
   );
 }
-
 
 /*
  * ============================================================
