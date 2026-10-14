@@ -19,6 +19,7 @@ export default function Scorer() {
 
   const [showWicket, setShowWicket] = useState(false);
   const [error, setError] = useState('');
+  const [editingBatsman, setEditingBatsman] = useState(null);
   const [boundary, setBoundary] = useState(null);
   const [extraPicker, setExtraPicker] = useState(null);
   const [flashWicket, setFlashWicket] = useState(false);
@@ -2204,16 +2205,18 @@ const runsNeeded =
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
 
-          <BatsmanCard
-            player={striker}
-            stats={strikerStats}
-            striker
-          />
+           <BatsmanCard
+  player={striker}
+  stats={strikerStats}
+  striker
+  onEdit={() => setEditingBatsman('striker')}
+/>
 
-          <BatsmanCard
-            player={nonStriker}
-            stats={nonStrikerStats}
-          />
+<BatsmanCard
+  player={nonStriker}
+  stats={nonStrikerStats}
+  onEdit={() => setEditingBatsman('nonStriker')}
+/>
 
         </div>
 
@@ -2993,7 +2996,7 @@ function NextBowlerModal({
   isInitial = false
 }) {
   const [bowler, setBowler] =
-    useState(null);
+  useState(initialBowler);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -3020,9 +3023,11 @@ function NextBowlerModal({
 
                 <h2 className="text-2xl font-extrabold text-white mt-1">
 
-                  🎯 {isInitial
-                    ? 'Select Bowler'
-                    : 'Select Next Bowler'}
+                  {isEditing
+  ? 'Choose a replacement for the current bowler'
+  : isInitial
+    ? 'Choose the bowler for the first over'
+    : 'Choose the bowler for the new over'}
 
                 </h2>
 
