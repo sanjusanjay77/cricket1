@@ -1517,9 +1517,12 @@ export default function Scorer() {
   onClick={async () => {
     try {
       setError('');
-      await Matches.startSecondInnings(matchId);
+      const result = await Matches.startSecondInnings(matchId);
+      console.log('SECOND INNINGS RESPONSE:', result);
+
       await loadFull();
-    } catch (err) {
+    } 
+    catch (err) {
       setError(
         err?.response?.data?.error ||
         err?.message ||
