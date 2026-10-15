@@ -2815,11 +2815,6 @@ const runsNeeded =
               try {
                 setError('');
                 const wasEditingBowler = editingBowler;
-
-                const isNewOverSelection =
-  !wasEditingBowler &&
-  Boolean(previous.needsNextBowler);
-  
                 const previous =
                   optimisticRef.current || {};
 
