@@ -6,52 +6,61 @@ const calc = require('../utils/scoreCalculator');
 const DUPLICATE_NAME_ERROR =
   'A player with this name already exists in this team.';
 
-/**
- * Normalize names consistently:
- * - Trim leading/trailing spaces
- * - Collapse repeated whitespace
- * - Compare without case sensitivity
- */
-function normalizePlayerName(name) {
-  return String(name ?? '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
-}
-
-/**
- * Return a clean display name without changing its letter case.
- */
 function cleanPlayerName(name) {
   return String(name ?? '')
+    .normalize('NFKC')
     .trim()
     .replace(/\s+/g, ' ');
 }
 
-/**
- * Find another player with the same normalized name.
- *
- * Includes inactive players so soft-deleting a player does not
- * allow a duplicate to be created later.
- *
- * The current player's ID can be excluded during a rename.
- */
+function normalizePlayerName(name) {
+  return cleanPlayerName(name).toLowerCase();
+}
+
+function isUniqueConstraintError(error) {
+  const message = String(error?.message || '').toLowerCase();
+
+  return (
+    message.includes('unique constraint failed') ||
+    message.includes('constraint failed') ||
+    message.includes('idx_players_team_name_key_unique')
+  );
+}
+
+function sendPlayerError(res, error, fallbackMessage) {
+  console.error(fallbackMessage, error);
+
+  if (isUniqueConstraintError(error)) {
+    return res.status(409).json({
+      error: DUPLICATE_NAME_ERROR,
+      code: 'DUPLICATE_PLAYER_NAME',
+    });
+  }
+
+  return res.status(500).json({
+    error: fallbackMessage,
+    details: error.message,
+  });
+}
+
 async function findDuplicatePlayerName(
   teamId,
-  playerName,
+  nameKey,
   excludePlayerId = null
 ) {
-  const normalizedName = normalizePlayerName(playerName);
-
   const players = await db.prepare(`
-    SELECT id, name
+    SELECT id, name, name_key
     FROM players
     WHERE team_id = ?
   `).all(teamId);
 
-  return players.find(player =>
+  return players.find((player) =>
     String(player.id) !== String(excludePlayerId ?? '') &&
-    normalizePlayerName(player.name) === normalizedName
+    (
+      player.name_key
+        ? String(player.name_key)
+        : normalizePlayerName(player.name)
+    ) === nameKey
   ) || null;
 }
 
@@ -79,12 +88,11 @@ exports.listPlayers = async (req, res) => {
 
     return res.json(players);
   } catch (err) {
-    console.error('listPlayers error:', err);
-
-    return res.status(500).json({
-      error: 'Failed to load players',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to load players'
+    );
   }
 };
 
@@ -99,21 +107,27 @@ exports.createPlayer = async (req, res) => {
       role,
       batting_style,
       bowling_style,
-      jersey_no
+      jersey_no,
     } = req.body;
 
     if (
       typeof team_id !== 'string' ||
       !team_id.trim() ||
-      typeof name !== 'string' ||
-      !normalizePlayerName(name)
+      typeof name !== 'string'
     ) {
       return res.status(400).json({
-        error: 'team_id and a valid player name are required'
+        error: 'team_id and a valid player name are required',
       });
     }
 
     const playerName = cleanPlayerName(name);
+    const nameKey = normalizePlayerName(name);
+
+    if (!nameKey) {
+      return res.status(400).json({
+        error: 'Player name cannot be empty',
+      });
+    }
 
     const team = await db.prepare(`
       SELECT id
@@ -123,19 +137,19 @@ exports.createPlayer = async (req, res) => {
 
     if (!team) {
       return res.status(404).json({
-        error: 'Team not found'
+        error: 'Team not found',
       });
     }
 
-    const duplicateName = await findDuplicatePlayerName(
+    const duplicate = await findDuplicatePlayerName(
       team_id,
-      playerName
+      nameKey
     );
 
-    if (duplicateName) {
+    if (duplicate) {
       return res.status(409).json({
         error: DUPLICATE_NAME_ERROR,
-        code: 'DUPLICATE_PLAYER_NAME'
+        code: 'DUPLICATE_PLAYER_NAME',
       });
     }
 
@@ -155,8 +169,8 @@ exports.createPlayer = async (req, res) => {
 
       if (duplicateJersey) {
         return res.status(409).json({
-          error:
-            'Jersey number is already used by another active player'
+          error: 'Jersey number is already used by another active player',
+          code: 'DUPLICATE_JERSEY_NUMBER',
         });
       }
     }
@@ -168,17 +182,19 @@ exports.createPlayer = async (req, res) => {
         id,
         team_id,
         name,
+        name_key,
         role,
         batting_style,
         bowling_style,
         jersey_no,
         active
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
     `).run(
       id,
       team_id,
       playerName,
+      nameKey,
       role || 'batsman',
       batting_style || 'right-hand',
       bowling_style || 'none',
@@ -193,38 +209,39 @@ exports.createPlayer = async (req, res) => {
 
     return res.status(201).json(player);
   } catch (err) {
-    console.error('createPlayer error:', err);
-
-    // A database uniqueness constraint, if installed, should
-    // also be translated to HTTP 409 by the final implementation.
-    return res.status(500).json({
-      error: 'Failed to create player',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to create player'
+    );
   }
 };
 
 /**
- * RENAME EXISTING PLAYER
+ * RENAME PLAYER
  *
- * Preserve the player ID and all historical statistics.
- * Reject duplicate normalized names within the same team.
+ * Keep the same ID so historical statistics remain associated
+ * with the existing player.
  */
 exports.updatePlayer = async (req, res) => {
   try {
     const playerId = req.params.id;
     const { name } = req.body;
 
-    if (
-      typeof name !== 'string' ||
-      !normalizePlayerName(name)
-    ) {
+    if (typeof name !== 'string') {
       return res.status(400).json({
-        error: 'Player name cannot be empty'
+        error: 'Player name cannot be empty',
       });
     }
 
     const playerName = cleanPlayerName(name);
+    const nameKey = normalizePlayerName(name);
+
+    if (!nameKey) {
+      return res.status(400).json({
+        error: 'Player name cannot be empty',
+      });
+    }
 
     const existingPlayer = await db.prepare(`
       SELECT id, team_id, name
@@ -234,28 +251,32 @@ exports.updatePlayer = async (req, res) => {
 
     if (!existingPlayer) {
       return res.status(404).json({
-        error: 'Player not found'
+        error: 'Player not found',
       });
     }
 
-    const duplicateName = await findDuplicatePlayerName(
+    const duplicate = await findDuplicatePlayerName(
       existingPlayer.team_id,
-      playerName,
+      nameKey,
       existingPlayer.id
     );
 
-    if (duplicateName) {
+    if (duplicate) {
       return res.status(409).json({
         error: DUPLICATE_NAME_ERROR,
-        code: 'DUPLICATE_PLAYER_NAME'
+        code: 'DUPLICATE_PLAYER_NAME',
       });
     }
 
     await db.prepare(`
       UPDATE players
-      SET name = ?
+      SET name = ?, name_key = ?
       WHERE id = ?
-    `).run(playerName, playerId);
+    `).run(
+      playerName,
+      nameKey,
+      playerId
+    );
 
     const updated = await db.prepare(`
       SELECT *
@@ -265,19 +286,18 @@ exports.updatePlayer = async (req, res) => {
 
     return res.json(updated);
   } catch (err) {
-    console.error('updatePlayer error:', err);
-
-    return res.status(500).json({
-      error: 'Failed to update player',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to update player'
+    );
   }
 };
 
 /**
  * SOFT DELETE PLAYER
  *
- * Preserve historical records.
+ * Historical statistics remain untouched.
  */
 exports.deletePlayer = async (req, res) => {
   try {
@@ -291,7 +311,7 @@ exports.deletePlayer = async (req, res) => {
 
     if (!player) {
       return res.status(404).json({
-        error: 'Player not found'
+        error: 'Player not found',
       });
     }
 
@@ -306,20 +326,19 @@ exports.deletePlayer = async (req, res) => {
       softRemoved: true,
       message:
         `${player.name} was removed from the active roster. ` +
-        'Historical records are preserved.'
+        'Historical records are preserved.',
     });
   } catch (err) {
-    console.error('deletePlayer error:', err);
-
-    return res.status(500).json({
-      error: 'Failed to remove player',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to remove player'
+    );
   }
 };
 
 /**
- * LIST ACTIVE PLAYERS WITH TEAM INFORMATION
+ * LIST ACTIVE OWN-TEAM PLAYERS WITH TEAM INFORMATION
  */
 exports.listAllWithTeams = async (req, res) => {
   try {
@@ -338,12 +357,11 @@ exports.listAllWithTeams = async (req, res) => {
 
     return res.json(players);
   } catch (err) {
-    console.error('listAllWithTeams error:', err);
-
-    return res.status(500).json({
-      error: 'Failed to load player statistics',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to load player statistics'
+    );
   }
 };
 
@@ -366,7 +384,7 @@ exports.getPlayerStats = async (req, res) => {
 
     if (!player) {
       return res.status(404).json({
-        error: 'Player not found'
+        error: 'Player not found',
       });
     }
 
@@ -374,15 +392,14 @@ exports.getPlayerStats = async (req, res) => {
 
     return res.json({
       player,
-      ...stats
+      ...stats,
     });
   } catch (err) {
-    console.error('getPlayerStats error:', err);
-
-    return res.status(500).json({
-      error: 'Failed to load player statistics',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to load player statistics'
+    );
   }
 };
 
@@ -394,11 +411,10 @@ exports.getAllPlayerCareerStats = async (req, res) => {
     const players = await calc.getAllPlayerCareerStats();
     return res.json(players);
   } catch (err) {
-    console.error('getAllPlayerCareerStats error:', err);
-
-    return res.status(500).json({
-      error: 'Failed to load all player statistics',
-      details: err.message
-    });
+    return sendPlayerError(
+      res,
+      err,
+      'Failed to load all player statistics'
+    );
   }
 };
