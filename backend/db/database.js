@@ -1,3 +1,4 @@
+
 const { createClient } = require('@tursodatabase/serverless/compat');
 require('dotenv').config();
 
@@ -11,11 +12,26 @@ const client = createClient({
 });
 
 /**
+ * Normalize player names consistently.
+ *
+ * - Unicode normalization
+ * - Trim leading/trailing whitespace
+ * - Collapse repeated whitespace
+ * - Compare without case sensitivity
+ */
+function normalizePlayerName(name) {
+  return String(name ?? '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+/**
  * Convert better-sqlite3 style arguments
  * into @libsql/client format.
  */
 function normalizeQuery(sql, args) {
-  // .run([value1, value2, value3])
   if (args.length === 1 && Array.isArray(args[0])) {
     return {
       sql,
@@ -23,7 +39,6 @@ function normalizeQuery(sql, args) {
     };
   }
 
-  // .run({ id: value, name: value })
   if (
     args.length === 1 &&
     args[0] !== null &&
@@ -31,7 +46,6 @@ function normalizeQuery(sql, args) {
     !Array.isArray(args[0])
   ) {
     const named = args[0];
-
     const names = [];
     const values = [];
 
@@ -56,7 +70,6 @@ function normalizeQuery(sql, args) {
     );
   }
 
-  // .run(value1, value2, value3)
   return {
     sql,
     args,
@@ -131,15 +144,185 @@ function splitSqlStatements(schemaSql) {
  * Check whether a column exists in a table.
  */
 async function columnExists(tableName, columnName) {
+  const allowedTables = new Set([
+    'notification_users',
+    'teams',
+    'players',
+  ]);
+
+  if (!allowedTables.has(tableName)) {
+    throw new Error(`Unsupported table name: ${tableName}`);
+  }
+
   const result = await client.execute({
     sql: `PRAGMA table_info(${tableName})`,
   });
 
-  const columns = result.rows || [];
-
-  return columns.some(
+  return (result.rows || []).some(
     (column) => String(column.name) === columnName
   );
+}
+
+/**
+ * Safely prepare the player-name uniqueness migration.
+ *
+ * This function NEVER merges, deletes, renames, or reassigns
+ * player records or historical statistics.
+ *
+ * If conflicts exist, it reports them and does not create
+ * the unique index.
+ */
+async function ensurePlayerNameUniqueness() {
+  console.log('🔄 Checking player-name uniqueness...');
+
+  const hasNameKey = await columnExists(
+    'players',
+    'name_key'
+  );
+
+  if (!hasNameKey) {
+    console.log('➕ Adding players.name_key...');
+
+    await client.execute(`
+      ALTER TABLE players
+      ADD COLUMN name_key TEXT
+    `);
+  }
+
+  // Read all players, including inactive historical records.
+  const result = await client.execute(`
+    SELECT id, team_id, name, name_key, active
+    FROM players
+  `);
+
+  const players = (result.rows || []).map((row) =>
+    convertRow(row, result.columns)
+  );
+
+  // Calculate normalized keys for all records.
+  const normalizedPlayers = players.map((player) => ({
+    ...player,
+    calculatedNameKey: normalizePlayerName(player.name),
+  }));
+
+  // Empty names need manual attention rather than silently
+  // allowing records without a usable identity key.
+  const invalidPlayers = normalizedPlayers.filter(
+    (player) => !player.calculatedNameKey
+  );
+
+  if (invalidPlayers.length > 0) {
+    console.error(
+      '⚠️ Players with empty normalized names were found:'
+    );
+
+    for (const player of invalidPlayers) {
+      console.error({
+        id: player.id,
+        team_id: player.team_id,
+        name: player.name,
+        active: player.active,
+      });
+    }
+
+    console.error(
+      'Resolve these invalid names before enabling uniqueness.'
+    );
+
+    return {
+      ready: false,
+      reason: 'INVALID_PLAYER_NAMES',
+    };
+  }
+
+  // Detect duplicates using the calculated key, not the stored
+  // key, so legacy records with missing or stale keys are caught.
+  const groups = new Map();
+
+  for (const player of normalizedPlayers) {
+    const groupKey = JSON.stringify([
+      String(player.team_id),
+      player.calculatedNameKey,
+    ]);
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+
+    groups.get(groupKey).push(player);
+  }
+
+  const duplicates = [...groups.values()].filter(
+    (group) => group.length > 1
+  );
+
+  if (duplicates.length > 0) {
+    console.error(
+      `⚠️ Found ${duplicates.length} duplicate player-name group(s).`
+    );
+
+    for (const group of duplicates) {
+      console.error(
+        JSON.stringify(
+          group.map((player) => ({
+            id: player.id,
+            team_id: player.team_id,
+            name: player.name,
+            name_key: player.calculatedNameKey,
+            active: player.active,
+          })),
+          null,
+          2
+        )
+      );
+    }
+
+    console.error(
+      'The unique index was NOT created. ' +
+      'Resolve conflicts without merging or deleting historical records, ' +
+      'then restart the backend.'
+    );
+
+    return {
+      ready: false,
+      reason: 'DUPLICATE_PLAYER_NAMES',
+      duplicateGroups: duplicates.length,
+    };
+  }
+
+  // Backfill and repair missing or stale keys only after the
+  // duplicate audit passes. This changes no player IDs or stats.
+  for (const player of normalizedPlayers) {
+    if (player.name_key !== player.calculatedNameKey) {
+      await client.execute({
+        sql: `
+          UPDATE players
+          SET name_key = ?
+          WHERE id = ?
+        `,
+        args: [
+          player.calculatedNameKey,
+          player.id,
+        ],
+      });
+    }
+  }
+
+  // This index enforces uniqueness for active and inactive
+  // players. Different teams may use the same player name.
+  await client.execute(`
+    CREATE UNIQUE INDEX IF NOT EXISTS
+    idx_players_team_name_key_unique
+    ON players(team_id, name_key)
+  `);
+
+  console.log(
+    '✅ Unique player-name-per-team index is ready.'
+  );
+
+  return {
+    ready: true,
+  };
 }
 
 /**
@@ -181,22 +364,6 @@ async function ensureDatabaseUpdates() {
     // =====================================================
     // TEAM ARCHIVE
     // =====================================================
-    //
-    // 0 = Active
-    // 1 = Archived
-    //
-    // We NEVER delete historical teams just because
-    // they have match history.
-    //
-    // Archived teams can remain connected to:
-    // - matches
-    // - innings
-    // - balls
-    // - player statistics
-    // - records
-    //
-    // This protects historical scoreboard data.
-    // =====================================================
 
     const hasTeamArchived = await columnExists(
       'teams',
@@ -220,6 +387,23 @@ async function ensureDatabaseUpdates() {
       console.log(
         '✅ teams.archived column already exists'
       );
+    }
+
+    // =====================================================
+    // PLAYER NAME UNIQUENESS
+    // =====================================================
+
+    const playerNameMigration =
+      await ensurePlayerNameUniqueness();
+
+    if (!playerNameMigration.ready) {
+      console.warn(
+        '⚠️ Player-name uniqueness is NOT enabled yet:',
+        playerNameMigration.reason
+      );
+
+      // Do not throw here. Keep the existing website available
+      // while reporting conflicts for manual resolution.
     }
 
     // =====================================================
@@ -267,20 +451,13 @@ async function ensureDatabaseUpdates() {
     console.log(
       '✅ Team archive system ready'
     );
-
   } catch (error) {
-    console.error(
-      '❌ Database update failed:'
-    );
-
+    console.error('❌ Database update failed:');
     console.error(error);
-
     throw error;
   }
 
-  console.log(
-    '✅ Database updates completed'
-  );
+  console.log('✅ Database updates completed');
 }
 
 const db = {
@@ -333,7 +510,7 @@ const db = {
   },
 
   /**
-   * Initialize database schema.
+   * Initialize the main schema and then apply updates.
    */
   async initSchema(schemaSql) {
     const statements = splitSqlStatements(schemaSql);
@@ -353,7 +530,6 @@ const db = {
         );
 
         console.error(statement);
-
         throw error;
       }
     }
@@ -362,10 +538,6 @@ const db = {
       '✅ Database schema initialized successfully'
     );
 
-    /**
-     * Run database updates AFTER the main schema
-     * has been initialized.
-     */
     await ensureDatabaseUpdates();
   },
 };
