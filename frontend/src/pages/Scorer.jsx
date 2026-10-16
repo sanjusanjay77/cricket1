@@ -216,6 +216,21 @@ export default function Scorer() {
       return;
     }
 
+    // If this name already belongs to another player on the same team,
+    // don't rename/overwrite that player. The inline editor offers that
+    // existing player as a selectable option instead.
+    const duplicatePlayer = players.find(player =>
+      String(player.id) !== String(playerId) &&
+      String(player.team_id) === String(existingPlayer.team_id) &&
+      String(player.name || '').trim().toLocaleLowerCase() ===
+        newName.toLocaleLowerCase()
+    );
+
+    if (duplicatePlayer) {
+      setError(`“${duplicatePlayer.name}” already exists in this team. Choose the existing player from the suggestions.`);
+      return;
+    }
+
     setSavingPlayerName(true);
     setError('');
 
@@ -1877,6 +1892,60 @@ const runsNeeded =
         effectiveBowlerId
     );
 
+  // Choosing an existing name switches this scorer slot to that player's
+  // existing ID. It does not rename the source player or merge statistics.
+  const handleSelectExistingPlayer = async (targetPlayer, selectedPlayer) => {
+    if (!targetPlayer?.id || !selectedPlayer?.id || !inn?.id) return;
+
+    const targetId = String(targetPlayer.id);
+    const selectedId = String(selectedPlayer.id);
+    if (targetId === selectedId) {
+      setNameEditTarget(null);
+      setNameDraft('');
+      return;
+    }
+
+    setError('');
+    setSavingPlayerName(true);
+
+    try {
+      if (targetId === String(effectiveStrikerId) || targetId === String(effectiveNonStrikerId)) {
+        const isStriker = targetId === String(effectiveStrikerId);
+        const otherBatterId = isStriker ? effectiveNonStrikerId : effectiveStrikerId;
+
+        if (otherBatterId && selectedId === String(otherBatterId)) {
+          throw new Error('That player is already the other batsman. Choose a different player.');
+        }
+
+        const selectedIsOut = safeArray(currentInnings.battingCard).some(card =>
+          String(card.player_id) === selectedId && Boolean(card.is_out)
+        );
+        if (selectedIsOut) {
+          throw new Error('That player is already out in this innings. Choose a different player.');
+        }
+
+        await Innings.setBatsmen(inn.id, {
+          striker_id: isStriker ? selectedPlayer.id : effectiveStrikerId,
+          non_striker_id: isStriker ? effectiveNonStrikerId : selectedPlayer.id
+        });
+      } else if (targetId === String(effectiveBowlerId)) {
+        await Innings.setBowler(inn.id, { bowler_id: selectedPlayer.id });
+      } else {
+        throw new Error('This player is no longer active. Refresh the scorer and try again.');
+      }
+
+      setNameEditTarget(null);
+      setNameDraft('');
+      optimisticRef.current = null;
+      setOptimistic(null);
+      await loadFull();
+    } catch (err) {
+      setError(err?.response?.data?.error || err?.message || 'Unable to select existing player.');
+    } finally {
+      setSavingPlayerName(false);
+    }
+  };
+
   /*
    * ---------------------------------------------------------
    * NEED BATSMEN
@@ -2287,6 +2356,8 @@ const runsNeeded =
   nameDraft={nameDraft}
   setNameDraft={setNameDraft}
   savingPlayerName={savingPlayerName}
+  players={players}
+  onSelectExisting={handleSelectExistingPlayer}
   onNameClick={openPlayerNameEditor}
   onSaveName={handleSavePlayerName}
   onCancelName={closePlayerNameEditor}
@@ -2300,6 +2371,8 @@ const runsNeeded =
   nameDraft={nameDraft}
   setNameDraft={setNameDraft}
   savingPlayerName={savingPlayerName}
+  players={players}
+  onSelectExisting={handleSelectExistingPlayer}
   onNameClick={openPlayerNameEditor}
   onSaveName={handleSavePlayerName}
   onCancelName={closePlayerNameEditor}
@@ -2337,6 +2410,8 @@ const runsNeeded =
       nameDraft={nameDraft}
       setNameDraft={setNameDraft}
       savingPlayerName={savingPlayerName}
+      players={players}
+      onSelectExisting={handleSelectExistingPlayer}
       onSave={handleSavePlayerName}
       onCancel={closePlayerNameEditor}
     />
@@ -2965,6 +3040,8 @@ function BatsmanCard({
   nameDraft,
   setNameDraft,
   savingPlayerName,
+  players,
+  onSelectExisting,
   onNameClick,
   onSaveName,
   onCancelName
@@ -3003,6 +3080,8 @@ function BatsmanCard({
             nameDraft={nameDraft}
             setNameDraft={setNameDraft}
             savingPlayerName={savingPlayerName}
+            players={players}
+            onSelectExisting={onSelectExisting}
             onSave={onSaveName}
             onCancel={onCancelName}
           />
@@ -3044,6 +3123,8 @@ function PlayerNamePopover({
   nameDraft,
   setNameDraft,
   savingPlayerName,
+  players = [],
+  onSelectExisting,
   onSave,
   onCancel
 }) {
@@ -3055,9 +3136,30 @@ function PlayerNamePopover({
 
   if (!isOpen) return null;
 
+  const query = String(nameDraft || '').trim().toLocaleLowerCase();
+  const suggestions = query
+    ? safeArray(players)
+        .filter(candidate =>
+          String(candidate.id) !== String(player.id) &&
+          String(candidate.team_id) === String(player.team_id) &&
+          String(candidate.name || '').toLocaleLowerCase().includes(query)
+        )
+        .sort((a, b) => {
+          const aExact = String(a.name || '').trim().toLocaleLowerCase() === query;
+          const bExact = String(b.name || '').trim().toLocaleLowerCase() === query;
+          return Number(bExact) - Number(aExact) ||
+            String(a.name || '').localeCompare(String(b.name || ''));
+        })
+        .slice(0, 6)
+    : [];
+
+  const exactMatch = suggestions.find(candidate =>
+    String(candidate.name || '').trim().toLocaleLowerCase() === query
+  );
+
   return (
     <div
-      className="absolute left-0 top-full mt-2 z-[90] w-64 max-w-[85vw] rounded-xl border border-slate-600 bg-slate-950 p-3 shadow-2xl"
+      className="absolute left-0 top-full mt-2 z-[90] w-72 max-w-[85vw] rounded-xl border border-slate-600 bg-slate-950 p-3 shadow-2xl"
       onClick={event => event.stopPropagation()}
     >
       <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">
@@ -3074,17 +3176,44 @@ function PlayerNamePopover({
         onKeyDown={event => {
           if (event.key === 'Enter') {
             event.preventDefault();
-            onSave();
+            if (!exactMatch) onSave();
           }
-
           if (event.key === 'Escape') {
             event.preventDefault();
             onCancel();
           }
         }}
         className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-emerald-500"
-        placeholder="Enter player name"
+        placeholder="Type a name to rename or find a player"
       />
+
+      {suggestions.length > 0 && (
+        <div className="mt-2 overflow-hidden rounded-lg border border-slate-800">
+          <div className="bg-slate-900 px-2 py-1.5 text-[10px] uppercase tracking-wide text-slate-400">
+            Existing players — select to use their ID and stats
+          </div>
+          <div className="max-h-40 overflow-y-auto">
+            {suggestions.map(candidate => (
+              <button
+                key={candidate.id}
+                type="button"
+                disabled={savingPlayerName}
+                onClick={() => onSelectExisting?.(player, candidate)}
+                className="flex w-full items-center justify-between gap-2 border-t border-slate-800 px-2 py-2 text-left text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+              >
+                <span className="truncate">{candidate.name}</span>
+                <span className="shrink-0 text-[10px] text-emerald-400">Use player</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="mt-2 text-[11px] leading-4 text-slate-500">
+        {exactMatch
+          ? 'This name already exists. Select it above to switch to that player; Save is disabled to avoid duplicates.'
+          : 'If no existing player matches the name, Save renames this player and keeps the same player ID and statistics.'}
+      </p>
 
       <div className="mt-2 flex justify-end gap-2">
         <button
@@ -3099,10 +3228,10 @@ function PlayerNamePopover({
         <button
           type="button"
           className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-          disabled={savingPlayerName || !nameDraft.trim()}
+          disabled={savingPlayerName || !nameDraft.trim() || Boolean(exactMatch)}
           onClick={onSave}
         >
-          {savingPlayerName ? 'Saving…' : 'Save'}
+          {savingPlayerName ? 'Saving…' : 'Save new name'}
         </button>
       </div>
     </div>
