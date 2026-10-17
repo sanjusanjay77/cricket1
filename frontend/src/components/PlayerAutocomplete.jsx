@@ -10,10 +10,58 @@ function normalizeName(name) {
     .toLowerCase();
 }
 
+function cleanName(name) {
+  return String(name ?? '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
 function normalizeId(id) {
   return id === undefined || id === null || id === ''
     ? ''
     : String(id);
+}
+
+function sameName(a, b) {
+  const first = normalizeName(a);
+  return first !== '' && first === normalizeName(b);
+}
+
+function getPlayerList(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.players)) return result.players;
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result?.data?.players)) {
+    return result.data.players;
+  }
+  return [];
+}
+
+function getCreatedPlayer(result) {
+  const candidates = [
+    result?.player,
+    result?.data?.player,
+    result?.data,
+    result,
+  ];
+
+  return candidates.find(
+    (item) =>
+      item &&
+      typeof item === 'object' &&
+      item.id != null &&
+      !Array.isArray(item)
+  ) ?? null;
+}
+
+function getErrorMessage(error) {
+  return (
+    error?.response?.data?.error ||
+    error?.response?.data?.message ||
+    error?.message ||
+    'Failed to add player.'
+  );
 }
 
 export default function PlayerAutocomplete({
@@ -28,10 +76,11 @@ export default function PlayerAutocomplete({
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const boxRef = useRef(null);
+  const createLockRef = useRef(false);
 
-  // Always work with safe arrays.
   const safePlayers = useMemo(
     () => (Array.isArray(players) ? players : []),
     [players]
@@ -42,60 +91,57 @@ export default function PlayerAutocomplete({
     [excludeIds]
   );
 
-  /*
-   * Remove duplicate records.
-   *
-   * First, deduplicate by player ID.
-   * Then, deduplicate by normalized name so the same
-   * name cannot appear multiple times in this picker.
-   */
+  // Remove duplicate IDs, then duplicate names for display.
   const uniquePlayers = useMemo(() => {
     const byId = new Map();
 
     for (const player of safePlayers) {
-      if (!player || player.id == null) continue;
+      if (!player || player.id == null || !cleanName(player.name)) {
+        continue;
+      }
 
       const id = normalizeId(player.id);
-      const existing = byId.get(id);
+      const previous = byId.get(id);
 
-      if (!existing) {
+      if (!previous) {
         byId.set(id, player);
-      } else {
-        // Keep the record containing the most useful information.
-        const existingScore =
-          Number(Boolean(existing.name)) +
-          Number(Boolean(existing.role)) +
-          Number(Boolean(existing.team_id));
+        continue;
+      }
 
-        const playerScore =
-          Number(Boolean(player.name)) +
-          Number(Boolean(player.role)) +
-          Number(Boolean(player.team_id));
+      const score = (item) =>
+        Number(Boolean(item.name)) +
+        Number(Boolean(item.role)) +
+        Number(item.team_id != null);
 
-        if (playerScore > existingScore) {
-          byId.set(id, player);
-        }
+      if (score(player) > score(previous)) {
+        byId.set(id, player);
       }
     }
 
     const byName = new Map();
 
     for (const player of byId.values()) {
-      const nameKey = normalizeName(player.name);
+      const key = normalizeName(player.name);
 
-      // Ignore empty names.
-      if (!nameKey) continue;
+      if (!byName.has(key)) {
+        byName.set(key, player);
+      } else {
+        // Prefer the record belonging to the requested team.
+        const previous = byName.get(key);
 
-      // Preserve the first player for each normalized name.
-      if (!byName.has(nameKey)) {
-        byName.set(nameKey, player);
+        if (
+          teamId != null &&
+          normalizeId(player.team_id) === normalizeId(teamId) &&
+          normalizeId(previous.team_id) !== normalizeId(teamId)
+        ) {
+          byName.set(key, player);
+        }
       }
     }
 
-    return Array.from(byName.values());
-  }, [safePlayers]);
+    return [...byName.values()];
+  }, [safePlayers, teamId]);
 
-  // Find the selected player using the original player ID.
   const selectedPlayer = useMemo(() => {
     const selectedId = normalizeId(value);
 
@@ -106,11 +152,14 @@ export default function PlayerAutocomplete({
         (player) =>
           player &&
           normalizeId(player.id) === selectedId
-      ) || null
+      ) ||
+      uniquePlayers.find(
+        (player) => normalizeId(player.id) === selectedId
+      ) ||
+      null
     );
-  }, [safePlayers, value]);
+  }, [safePlayers, uniquePlayers, value]);
 
-  // Build the dropdown without duplicate names.
   const matches = useMemo(() => {
     const excluded = new Set(
       safeExcludeIds.map(normalizeId)
@@ -122,50 +171,54 @@ export default function PlayerAutocomplete({
 
     const q = normalizeName(query);
 
-    const filtered = q
-      ? pool.filter((player) =>
-          normalizeName(player.name).includes(q)
-        )
-      : pool;
-
-    return filtered.slice(0, 8);
+    return pool
+      .filter((player) =>
+        !q || normalizeName(player.name).includes(q)
+      )
+      .slice(0, 8);
   }, [uniquePlayers, safeExcludeIds, query]);
 
-  // Find an existing player by normalized name.
   const exactMatch = useMemo(() => {
     const q = normalizeName(query);
 
     if (!q) return null;
 
+    // Prefer an exact match from the requested team.
     return (
       uniquePlayers.find(
-        (player) => normalizeName(player.name) === q
-      ) || null
+        (player) =>
+          sameName(player.name, query) &&
+          teamId != null &&
+          normalizeId(player.team_id) === normalizeId(teamId)
+      ) ||
+      uniquePlayers.find(
+        (player) => sameName(player.name, query)
+      ) ||
+      null
     );
-  }, [uniquePlayers, query]);
+  }, [uniquePlayers, query, teamId]);
 
-  // Close the dropdown when clicking outside.
   useEffect(() => {
-    const onClickOutside = (event) => {
+    const handleOutsideClick = (event) => {
       if (
         boxRef.current &&
         !boxRef.current.contains(event.target)
       ) {
         setOpen(false);
+        setCreateError('');
       }
     };
 
-    document.addEventListener('mousedown', onClickOutside);
+    document.addEventListener('mousedown', handleOutsideClick);
 
     return () => {
       document.removeEventListener(
         'mousedown',
-        onClickOutside
+        handleOutsideClick
       );
     };
   }, []);
 
-  // Select an existing player by their existing ID.
   const selectPlayer = (player) => {
     if (!player || player.id == null) return;
 
@@ -174,22 +227,47 @@ export default function PlayerAutocomplete({
     }
 
     setQuery('');
+    setCreateError('');
     setOpen(false);
   };
 
-  // Create a new player only if the name does not already exist.
+  const refreshAndFindExisting = async (name) => {
+    if (teamId == null) return null;
+
+    const result = await Players.list(teamId);
+    const refreshedPlayers = getPlayerList(result);
+
+    return (
+      refreshedPlayers.find(
+        (player) =>
+          player?.id != null &&
+          sameName(player.name, name) &&
+          (
+            player.team_id == null ||
+            normalizeId(player.team_id) === normalizeId(teamId)
+          )
+      ) || null
+    );
+  };
+
   const createPlayer = async () => {
-    const cleanName = String(query ?? '')
-      .normalize('NFKC')
-      .trim()
-      .replace(/\s+/g, ' ');
+    const name = cleanName(query);
 
-    if (!cleanName || creating || !teamId) return;
+    if (!name || teamId == null || createLockRef.current) {
+      return;
+    }
 
-    // Prevent duplicate creation if an existing name matches.
+    setCreateError('');
+
+    // Reuse a player already present in the current list.
     const existing = uniquePlayers.find(
       (player) =>
-        normalizeName(player.name) === normalizeName(cleanName)
+        player.id != null &&
+        sameName(player.name, name) &&
+        (
+          player.team_id == null ||
+          normalizeId(player.team_id) === normalizeId(teamId)
+        )
     );
 
     if (existing) {
@@ -197,84 +275,81 @@ export default function PlayerAutocomplete({
       return;
     }
 
+    createLockRef.current = true;
     setCreating(true);
 
     try {
-      const result = await Players.create({
-        team_id: teamId,
-        name: cleanName,
-      });
+      let created;
 
-      // Support APIs that return either a player or { player }.
-      const player = result?.player ?? result;
+      try {
+        const result = await Players.create({
+          team_id: teamId,
+          name,
+        });
 
-      if (!player || player.id == null) {
+        created = getCreatedPlayer(result);
+      } catch (error) {
+        // A 409 normally means the backend rejected a duplicate.
+        // Refresh and select the existing record if it is found.
+        if (error?.response?.status === 409) {
+          const existingPlayer =
+            await refreshAndFindExisting(name);
+
+          if (existingPlayer) {
+            if (typeof onCreated === 'function') {
+              onCreated(existingPlayer);
+            }
+
+            selectPlayer(existingPlayer);
+            return;
+          }
+
+          throw new Error(
+            'This player name already exists, but the existing player could not be found in the refreshed list. Please check the team and try again.'
+          );
+        }
+
+        throw error;
+      }
+
+      if (!created || created.id == null) {
+        // Avoid blindly repeating the create request. It may have
+        // succeeded on the server even if the response was unusual.
+        const existingPlayer =
+          await refreshAndFindExisting(name);
+
+        if (existingPlayer) {
+          if (typeof onCreated === 'function') {
+            onCreated(existingPlayer);
+          }
+
+          selectPlayer(existingPlayer);
+          return;
+        }
+
         throw new Error(
-          'The server did not return the created player ID.'
+          'The server did not return a valid player ID.'
         );
       }
 
       if (typeof onCreated === 'function') {
-        onCreated(player);
+        onCreated(created);
       }
 
-      if (typeof onChange === 'function') {
-        onChange(player.id);
-      }
-
-      setQuery('');
-      setOpen(false);
+      selectPlayer(created);
     } catch (error) {
-      console.error('Failed to create player:', error);
-
-      // If another request created the player concurrently,
-      // use that existing player instead of creating another.
-      try {
-        const refreshed = await Players.list(teamId);
-        const refreshedPlayers = Array.isArray(refreshed)
-          ? refreshed
-          : Array.isArray(refreshed?.players)
-            ? refreshed.players
-            : [];
-
-        const existing = refreshedPlayers.find(
-          (player) =>
-            normalizeName(player?.name) ===
-            normalizeName(cleanName)
-        );
-
-        if (existing && existing.id != null) {
-          if (typeof onCreated === 'function') {
-            onCreated(existing);
-          }
-
-          if (typeof onChange === 'function') {
-            onChange(existing.id);
-          }
-
-          setQuery('');
-          setOpen(false);
-          return;
-        }
-      } catch (refreshError) {
-        console.error(
-          'Failed to refresh player list:',
-          refreshError
-        );
-      }
-
-      alert(
-        error?.response?.data?.error ||
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to add player'
+      console.error(
+        'Failed to create player:',
+        error?.response?.data || error
       );
+
+      setCreateError(getErrorMessage(error));
     } finally {
+      createLockRef.current = false;
       setCreating(false);
     }
   };
 
-  // Selected player display.
   if (selectedPlayer) {
     return (
       <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-lg px-3 py-2">
@@ -291,6 +366,7 @@ export default function PlayerAutocomplete({
             }
 
             setQuery('');
+            setCreateError('');
             setOpen(false);
           }}
         >
@@ -306,10 +382,31 @@ export default function PlayerAutocomplete({
         className="input"
         placeholder={placeholder}
         value={query}
+        autoComplete="off"
         onFocus={() => setOpen(true)}
         onChange={(event) => {
           setQuery(event.target.value);
+          setCreateError('');
           setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            setOpen(false);
+          }
+
+          if (
+            event.key === 'Enter' &&
+            open &&
+            query.trim()
+          ) {
+            event.preventDefault();
+
+            if (exactMatch) {
+              selectPlayer(exactMatch);
+            } else {
+              createPlayer();
+            }
+          }
         }}
       />
 
@@ -325,7 +422,7 @@ export default function PlayerAutocomplete({
             <button
               type="button"
               key={normalizeId(player.id)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between gap-3"
               onClick={() => selectPlayer(player)}
             >
               <span>{player.name}</span>
@@ -338,7 +435,7 @@ export default function PlayerAutocomplete({
             </button>
           ))}
 
-          {teamId && query.trim() && (
+          {teamId != null && query.trim() && (
             exactMatch ? (
               <button
                 type="button"
@@ -356,9 +453,18 @@ export default function PlayerAutocomplete({
               >
                 {creating
                   ? 'Adding…'
-                  : `+ Add new player "${query.trim()}"`}
+                  : `+ Add new player "${cleanName(query)}"`}
               </button>
             )
+          )}
+
+          {createError && (
+            <div
+              role="alert"
+              className="px-3 py-2 text-sm text-red-300 border-t border-slate-700"
+            >
+              {createError}
+            </div>
           )}
         </div>
       )}
