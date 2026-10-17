@@ -2,23 +2,28 @@
 const { createClient } = require('@tursodatabase/serverless/compat');
 require('dotenv').config();
 
-if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
-  console.warn('TURSO_DATABASE_URL / TURSO_AUTH_TOKEN are not set.');
+/* =========================================================
+   CONFIGURATION
+========================================================= */
+
+const DATABASE_URL = process.env.TURSO_DATABASE_URL;
+const DATABASE_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
+
+if (!DATABASE_URL || !DATABASE_AUTH_TOKEN) {
+  console.error(
+    'Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN.'
+  );
 }
 
 const client = createClient({
-  url: process.env.TURSO_DATABASE_URL,
-  authToken: process.env.TURSO_AUTH_TOKEN,
+  url: DATABASE_URL,
+  authToken: DATABASE_AUTH_TOKEN,
 });
 
-/**
- * Normalize player names consistently.
- *
- * - Unicode normalization
- * - Trim leading/trailing whitespace
- * - Collapse repeated whitespace
- * - Compare without case sensitivity
- */
+/* =========================================================
+   PLAYER NAME NORMALIZATION
+========================================================= */
+
 function normalizePlayerName(name) {
   return String(name ?? '')
     .normalize('NFKC')
@@ -27,10 +32,10 @@ function normalizePlayerName(name) {
     .toLowerCase();
 }
 
-/**
- * Convert better-sqlite3 style arguments
- * into @libsql/client format.
- */
+/* =========================================================
+   QUERY ARGUMENT NORMALIZATION
+========================================================= */
+
 function normalizeQuery(sql, args) {
   if (args.length === 1 && Array.isArray(args[0])) {
     return {
@@ -42,32 +47,35 @@ function normalizeQuery(sql, args) {
   if (
     args.length === 1 &&
     args[0] !== null &&
-    typeof args[0] === 'object' &&
-    !Array.isArray(args[0])
+    typeof args[0] === 'object'
   ) {
     const named = args[0];
-    const names = [];
     const values = [];
 
     const normalizedSql = sql.replace(
       /@([A-Za-z_][A-Za-z0-9_]*)/g,
       (match, name) => {
-        names.push(name);
+        if (!Object.prototype.hasOwnProperty.call(named, name)) {
+          throw new Error(
+            `Missing SQL parameter: @${name}`
+          );
+        }
+
         values.push(named[name]);
         return '?';
       }
     );
 
-    if (names.length > 0) {
-      return {
-        sql: normalizedSql,
-        args: values,
-      };
+    if (values.length === 0) {
+      throw new Error(
+        'Database query received an object but SQL contains no named parameters.'
+      );
     }
 
-    throw new Error(
-      'Database query received an object but SQL contains no named parameters.'
-    );
+    return {
+      sql: normalizedSql,
+      args: values,
+    };
   }
 
   return {
@@ -76,18 +84,17 @@ function normalizeQuery(sql, args) {
   };
 }
 
-/**
- * Convert special libSQL values into normal JS values.
- */
+/* =========================================================
+   RESULT CONVERSION
+========================================================= */
+
 function convertValue(value) {
   if (value === null || value === undefined) {
     return value;
   }
 
-  if (
-    typeof value === 'object' &&
-    typeof value.valueOf === 'function'
-  ) {
+  if (typeof value === 'object' &&
+      typeof value.valueOf === 'function') {
     const converted = value.valueOf();
 
     if (converted !== value) {
@@ -98,9 +105,6 @@ function convertValue(value) {
   return value;
 }
 
-/**
- * Convert a database row into a normal object.
- */
 function convertRow(row, columns = []) {
   if (Array.isArray(row)) {
     return Object.fromEntries(
@@ -119,39 +123,38 @@ function convertRow(row, columns = []) {
   );
 }
 
-/**
- * Remove SQL comments.
- */
+/* =========================================================
+   SQL SCHEMA PARSING
+========================================================= */
+
 function removeSqlComments(sql) {
   return sql
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/--.*$/gm, '');
 }
 
-/**
- * Split a schema into individual SQL statements.
- */
 function splitSqlStatements(schemaSql) {
-  const cleaned = removeSqlComments(schemaSql);
-
-  return cleaned
+  return removeSqlComments(schemaSql)
     .split(';')
     .map((statement) => statement.trim())
     .filter(Boolean);
 }
 
-/**
- * Check whether a column exists in a table.
- */
-async function columnExists(tableName, columnName) {
-  const allowedTables = new Set([
-    'notification_users',
-    'teams',
-    'players',
-  ]);
+/* =========================================================
+   SAFE COLUMN CHECKS
+========================================================= */
 
-  if (!allowedTables.has(tableName)) {
-    throw new Error(`Unsupported table name: ${tableName}`);
+const ALLOWED_TABLES = new Set([
+  'notification_users',
+  'teams',
+  'players',
+]);
+
+async function columnExists(tableName, columnName) {
+  if (!ALLOWED_TABLES.has(tableName)) {
+    throw new Error(
+      `Unsupported table name: ${tableName}`
+    );
   }
 
   const result = await client.execute({
@@ -163,17 +166,14 @@ async function columnExists(tableName, columnName) {
   );
 }
 
-/**
- * Safely prepare the player-name uniqueness migration.
- *
- * This function NEVER merges, deletes, renames, or reassigns
- * player records or historical statistics.
- *
- * If conflicts exist, it reports them and does not create
- * the unique index.
- */
+/* =========================================================
+   PLAYER NAME UNIQUENESS MIGRATION
+========================================================= */
+
 async function ensurePlayerNameUniqueness() {
-  console.log('🔄 Checking player-name uniqueness...');
+  console.log(
+    'Checking player-name uniqueness...'
+  );
 
   const hasNameKey = await columnExists(
     'players',
@@ -181,15 +181,12 @@ async function ensurePlayerNameUniqueness() {
   );
 
   if (!hasNameKey) {
-    console.log('➕ Adding players.name_key...');
-
     await client.execute(`
       ALTER TABLE players
       ADD COLUMN name_key TEXT
     `);
   }
 
-  // Read all players, including inactive historical records.
   const result = await client.execute(`
     SELECT id, team_id, name, name_key, active
     FROM players
@@ -199,21 +196,20 @@ async function ensurePlayerNameUniqueness() {
     convertRow(row, result.columns)
   );
 
-  // Calculate normalized keys for all records.
   const normalizedPlayers = players.map((player) => ({
     ...player,
-    calculatedNameKey: normalizePlayerName(player.name),
+    calculatedNameKey: normalizePlayerName(
+      player.name
+    ),
   }));
 
-  // Empty names need manual attention rather than silently
-  // allowing records without a usable identity key.
   const invalidPlayers = normalizedPlayers.filter(
     (player) => !player.calculatedNameKey
   );
 
   if (invalidPlayers.length > 0) {
     console.error(
-      '⚠️ Players with empty normalized names were found:'
+      'Player-name migration stopped: empty player names found.'
     );
 
     for (const player of invalidPlayers) {
@@ -225,18 +221,12 @@ async function ensurePlayerNameUniqueness() {
       });
     }
 
-    console.error(
-      'Resolve these invalid names before enabling uniqueness.'
-    );
-
     return {
       ready: false,
       reason: 'INVALID_PLAYER_NAMES',
     };
   }
 
-  // Detect duplicates using the calculated key, not the stored
-  // key, so legacy records with missing or stale keys are caught.
   const groups = new Map();
 
   for (const player of normalizedPlayers) {
@@ -258,7 +248,7 @@ async function ensurePlayerNameUniqueness() {
 
   if (duplicates.length > 0) {
     console.error(
-      `⚠️ Found ${duplicates.length} duplicate player-name group(s).`
+      `Player-name migration stopped: ${duplicates.length} duplicate group(s).`
     );
 
     for (const group of duplicates) {
@@ -268,7 +258,6 @@ async function ensurePlayerNameUniqueness() {
             id: player.id,
             team_id: player.team_id,
             name: player.name,
-            name_key: player.calculatedNameKey,
             active: player.active,
           })),
           null,
@@ -277,12 +266,6 @@ async function ensurePlayerNameUniqueness() {
       );
     }
 
-    console.error(
-      'The unique index was NOT created. ' +
-      'Resolve conflicts without merging or deleting historical records, ' +
-      'then restart the backend.'
-    );
-
     return {
       ready: false,
       reason: 'DUPLICATE_PLAYER_NAMES',
@@ -290,10 +273,14 @@ async function ensurePlayerNameUniqueness() {
     };
   }
 
-  // Backfill and repair missing or stale keys only after the
-  // duplicate audit passes. This changes no player IDs or stats.
+  /*
+   * Only repair name_key after checking for conflicts.
+   * Player IDs and historical records are not modified.
+   */
   for (const player of normalizedPlayers) {
-    if (player.name_key !== player.calculatedNameKey) {
+    if (
+      player.name_key !== player.calculatedNameKey
+    ) {
       await client.execute({
         sql: `
           UPDATE players
@@ -308,8 +295,6 @@ async function ensurePlayerNameUniqueness() {
     }
   }
 
-  // This index enforces uniqueness for active and inactive
-  // players. Different teams may use the same player name.
   await client.execute(`
     CREATE UNIQUE INDEX IF NOT EXISTS
     idx_players_team_name_key_unique
@@ -317,7 +302,7 @@ async function ensurePlayerNameUniqueness() {
   `);
 
   console.log(
-    '✅ Unique player-name-per-team index is ready.'
+    'Player-name uniqueness index is ready.'
   );
 
   return {
@@ -325,245 +310,88 @@ async function ensurePlayerNameUniqueness() {
   };
 }
 
-/**
- * Add columns and tables required by newer
- * versions of the application.
- */
-async function ensureDatabaseUpdates() {
-  console.log('🔄 Checking database updates...');
-
-  try {
-    // =====================================================
-    // FCM TOKEN - LEGACY COMPATIBILITY
-    // =====================================================
-
-    const hasFcmToken = await columnExists(
-      'notification_users',
-      'fcm_token'
-    );
-
-    if (!hasFcmToken) {
-      console.log(
-        '➕ Adding fcm_token column to notification_users...'
-      );
-
-      await client.execute(`
-        ALTER TABLE notification_users
-        ADD COLUMN fcm_token TEXT
-      `);
-
-      console.log(
-        '✅ fcm_token column added successfully'
-      );
-    } else {
-      console.log(
-        '✅ fcm_token column already exists'
-      );
-    }
-
-    // =====================================================
-    // TEAM ARCHIVE
-    // =====================================================
-
-    const hasTeamArchived = await columnExists(
-      'teams',
-      'archived'
-    );
-
-    if (!hasTeamArchived) {
-      console.log(
-        '➕ Adding archived column to teams...'
-      );
-
-      await client.execute(`
-        ALTER TABLE teams
-        ADD COLUMN archived INTEGER NOT NULL DEFAULT 0
-      `);
-
-      console.log(
-        '✅ teams.archived column added successfully'
-      );
-    } else {
-      console.log(
-        '✅ teams.archived column already exists'
-      );
-    }
-
-    // =====================================================
-    // PLAYER NAME UNIQUENESS
-    // =====================================================
-
-    const playerNameMigration =
-      await ensurePlayerNameUniqueness();
-
-    if (!playerNameMigration.ready) {
-      console.warn(
-        '⚠️ Player-name uniqueness is NOT enabled yet:',
-        playerNameMigration.reason
-      );
-
-      // Do not throw here. Keep the existing website available
-      // while reporting conflicts for manual resolution.
-    }
-
-    // =====================================================
-    // MULTI-DEVICE NOTIFICATION TABLE
-    // =====================================================
-
-    await client.execute(`
-      CREATE TABLE IF NOT EXISTS notification_devices (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        fcm_token TEXT NOT NULL UNIQUE,
-        device_name TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id)
-          REFERENCES notification_users(id)
-          ON DELETE CASCADE
-      )
-    `);
-
-    // =====================================================
-    // INDEX FOR FAST USER DEVICE LOOKUPS
-    // =====================================================
-
-    await client.execute(`
-      CREATE INDEX IF NOT EXISTS
-      idx_notification_devices_user
-      ON notification_devices(user_id)
-    `);
-
-    // =====================================================
-    // INDEX FOR ACTIVE / ARCHIVED TEAMS
-    // =====================================================
-
-    await client.execute(`
-      CREATE INDEX IF NOT EXISTS
-      idx_teams_archived
-      ON teams(archived)
-    `);
-
-    console.log(
-      '✅ Multi-device notification table ready'
-    );
-
-    console.log(
-      '✅ Team archive system ready'
-    );
-  } catch (error) {
-    console.error('❌ Database update failed:');
-    console.error(error);
-    throw error;
-  }
-
-  console.log('✅ Database updates completed');
-}
-
-const db = {
-  prepare(sql) {
-    return {
-      async get(...args) {
-        const query = normalizeQuery(sql, args);
-
-        const result = await client.execute({
-          sql: query.sql,
-          args: query.args,
-        });
-
-        if (!result.rows || result.rows.length === 0) {
-          return undefined;
-        }
-
-        return convertRow(
-          result.rows[0],
-          result.columns
-        );
-      },
-
-      async all(...args) {
-        const query = normalizeQuery(sql, args);
-
-        const result = await client.execute({
-          sql: query.sql,
-          args: query.args,
-        });
-
-        return (result.rows || []).map((row) =>
-          convertRow(row, result.columns)
-        );
-      },
-
-      async run(...args) {
-        const query = normalizeQuery(sql, args);
-
-        return await client.execute({
-          sql: query.sql,
-          args: query.args,
-        });
-      },
-    };
-  },
-
-  execute(statement) {
-    return client.execute(statement);
-  },
-
-  /**
-   * Initialize the main schema and then apply updates.
-   */
-  async initSchema(schemaSql) {
-    const statements = splitSqlStatements(schemaSql);
-
-    console.log(
-      `📦 Schema contains ${statements.length} SQL statements`
-    );
-
-    for (let i = 0; i < statements.length; i++) {
-      const statement = statements[i];
-
-      try {
-        await client.execute(statement);
-      } catch (error) {
-        console.error(
-          `❌ Schema statement ${i + 1} failed`
-        );
-
-        console.error(statement);
-        throw error;
-      }
-    }
-
-    console.log(
-      '✅ Database schema initialized successfully'
-    );
-
-    await ensureDatabaseUpdates();
-  },
-};
-
-
-
 /* =========================================================
-   DATABASE TRANSACTION SUPPORT
+   DATABASE MIGRATIONS
 ========================================================= */
 
-db.transaction = async function (callback) {
-  if (typeof callback !== 'function') {
-    throw new TypeError(
-      'Transaction callback must be a function'
+async function ensureDatabaseUpdates() {
+  console.log('Checking database updates...');
+
+  const hasFcmToken = await columnExists(
+    'notification_users',
+    'fcm_token'
+  );
+
+  if (!hasFcmToken) {
+    await client.execute(`
+      ALTER TABLE notification_users
+      ADD COLUMN fcm_token TEXT
+    `);
+  }
+
+  const hasTeamArchived = await columnExists(
+    'teams',
+    'archived'
+  );
+
+  if (!hasTeamArchived) {
+    await client.execute(`
+      ALTER TABLE teams
+      ADD COLUMN archived INTEGER NOT NULL DEFAULT 0
+    `);
+  }
+
+  const migration =
+    await ensurePlayerNameUniqueness();
+
+  if (!migration.ready) {
+    console.warn(
+      'Player-name uniqueness is not enabled:',
+      migration.reason
     );
   }
 
-  const tx = await client.transaction('write');
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS notification_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      fcm_token TEXT NOT NULL UNIQUE,
+      device_name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id)
+        REFERENCES notification_users(id)
+        ON DELETE CASCADE
+    )
+  `);
 
-  const transactionDb = {
+  await client.execute(`
+    CREATE INDEX IF NOT EXISTS
+    idx_notification_devices_user
+    ON notification_devices(user_id)
+  `);
+
+  await client.execute(`
+    CREATE INDEX IF NOT EXISTS
+    idx_teams_archived
+    ON teams(archived)
+  `);
+
+  console.log('Database updates completed.');
+}
+
+/* =========================================================
+   DATABASE QUERY HELPERS
+========================================================= */
+
+function createQueryInterface(executor) {
+  return {
     prepare(sql) {
       return {
-        get: async (...args) => {
+        async get(...args) {
           const query = normalizeQuery(sql, args);
 
-          const result = await tx.execute({
+          const result = await executor.execute({
             sql: query.sql,
             args: query.args,
           });
@@ -578,10 +406,10 @@ db.transaction = async function (callback) {
           );
         },
 
-        all: async (...args) => {
+        async all(...args) {
           const query = normalizeQuery(sql, args);
 
-          const result = await tx.execute({
+          const result = await executor.execute({
             sql: query.sql,
             args: query.args,
           });
@@ -591,10 +419,10 @@ db.transaction = async function (callback) {
           );
         },
 
-        run: async (...args) => {
+        async run(...args) {
           const query = normalizeQuery(sql, args);
 
-          return await tx.execute({
+          return executor.execute({
             sql: query.sql,
             args: query.args,
           });
@@ -602,6 +430,78 @@ db.transaction = async function (callback) {
       };
     },
   };
+}
+
+/* =========================================================
+   DATABASE OBJECT
+========================================================= */
+
+const db = {
+  ...createQueryInterface(client),
+
+  execute(statement) {
+    return client.execute(statement);
+  },
+
+  /*
+   * Actual database connectivity test.
+   * This is suitable for a readiness endpoint.
+   */
+  async healthCheck() {
+    const result = await client.execute({
+      sql: 'SELECT 1 AS ok',
+    });
+
+    return Number(result.rows?.[0]?.ok) === 1;
+  },
+
+  /*
+   * Initialize the main schema, then apply migrations.
+   * Call this once during server startup.
+   */
+  async initSchema(schemaSql) {
+    const statements =
+      splitSqlStatements(schemaSql);
+
+    console.log(
+      `Initializing schema: ${statements.length} statements.`
+    );
+
+    for (let i = 0; i < statements.length; i++) {
+      try {
+        await client.execute(statements[i]);
+      } catch (error) {
+        console.error(
+          `Schema statement ${i + 1} failed:`,
+          error.message
+        );
+
+        console.error(statements[i]);
+
+        throw error;
+      }
+    }
+
+    console.log('Main schema initialized.');
+
+    await ensureDatabaseUpdates();
+  },
+};
+
+/* =========================================================
+   TRANSACTION SUPPORT
+========================================================= */
+
+db.transaction = async function (callback) {
+  if (typeof callback !== 'function') {
+    throw new TypeError(
+      'Transaction callback must be a function'
+    );
+  }
+
+  const tx = await client.transaction('write');
+
+  const transactionDb = createQueryInterface(tx);
 
   try {
     const result = await callback(transactionDb);
@@ -614,7 +514,7 @@ db.transaction = async function (callback) {
       await tx.rollback();
     } catch (rollbackError) {
       console.error(
-        'Database transaction rollback failed:',
+        'Transaction rollback failed:',
         rollbackError.message
       );
     }
@@ -622,6 +522,5 @@ db.transaction = async function (callback) {
     throw error;
   }
 };
-
 
 module.exports = db;
