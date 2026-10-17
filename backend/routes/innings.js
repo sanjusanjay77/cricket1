@@ -7,6 +7,7 @@ router.post('/:id/swap-batsmen', c.swapBatsmen);
 router.post('/:id/swap-strike', c.swapStrike);
 router.post('/:id/set-bowler', c.setBowler);
 router.post('/:id/ball', c.recordBall);
+router.put('/:id/correct-batsman-history', c.correctBatsmanHistory);
 router.post('/:id/undo', c.undoLastBall);
 
 module.exports = router;
