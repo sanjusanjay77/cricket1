@@ -1,4 +1,4 @@
-```javascript
+
 import axios from 'axios';
 
 /* =========================================================
@@ -456,4 +456,3 @@ export function getApiErrorMessage(
 ========================================================= */
 
 export default api;
-```
