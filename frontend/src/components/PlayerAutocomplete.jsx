@@ -1,128 +1,299 @@
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Players } from '../api/api.js';
 
-/**
- * Type-to-search player picker.
- *
- * Props:
- * - players: available players
- * - value: selected player ID
- * - onChange: callback receiving the selected ID or null
- * - placeholder: optional input placeholder
- * - excludeIds: player IDs to hide from the results
- */
+function cleanName(name) {
+  return String(name ?? '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeName(name) {
+  return cleanName(name).toLocaleLowerCase();
+}
+
+function normalizeId(id) {
+  if (id === undefined || id === null || id === '') return '';
+  if (typeof id === 'object') return normalizeId(id.id);
+  return String(id);
+}
+
+function sameName(a, b) {
+  return normalizeName(a) === normalizeName(b);
+}
+
+function getPlayerList(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.players)) return result.players;
+  if (Array.isArray(result?.data)) return result.data;
+  if (Array.isArray(result?.data?.players)) return result.data.players;
+  return [];
+}
+
+function getCreatedPlayer(result) {
+  return (
+    result?.player ??
+    result?.data?.player ??
+    result?.data ??
+    result
+  );
+}
+
+function uniquePlayers(players, teamId) {
+  const byId = new Map();
+
+  for (const player of players) {
+    if (!player || player.id == null) continue;
+
+    const id = normalizeId(player.id);
+    if (!id) continue;
+
+    const existing = byId.get(id);
+
+    if (!existing) {
+      byId.set(id, player);
+      continue;
+    }
+
+    const score = item =>
+      Number(Boolean(item.name)) +
+      Number(Boolean(item.role)) +
+      Number(Boolean(item.team_id));
+
+    if (score(player) > score(existing)) {
+      byId.set(id, player);
+    }
+  }
+
+  const byName = new Map();
+
+  for (const player of byId.values()) {
+    const nameKey = normalizeName(player.name);
+    if (!nameKey) continue;
+
+    const existing = byName.get(nameKey);
+
+    if (!existing) {
+      byName.set(nameKey, player);
+      continue;
+    }
+
+    const existingIsTeam =
+      teamId != null &&
+      normalizeId(existing.team_id) === normalizeId(teamId);
+
+    const playerIsTeam =
+      teamId != null &&
+      normalizeId(player.team_id) === normalizeId(teamId);
+
+    if (playerIsTeam && !existingIsTeam) {
+      byName.set(nameKey, player);
+    }
+  }
+
+  return Array.from(byName.values());
+}
 
 export default function PlayerAutocomplete({
-  players = [],
-  value = null,
+  players,
+  value,
   onChange,
+  onCreated,
+  teamId,
   placeholder = 'Type a player name…',
   excludeIds = [],
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+
   const boxRef = useRef(null);
+  const createLockRef = useRef(false);
 
-  const safePlayers = Array.isArray(players)
-    ? players
-    : [];
-
-  const safeExcludeIds = Array.isArray(excludeIds)
-    ? excludeIds
-    : [];
-
-  const selectedPlayer = useMemo(
-    () =>
-      safePlayers.find(
-        player => String(player.id) === String(value)
-      ) || null,
-    [safePlayers, value]
+  const safePlayers = useMemo(
+    () => (Array.isArray(players) ? players : []),
+    [players]
   );
 
+  const safeExcludeIds = useMemo(
+    () => (Array.isArray(excludeIds) ? excludeIds : []),
+    [excludeIds]
+  );
+
+  const uniqueList = useMemo(
+    () => uniquePlayers(safePlayers, teamId),
+    [safePlayers, teamId]
+  );
+
+  const selectedPlayer = useMemo(() => {
+    const selectedId = normalizeId(value);
+    if (!selectedId) return null;
+
+    return (
+      uniqueList.find(
+        player => normalizeId(player.id) === selectedId
+      ) || null
+    );
+  }, [uniqueList, value]);
+
   const matches = useMemo(() => {
-    const search = query.trim().toLowerCase();
+    const excluded = new Set(safeExcludeIds.map(normalizeId));
+    const q = normalizeName(query);
 
-    return safePlayers
-      .filter(player => {
-        if (!player || player.id == null) {
-          return false;
-        }
-
-        const excluded = safeExcludeIds.some(
-          id => String(id) === String(player.id)
-        );
-
-        if (excluded) {
-          return false;
-        }
-
-        const playerName = String(player.name ?? '');
-
-        return (
-          !search ||
-          playerName.toLowerCase().includes(search)
-        );
-      })
+    return uniqueList
+      .filter(player => !excluded.has(normalizeId(player.id)))
+      .filter(player => !q || normalizeName(player.name).includes(q))
       .slice(0, 8);
-  }, [safePlayers, query, safeExcludeIds]);
+  }, [uniqueList, safeExcludeIds, query]);
+
+  const exactMatch = useMemo(() => {
+    const q = normalizeName(query);
+    if (!q) return null;
+
+    return (
+      uniqueList.find(player => sameName(player.name, q)) || null
+    );
+  }, [uniqueList, query]);
 
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (
-        boxRef.current &&
-        !boxRef.current.contains(event.target)
-      ) {
+    const onClickOutside = event => {
+      if (boxRef.current && !boxRef.current.contains(event.target)) {
         setOpen(false);
       }
-    }
+    };
 
-    document.addEventListener(
-      'mousedown',
-      handleClickOutside
-    );
+    document.addEventListener('mousedown', onClickOutside);
 
     return () => {
-      document.removeEventListener(
-        'mousedown',
-        handleClickOutside
-      );
+      document.removeEventListener('mousedown', onClickOutside);
     };
   }, []);
 
-  function selectPlayer(playerId) {
-    if (typeof onChange === 'function') {
-      onChange(playerId);
+  const selectPlayer = player => {
+    if (!player || player.id == null) return;
+
+    onChange?.(player.id);
+    setQuery('');
+    setCreateError('');
+    setOpen(false);
+  };
+
+  const refreshAndFindExisting = async name => {
+    if (!teamId) return null;
+
+    try {
+      const result = await Players.list(teamId);
+      const refreshed = getPlayerList(result);
+
+      const existing = refreshed.find(
+        player =>
+          player?.id != null &&
+          sameName(player.name, name) &&
+          (
+            player.team_id == null ||
+            normalizeId(player.team_id) === normalizeId(teamId)
+          )
+      );
+
+      if (existing) {
+        onCreated?.(existing);
+        return existing;
+      }
+    } catch (error) {
+      console.error('Failed to refresh player list:', error);
     }
 
-    setQuery('');
-    setOpen(false);
-  }
+    return null;
+  };
 
-  function clearSelection() {
-    if (typeof onChange === 'function') {
-      onChange(null);
+  const createPlayer = async () => {
+    const name = cleanName(query);
+
+    if (!name || !teamId || createLockRef.current) return;
+
+    const existing = uniqueList.find(
+      player =>
+        sameName(player.name, name) &&
+        (
+          player.team_id == null ||
+          normalizeId(player.team_id) === normalizeId(teamId)
+        )
+    );
+
+    if (existing) {
+      selectPlayer(existing);
+      return;
     }
 
-    setQuery('');
-    setOpen(false);
-  }
+    createLockRef.current = true;
+    setCreating(true);
+    setCreateError('');
+
+    try {
+      const result = await Players.create({
+        team_id: teamId,
+        name,
+      });
+
+      const player = getCreatedPlayer(result);
+
+      if (!player || player.id == null) {
+        const refreshed = await refreshAndFindExisting(name);
+
+        if (refreshed) {
+          selectPlayer(refreshed);
+          return;
+        }
+
+        throw new Error(
+          'The server did not return a valid player ID.'
+        );
+      }
+
+      onCreated?.(player);
+      onChange?.(player.id);
+      setQuery('');
+      setOpen(false);
+    } catch (error) {
+      console.error('Failed to create player:', error);
+
+      // A 409 can mean another request already created this player.
+      const existing = await refreshAndFindExisting(name);
+
+      if (existing) {
+        onChange?.(existing.id);
+        setQuery('');
+        setOpen(false);
+      } else {
+        setCreateError(
+          error?.response?.data?.error ||
+          error?.response?.data?.message ||
+          error?.message ||
+          'Unable to add player.'
+        );
+      }
+    } finally {
+      createLockRef.current = false;
+      setCreating(false);
+    }
+  };
 
   if (selectedPlayer) {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-600/60 bg-slate-900 px-3 py-2">
-        <span className="min-w-0 truncate font-medium">
-          {selectedPlayer.name}
-        </span>
+      <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-lg px-3 py-2">
+        <span className="font-medium">{selectedPlayer.name}</span>
 
         <button
           type="button"
-          className="shrink-0 text-xs font-semibold text-emerald-400 hover:text-emerald-300"
-          onClick={clearSelection}
+          className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
+          onClick={() => {
+            onChange?.(null);
+            setQuery('');
+            setCreateError('');
+            setOpen(false);
+          }}
         >
           Change
         </button>
@@ -133,43 +304,84 @@ export default function PlayerAutocomplete({
   return (
     <div className="relative" ref={boxRef}>
       <input
-        type="text"
         className="input"
+        autoComplete="off"
+        maxLength={80}
         placeholder={placeholder}
         value={query}
-        autoComplete="off"
         onFocus={() => setOpen(true)}
         onChange={event => {
           setQuery(event.target.value);
+          setCreateError('');
           setOpen(true);
+        }}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            setOpen(false);
+          }
+
+          if (event.key === 'Enter' && open) {
+            event.preventDefault();
+
+            if (exactMatch) {
+              selectPlayer(exactMatch);
+            } else if (query.trim()) {
+              createPlayer();
+            }
+          }
         }}
       />
 
       {open && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-600 bg-slate-800 shadow-xl">
-          {matches.length === 0 ? (
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-slate-800 border border-slate-600 rounded-lg shadow-xl">
+          {matches.length === 0 && !query.trim() && (
             <div className="px-3 py-2 text-sm text-slate-400">
-              No matching players
+              No players yet
             </div>
-          ) : (
-            matches.map(player => (
+          )}
+
+          {matches.map(player => (
+            <button
+              type="button"
+              key={normalizeId(player.id)}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between"
+              onClick={() => selectPlayer(player)}
+            >
+              <span>{player.name}</span>
+
+              {player.role && (
+                <span className="text-slate-500 text-xs">
+                  {player.role}
+                </span>
+              )}
+            </button>
+          ))}
+
+          {teamId && query.trim() && (
+            exactMatch ? (
               <button
                 type="button"
-                key={player.id}
-                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-emerald-600/20"
-                onClick={() => selectPlayer(player.id)}
+                className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium"
+                onClick={() => selectPlayer(exactMatch)}
               >
-                <span className="min-w-0 truncate">
-                  {player.name}
-                </span>
-
-                {player.role && (
-                  <span className="shrink-0 text-xs text-slate-400">
-                    {player.role}
-                  </span>
-                )}
+                Select existing: {exactMatch.name}
               </button>
-            ))
+            ) : (
+              <button
+                type="button"
+                disabled={creating}
+                className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium disabled:opacity-50"
+                onClick={createPlayer}
+              >
+                {creating ? 'Adding…' : `+ Add new player "${cleanName(query)}"`}
+              </button>
+            )
+          )}
+
+          {createError && (
+            <div className="border-t border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-200">
+              {createError}
+            </div>
           )}
         </div>
       )}
