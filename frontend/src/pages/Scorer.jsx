@@ -1769,50 +1769,82 @@ const runsNeeded =
    * If the name belongs to another player on this batting team, ask
    * before reassigning this innings' batting history to that existing ID.
    */
-  const saveBatsmanIdentity = async (playerId, requestedName) => {
-    const cleanName = String(requestedName || '').trim().replace(/\s+/g, ' ');
-    if (!playerId || !cleanName || !inn?.id) return;
+  const saveBatsmanIdentity = async (playerId, targetPlayer) => {
+    if (!playerId || !targetPlayer?.id || !inn?.id) return;
 
     const sourcePlayer = players.find(p => String(p.id) === String(playerId));
     if (!sourcePlayer) {
-      setError('Could not find the selected batsman. Please refresh and try again.');
+      setError('Could not find the current batsman. Please refresh and try again.');
       return;
     }
 
-    const existingTarget = battingTeamPlayers.find(p =>
-      String(p.id) !== String(playerId) &&
-      String(p.name || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase() === cleanName.toLocaleLowerCase()
+    if (String(playerId) === String(targetPlayer.id)) {
+      setEditingBatsman(null);
+      return;
+    }
+
+    const duplicateName = battingTeamPlayers.find(p =>
+      String(p.id) !== String(targetPlayer.id) &&
+      String(p.name || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase() ===
+        String(targetPlayer.name || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
     );
+    if (duplicateName) {
+      setError('A player with that name already exists in this team. Select the existing player instead.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Transfer this innings' batting records from ${sourcePlayer.name} to ${targetPlayer.name}? Runs, balls, boundaries and dismissals stay the same. The target player's other matches are not changed.`
+    );
+    if (!confirmed) return;
 
     setSavingBatsmanIdentity(true);
     setError('');
-
     try {
-      if (existingTarget) {
-        const confirmed = window.confirm(
-          `“${cleanName}” already exists in this team. Transfer this innings' batting records from ${sourcePlayer.name} to ${existingTarget.name}? Runs and deliveries stay the same; the existing player's other matches are not changed.`
-        );
-        if (!confirmed) return;
-
+      try {
         await Innings.correctBatsmanHistory(inn.id, {
           from_player_id: playerId,
-          to_player_id: existingTarget.id
+          to_player_id: targetPlayer.id
         });
-      } else {
-        // Renaming the same ID preserves the player's existing career stats.
-        await Players.update(playerId, { name: cleanName });
-      }
+      } catch (historyError) {
+        // If this player has no batting deliveries yet, there is no score
+        // history to transfer. Just replace their active batting slot.
+        const sourceStats = safeArray(currentInnings.battingCard).find(
+          item => String(item.player_id) === String(playerId)
+        );
+        const hasBattingHistory = !!(
+          sourceStats && (
+            Number(sourceStats.runs || 0) > 0 ||
+            Number(sourceStats.balls || 0) > 0 ||
+            sourceStats.is_out
+          )
+        );
+        if (hasBattingHistory) throw historyError;
 
+        const nextStriker = String(effectiveStrikerId) === String(playerId)
+          ? targetPlayer.id
+          : effectiveStrikerId;
+        const nextNonStriker = String(effectiveNonStrikerId) === String(playerId)
+          ? targetPlayer.id
+          : effectiveNonStrikerId;
+        if (!nextStriker || !nextNonStriker || String(nextStriker) === String(nextNonStriker)) {
+          throw historyError;
+        }
+        await Innings.setBatsmen(inn.id, {
+          striker_id: nextStriker,
+          non_striker_id: nextNonStriker
+        });
+      }
       setEditingBatsman(null);
+      lastActionSnapshotRef.current = null;
       const data = await Matches.get(matchId);
       applyServerData(data);
-      lastActionSnapshotRef.current = null;
     } catch (err) {
       setError(
         err?.response?.data?.error ||
         err?.response?.data?.message ||
         err?.message ||
-        'Unable to update the batsman name'
+        'Unable to transfer the batsman statistics. Check that the history-correction API is enabled.'
       );
     } finally {
       setSavingBatsmanIdentity(false);
@@ -2876,32 +2908,34 @@ const runsNeeded =
                 const previous =
                   optimisticRef.current || {};
 
-                const wasManualChange =
-                  editingBowler;
-
                 /*
-                 * Update the displayed bowler immediately. The API save and
-                 * authoritative refresh happen after the UI has responded.
-                 * Manual changes preserve current over figures; a new over
-                 * starts the selected bowler's figures at 0.0.
+                 * Bowler identity applies to deliveries from this point on.
+                 * Past balls remain credited to the previous bowler. Load the
+                 * selected player's own figures from this innings (if they have
+                 * bowled earlier) instead of carrying the previous bowler's
+                 * optimistic stats across to the new ID.
                  */
+                const selectedBowlerStats =
+                  safeArray(currentInnings.bowlingCard).find(
+                    b => String(b.player_id) === String(bowlerId)
+                  ) || {
+                    player_id: bowlerId,
+                    overs: '0.0',
+                    maidens: 0,
+                    runs: 0,
+                    wickets: 0,
+                    economy: 0
+                  };
+                const selectedOversParts = String(selectedBowlerStats.overs || '0.0').split('.');
+                const selectedBowlerBalls =
+                  (Number(selectedOversParts[0]) || 0) * 6 +
+                  (Number(selectedOversParts[1]) || 0);
                 const nextState = {
                   ...previous,
                   activeBowlerId: bowlerId,
                   needsNextBowler: false,
-                  ...(wasManualChange
-                    ? {}
-                    : {
-                        bowlerBalls: 0,
-                        bowlerStats: {
-                          player_id: bowlerId,
-                          overs: '0.0',
-                          maidens: 0,
-                          runs: 0,
-                          wickets: 0,
-                          economy: 0
-                        }
-                      })
+                  bowlerBalls: selectedBowlerBalls,
+                  bowlerStats: { ...selectedBowlerStats, player_id: bowlerId }
                 };
                 optimisticRef.current = nextState;
                 setOptimistic(nextState);
@@ -2936,11 +2970,13 @@ const runsNeeded =
         <BatsmanIdentityModal
           player={editingBatsman === 'striker' ? striker : nonStriker}
           team={battingTeamPlayers}
+          teamId={inn.batting_team_id}
+          onPlayerCreated={handlePlayerCreated}
           busy={savingBatsmanIdentity}
           onClose={() => setEditingBatsman(null)}
-          onSave={(name) => saveBatsmanIdentity(
+          onSave={(targetPlayer) => saveBatsmanIdentity(
             editingBatsman === 'striker' ? effectiveStrikerId : effectiveNonStrikerId,
-            name
+            targetPlayer
           )}
         />
       )}
@@ -3015,39 +3051,119 @@ const runsNeeded =
  * BATSMAN IDENTITY EDITOR
  * ============================================================
  */
-function BatsmanIdentityModal({ player, busy, onClose, onSave }) {
-  const [name, setName] = useState(player?.name || '');
+function BatsmanIdentityModal({
+  player,
+  team = [],
+  teamId,
+  onPlayerCreated,
+  busy,
+  onClose,
+  onSave
+}) {
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [localError, setLocalError] = useState('');
 
   useEffect(() => {
-    setName(player?.name || '');
-  }, [player?.id, player?.name]);
+    setQuery('');
+    setSelectedId('');
+    setCreating(false);
+    setLocalError('');
+  }, [player?.id]);
 
   if (!player) return null;
+
+  const normalizedQuery = query.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+  const selectedPlayer = team.find(p => String(p.id) === String(selectedId));
+  const matches = normalizedQuery
+    ? team.filter(p => String(p.name || '').toLocaleLowerCase().includes(normalizedQuery)).slice(0, 8)
+    : team.slice(0, 8);
+  const exactMatch = team.find(p =>
+    String(p.name || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase() === normalizedQuery
+  );
+  const canCreate = normalizedQuery.length > 0 && !exactMatch;
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (busy || creating) return;
+    setLocalError('');
+
+    if (selectedPlayer) {
+      onSave(selectedPlayer);
+      return;
+    }
+
+    if (exactMatch) {
+      onSave(exactMatch);
+      return;
+    }
+
+    if (!canCreate || !teamId) {
+      setLocalError('Enter a player name or select an existing player.');
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const created = await Players.create({ team_id: teamId, name: query.trim().replace(/\s+/g, ' ') });
+      const newPlayer = created?.player || created?.data?.player || created?.data || created;
+      if (!newPlayer?.id) throw new Error('Player was created but its ID was not returned. Refresh the player list and try again.');
+      onPlayerCreated?.(newPlayer);
+      await onSave(newPlayer);
+    } catch (err) {
+      setLocalError(
+        err?.response?.data?.error || err?.message || 'Unable to create/select this player.'
+      );
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
       <button type="button" aria-label="Close editor" className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
-      <form
-        className="relative w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl"
-        onSubmit={event => { event.preventDefault(); if (!busy && name.trim()) onSave(name); }}
-      >
-        <div className="text-lg font-bold text-white">Edit batsman identity</div>
+      <form className="relative w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl" onSubmit={submit}>
+        <div className="text-lg font-bold text-white">Change batsman identity</div>
         <p className="mt-1 text-sm text-slate-400">
-          A new name keeps this player's ID and existing statistics. If the name already belongs to another team player, you'll be asked before transferring this innings' batting records.
+          Current player: {player.name || 'Unknown'}. Select an existing team player or type a new name to create one. The current innings' batting history will be assigned to the selected player.
         </p>
-        <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-400">Player name</label>
+
+        <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-400">Search or add player</label>
         <input
           autoFocus
-          value={name}
-          onChange={event => setName(event.target.value)}
+          value={selectedPlayer ? selectedPlayer.name : query}
+          onChange={event => { setSelectedId(''); setQuery(event.target.value); setLocalError(''); }}
+          onFocus={() => { if (selectedPlayer) { setQuery(selectedPlayer.name); setSelectedId(''); } }}
           maxLength={80}
           className="mt-2 w-full rounded-xl border border-slate-600 bg-slate-800 px-3 py-3 text-white outline-none focus:border-emerald-500"
-          placeholder="Enter batsman name"
+          placeholder="Type a player name…"
         />
+
+        {matches.length > 0 && !selectedPlayer && (
+          <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950">
+            {matches.map(item => (
+              <button key={item.id} type="button" className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-slate-800" onClick={() => { setSelectedId(String(item.id)); setQuery(item.name || ''); setLocalError(''); }}>
+                <span>{item.name}</span>{String(item.id) === String(player.id) ? <span className="ml-2 text-xs text-slate-400">(current player)</span> : null}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedPlayer && (
+          <div className="mt-2 rounded-lg border border-emerald-700/60 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-200">
+            Selected: {selectedPlayer.name}
+          </div>
+        )}
+        {!selectedPlayer && canCreate && (
+          <p className="mt-2 text-xs text-slate-400">A new player named “{query.trim()}” will be created for this team.</p>
+        )}
+        {(localError) && <div className="mt-3 rounded-lg border border-red-700 bg-red-950/50 p-3 text-sm text-red-200">{localError}</div>}
+
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
-            {busy ? 'Saving…' : 'Save name'}
+          <button type="button" className="btn btn-secondary" disabled={busy || creating} onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || creating || (!selectedPlayer && !normalizedQuery)}>
+            {busy || creating ? 'Saving…' : selectedPlayer ? 'Use selected player' : exactMatch ? 'Use existing player' : 'Create & transfer stats'}
           </button>
         </div>
       </form>
