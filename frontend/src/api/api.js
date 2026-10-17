@@ -1,3 +1,4 @@
+
 import axios from 'axios';
 
 /* =========================================================
@@ -10,23 +11,15 @@ const API_URL = (
 ).replace(/\/+$/, '');
 
 const REQUEST_TIMEOUT = 30000;
+const READ_TIMEOUT = 60000;
 const HEALTH_TIMEOUT = 10000;
 
 const MAX_RETRIES = 3;
 
-const RETRY_DELAYS = [
-  800,
-  1600,
-  3200,
-];
+const RETRY_DELAYS = [800, 1600, 3200];
 
 const RETRYABLE_STATUSES = new Set([
-  408,
-  429,
-  500,
-  502,
-  503,
-  504,
+  408, 429, 500, 502, 503, 504,
 ]);
 
 /* =========================================================
@@ -38,11 +31,12 @@ const api = axios.create({
   timeout: REQUEST_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache',
   },
 });
 
 /* =========================================================
-   RETRY HELPERS
+   HELPERS
 ========================================================= */
 
 function wait(ms) {
@@ -57,12 +51,26 @@ function isCanceled(error) {
 }
 
 function isSafeMethod(method) {
-  return [
-    'get',
-    'head',
-    'options',
-  ].includes(
+  return ['get', 'head', 'options'].includes(
     String(method || 'get').toLowerCase()
+  );
+}
+
+function isNetworkFailure(error) {
+  if (error?.response) return false;
+
+  const code = error?.code;
+  const message = String(error?.message || '');
+
+  return (
+    [
+      'ERR_NETWORK',
+      'ECONNABORTED',
+      'ETIMEDOUT',
+      'ECONNRESET',
+      'EAI_AGAIN',
+    ].includes(code) ||
+    /network error|failed to fetch|load failed/i.test(message)
   );
 }
 
@@ -71,29 +79,20 @@ function shouldRetry(error) {
     return false;
   }
 
-  const status = error.response?.status;
-
-  // Network errors, connection resets and timeouts.
-  if (!error.response) {
-    return [
-      'ERR_NETWORK',
-      'ECONNABORTED',
-      'ETIMEDOUT',
-    ].includes(error.code);
+  if (isNetworkFailure(error)) {
+    return true;
   }
 
-  return RETRYABLE_STATUSES.has(status);
+  return RETRYABLE_STATUSES.has(error.response?.status);
 }
 
 function getRetryDelay(error, retryIndex) {
-  const retryAfter =
-    error?.response?.headers?.['retry-after'];
+  const retryAfter = error?.response?.headers?.['retry-after'];
 
   if (retryAfter) {
     const seconds = Number(retryAfter);
 
     if (Number.isFinite(seconds) && seconds >= 0) {
-      // Respect Retry-After, with a maximum wait of 30 sec.
       return Math.min(seconds * 1000, 30000);
     }
 
@@ -121,6 +120,15 @@ api.interceptors.request.use(
       config._retryCount = 0;
     }
 
+    // Allow extra time for safe reads during Render cold starts.
+    // Preserve explicit shorter timeouts, such as the health check.
+    if (
+      isSafeMethod(config.method) &&
+      config.timeout === REQUEST_TIMEOUT
+    ) {
+      config.timeout = READ_TIMEOUT;
+    }
+
     return config;
   },
   error => Promise.reject(error)
@@ -144,16 +152,14 @@ api.interceptors.response.use(
       config.method || 'get'
     ).toLowerCase();
 
-    // Never retry writes automatically.
-    // A failed response does not prove the server
-    // failed to complete the operation.
+    // CRITICAL:
+    // Never automatically retry scoring writes.
+    // A timed-out write might already have reached the database.
     if (!isSafeMethod(method)) {
       return Promise.reject(error);
     }
 
-    const retryCount = Number(
-      config._retryCount || 0
-    );
+    const retryCount = Number(config._retryCount || 0);
 
     if (
       retryCount >= MAX_RETRIES ||
@@ -162,33 +168,32 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const delay = getRetryDelay(
-      error,
-      retryCount
-    );
+    if (config.signal?.aborted) {
+      return Promise.reject(
+        new axios.CanceledError('Request canceled')
+      );
+    }
+
+    const delay = getRetryDelay(error, retryCount);
 
     config._retryCount = retryCount + 1;
 
     console.warn(
-      `[API] Retrying request ${config._retryCount}/${MAX_RETRIES}`,
+      `[API] Retry ${config._retryCount}/${MAX_RETRIES}`,
       {
         method: method.toUpperCase(),
         url: config.url,
         status: error.response?.status ?? null,
         code: error.code ?? null,
-        delay,
+        delayMs: delay,
       }
     );
 
     await wait(delay);
 
-    // If the original request was canceled during
-    // the delay, do not start another request.
     if (config.signal?.aborted) {
       return Promise.reject(
-        new axios.CanceledError(
-          'Request canceled'
-        )
+        new axios.CanceledError('Request canceled')
       );
     }
 
@@ -247,25 +252,22 @@ export const Players = {
       .then(r => r.data),
 
   create: data =>
-    api.post('/players', data)
-      .then(r => {
-        invalidatePlayerCache();
-        return r.data;
-      }),
+    api.post('/players', data).then(r => {
+      invalidatePlayerCache();
+      return r.data;
+    }),
 
   update: (id, data) =>
-    api.put(`/players/${id}`, data)
-      .then(r => {
-        invalidatePlayerCache();
-        return r.data;
-      }),
+    api.put(`/players/${id}`, data).then(r => {
+      invalidatePlayerCache();
+      return r.data;
+    }),
 
   remove: id =>
-    api.delete(`/players/${id}`)
-      .then(r => {
-        invalidatePlayerCache();
-        return r.data;
-      }),
+    api.delete(`/players/${id}`).then(r => {
+      invalidatePlayerCache();
+      return r.data;
+    }),
 };
 
 /* =========================================================
@@ -291,8 +293,7 @@ export const Matches = {
       .then(r => r.data),
 
   remove: id =>
-    api.delete(`/matches/${id}`)
-      .then(r => r.data),
+    api.delete(`/matches/${id}`).then(r => r.data),
 };
 
 /* =========================================================
@@ -322,8 +323,7 @@ export const Innings = {
       data
     ).then(r => r.data),
 
-  // Records one ball action.
-  // Do not blindly retry if the response is lost.
+  // Do not automatically retry a scoring write.
   ball: (id, data) =>
     api.post(`/innings/${id}/ball`, data)
       .then(r => r.data),
@@ -498,22 +498,15 @@ export function getApiErrorMessage(
   }
 
   if (status === 408) {
-    return 'The server timed out. Refresh the scoreboard before retrying a scoring action.';
+    return 'The server timed out. Check the latest scoreboard before retrying a scoring action.';
   }
 
   if ([500, 502, 503, 504].includes(status)) {
-    return 'The server is temporarily unavailable. Refresh the scoreboard and try again.';
+    return 'The server is temporarily unavailable. Please try again shortly.';
   }
 
-  if (error?.code === 'ERR_NETWORK') {
-    return 'Cannot reach the server. Check your internet connection or the server status.';
-  }
-
-  if (
-    error?.code === 'ECONNABORTED' ||
-    error?.code === 'ETIMEDOUT'
-  ) {
-    return 'The request timed out. Check the latest scoreboard before retrying.';
+  if (isNetworkFailure(error)) {
+    return 'Cannot reach the server. Check your internet connection or wait for the server to recover.';
   }
 
   if (error?.message) {
