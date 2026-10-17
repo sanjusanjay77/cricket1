@@ -1753,16 +1753,18 @@ const runsNeeded =
   const handleInstantUndo = () => {
     if (!inn?.id || isInningsBreak || pendingCountRef.current > 0) return;
 
-    const snapshot = lastActionSnapshotRef.current;
-
-    // React immediately returns to the state before the last ball.
-    if (snapshot) {
-      const restored = cloneOptimisticState(snapshot);
-      optimisticRef.current = restored;
-      setOptimistic(restored);
-      lastActionSnapshotRef.current = null;
-    }
-
+    /*
+     * Undo only the last persisted delivery.
+     *
+     * Do not restore lastActionSnapshotRef here: that snapshot contains
+     * striker, non-striker, and bowler IDs from before the ball. Restoring
+     * the entire snapshot can visually revert a later independent player
+     * selection or manual strike/bowler change.
+     *
+     * Let the backend undo the last ball, then refresh authoritative match
+     * data. This keeps current player selection independent from ball undo.
+     */
+    lastActionSnapshotRef.current = null;
     setError('');
 
     runFastAction(() =>
