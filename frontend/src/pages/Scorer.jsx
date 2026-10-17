@@ -9,6 +9,28 @@ function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+// Normalize names consistently for selector de-duplication only.
+// This never merges player records or changes their IDs/statistics.
+function normalizePlayerName(name) {
+  return String(name || '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase();
+}
+
+function uniquePlayersByName(value) {
+  const seen = new Set();
+  return safeArray(value).filter(player => {
+    const normalizedName = normalizePlayerName(player?.name);
+    // Keep unnamed records available; only collapse actual matching names.
+    const key = normalizedName || `__unnamed_player_id__:${String(player?.id ?? '')}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function Scorer() {
   const { matchId } = useParams();
   const navigate = useNavigate();
@@ -162,14 +184,15 @@ export default function Scorer() {
     if (!player) return;
 
     setPlayers(prev => {
-      const exists = prev.some(
-        p => p.id === player.id
+      const exists = prev.some(p =>
+        String(p.id) === String(player.id) ||
+        (
+          String(p.team_id) === String(player.team_id) &&
+          normalizePlayerName(p.name) === normalizePlayerName(player.name)
+        )
       );
 
-      if (exists) {
-        return prev;
-      }
-
+      if (exists) return prev;
       return [...prev, player];
     });
   }, []);
@@ -1903,19 +1926,21 @@ const runsNeeded =
     inn.current_bowler_id;
 
   const battingTeamPlayers =
-    players.filter(
-      p =>
-        p.team_id ===
-          inn.batting_team_id &&
-        p.active !== false
+    uniquePlayersByName(
+      players.filter(
+        p =>
+          String(p.team_id) === String(inn.batting_team_id) &&
+          p.active !== false
+      )
     );
 
   const bowlingTeamPlayers =
-    players.filter(
-      p =>
-        p.team_id ===
-          inn.bowling_team_id &&
-        p.active !== false
+    uniquePlayersByName(
+      players.filter(
+        p =>
+          String(p.team_id) === String(inn.bowling_team_id) &&
+          p.active !== false
+      )
     );
 
   const outIds =
@@ -3308,7 +3333,7 @@ function NextBowlerModal({
               </div>
 
               <PlayerAutocomplete
-                players={team}
+                players={uniquePlayersByName(team)}
                 value={bowler}
                 onChange={setBowler}
                 teamId={teamId}
@@ -3681,11 +3706,10 @@ function SelectBatsmen({
   ] = useState(null);
 
   const available =
-    safeArray(team).filter(
+    uniquePlayersByName(team).filter(
       player =>
-        !outIds.has(
-          player.id
-        )
+        !outIds.has(player.id) &&
+        !outIds.has(String(player.id))
     );
 
   const strikerId =
