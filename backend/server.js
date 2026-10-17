@@ -8,1463 +8,393 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 
+/* =========================================================
+   APP CONFIGURATION
+========================================================= */
+
 const app = express();
 const server = http.createServer(app);
 
-/* =========================================================
-   CONFIGURATION
-========================================================= */
+let db = null;
 
-const PORT =
-  process.env.PORT || 4000;
+const PORT = Number(process.env.PORT) || 10000;
 
-const allowedOrigins = [
-  'https://gcc-cricket.netlify.app',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173'
-];
-
-if (
-  process.env.CORS_ORIGIN
-) {
-  allowedOrigins.push(
-    process.env.CORS_ORIGIN
-  );
-}
-
-const uniqueOrigins = [
-  ...new Set(
-    allowedOrigins
-      .map(origin =>
-        String(origin).trim()
-      )
-      .filter(Boolean)
-  )
-];
-
-console.log(
-  '🌐 Allowed CORS origins:',
-  uniqueOrigins
-);
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 /* =========================================================
-   SECURITY CONFIGURATION
+   SECURITY HEADERS
 ========================================================= */
 
-const JSON_LIMIT =
-  '256kb';
-
-const rateLimitStore =
-  new Map();
-
-const RATE_LIMIT_WINDOW =
-  60 * 1000;
-
-const RATE_LIMIT_MAX =
-  120;
-
-function getClientIp(req) {
-
-  const forwarded =
-    req.headers[
-      'x-forwarded-for'
-    ];
-
-  if (forwarded) {
-
-    return String(
-      forwarded
-    )
-      .split(',')[0]
-      .trim();
-  }
-
-  return (
-    req.ip ||
-    req.socket?.remoteAddress ||
-    'unknown'
-  );
-}
-
-function rateLimit(
-  req,
-  res,
-  next
-) {
-
-  try {
-
-    /*
-     * Never rate-limit browser
-     * CORS preflight.
-     */
-    if (
-      req.method ===
-      'OPTIONS'
-    ) {
-      return next();
-    }
-
-    const ip =
-      getClientIp(req);
-
-    const now =
-      Date.now();
-
-    let record =
-      rateLimitStore.get(ip);
-
-    if (
-      !record ||
-      now - record.start >
-        RATE_LIMIT_WINDOW
-    ) {
-
-      record = {
-        start: now,
-        count: 0
-      };
-    }
-
-    record.count += 1;
-
-    rateLimitStore.set(
-      ip,
-      record
-    );
-
-    /*
-     * Prevent unlimited growth
-     * of the in-memory store.
-     */
-    if (
-      rateLimitStore.size >
-      5000
-    ) {
-
-      for (
-        const [key, value]
-        of rateLimitStore.entries()
-      ) {
-
-        if (
-          now - value.start >
-          RATE_LIMIT_WINDOW
-        ) {
-
-          rateLimitStore.delete(
-            key
-          );
-        }
-      }
-    }
-
-    if (
-      record.count >
-      RATE_LIMIT_MAX
-    ) {
-
-      console.warn(
-        `🚨 Rate limit exceeded: ${ip}`
-      );
-
-      return res
-        .status(429)
-        .json({
-          error:
-            'Too many requests. Please try again later.'
-        });
-    }
-
-    return next();
-
-  } catch (err) {
-
-    console.error(
-      '❌ Rate limiter error:',
-      err
-    );
-
-    return next();
-  }
-}
-
-/* =========================================================
-   BASIC SECURITY HEADERS
-========================================================= */
-
-app.disable(
-  'x-powered-by'
-);
-
-app.set(
-  'trust proxy',
-  1
-);
-
-app.use(
-  (req, res, next) => {
-
-    res.setHeader(
-      'X-Content-Type-Options',
-      'nosniff'
-    );
-
-    res.setHeader(
-      'X-Frame-Options',
-      'DENY'
-    );
-
-    res.setHeader(
-      'Referrer-Policy',
-      'strict-origin-when-cross-origin'
-    );
-
-    res.setHeader(
-      'Permissions-Policy',
-      'camera=(), microphone=(), geolocation=()'
-    );
-
-    res.setHeader(
-      'X-XSS-Protection',
-      '0'
-    );
-
-    res.setHeader(
-      'Content-Security-Policy',
-      [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob: https:",
-        "font-src 'self' data: https:",
-        "connect-src 'self' https://gcc-cricket.netlify.app https://cricket1-mvsi.onrender.com wss://cricket1-mvsi.onrender.com",
-        "frame-ancestors 'none'",
-        "base-uri 'self'",
-        "form-action 'self'"
-      ].join('; ')
-    );
-
-    if (
-      process.env.NODE_ENV ===
-      'production'
-    ) {
-
-      res.setHeader(
-        'Strict-Transport-Security',
-        'max-age=31536000; includeSubDomains'
-      );
-    }
-
-    next();
-  }
-);
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 /* =========================================================
    CORS
 ========================================================= */
 
+const allowedOrigins = new Set([
+  'https://gcc-cricket.netlify.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  ...(process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+]);
+
 const corsOptions = {
-
-  origin: function (
-    origin,
-    callback
-  ) {
-
-    /*
-     * Requests without Origin:
-     *
-     * curl
-     * server-to-server
-     * direct browser navigation
-     */
-    if (!origin) {
-
-      return callback(
-        null,
-        true
-      );
+  origin(origin, callback) {
+    // Allow requests without an Origin header, such as server-to-server calls.
+    if (!origin || allowedOrigins.has(origin)) {
+      return callback(null, true);
     }
 
-    if (
-      uniqueOrigins.includes(
-        origin
-      )
-    ) {
-
-      return callback(
-        null,
-        true
-      );
-    }
-
-    console.warn(
-      `🚫 CORS blocked origin: ${origin}`
-    );
-
-    /*
-     * Deny the origin without
-     * throwing an application error.
-     */
-    return callback(
-      null,
-      false
-    );
+    return callback(new Error('Origin not allowed by CORS'));
   },
-
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-
-  methods: [
-    'GET',
-    'POST',
-    'PUT',
-    'PATCH',
-    'DELETE',
-    'OPTIONS'
-  ],
-
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'Accept',
-    'Origin',
-    'X-Requested-With'
-  ],
-
-  optionsSuccessStatus:
-    204
+  maxAge: 86400,
 };
 
-/*
- * Main Express CORS middleware.
- */
-app.use(
-  cors(corsOptions)
-);
+app.use(cors(corsOptions));
 
-/*
- * Explicit OPTIONS handling.
- */
-app.options(
-  '*',
-  cors(corsOptions)
-);
+/* =========================================================
+   RATE LIMITING
+========================================================= */
 
-/*
- * Explicit CORS headers for
- * allowed origins.
- */
-app.use(
-  (req, res, next) => {
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 120;
+const requestCounts = new Map();
 
-    const origin =
-      req.headers.origin;
+app.use((req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  let entry = requestCounts.get(key);
 
-    if (
-      origin &&
-      uniqueOrigins.includes(
-        origin
-      )
-    ) {
-
-      res.setHeader(
-        'Access-Control-Allow-Origin',
-        origin
-      );
-
-      res.setHeader(
-        'Access-Control-Allow-Credentials',
-        'true'
-      );
-
-      res.setHeader(
-        'Access-Control-Allow-Methods',
-        'GET,POST,PUT,PATCH,DELETE,OPTIONS'
-      );
-
-      res.setHeader(
-        'Access-Control-Allow-Headers',
-        'Content-Type, Authorization, Accept, Origin, X-Requested-With'
-      );
-
-      res.setHeader(
-        'Vary',
-        'Origin'
-      );
-    }
-
-    /*
-     * Finish OPTIONS immediately.
-     */
-    if (
-      req.method ===
-      'OPTIONS'
-    ) {
-
-      return res.sendStatus(
-        204
-      );
-    }
-
-    next();
+  if (!entry || now - entry.start >= RATE_LIMIT_WINDOW_MS) {
+    entry = { start: now, count: 0 };
   }
-);
+
+  entry.count += 1;
+  requestCounts.set(key, entry);
+
+  res.setHeader(
+    'X-RateLimit-Limit',
+    String(RATE_LIMIT_MAX_REQUESTS)
+  );
+  res.setHeader(
+    'X-RateLimit-Remaining',
+    String(Math.max(0, RATE_LIMIT_MAX_REQUESTS - entry.count))
+  );
+
+  if (entry.count > RATE_LIMIT_MAX_REQUESTS) {
+    return res.status(429).json({
+      error: 'Too many requests. Please try again shortly.',
+    });
+  }
+
+  next();
+});
+
+// Periodically remove expired rate-limit entries.
+const rateLimitCleanup = setInterval(() => {
+  const now = Date.now();
+
+  for (const [key, entry] of requestCounts.entries()) {
+    if (now - entry.start >= RATE_LIMIT_WINDOW_MS) {
+      requestCounts.delete(key);
+    }
+  }
+}, RATE_LIMIT_WINDOW_MS);
+
+rateLimitCleanup.unref();
 
 /* =========================================================
-   GLOBAL RATE LIMIT
+   BODY PARSING
 ========================================================= */
 
-app.use(
-  rateLimit
-);
+app.use(express.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: true, limit: '256kb' }));
 
 /* =========================================================
-   BODY PARSER
+   REQUEST LOGGING
 ========================================================= */
 
-app.use(
-  express.json({
-    limit:
-      JSON_LIMIT,
-    strict: true
-  })
-);
+app.use((req, res, next) => {
+  const startedAt = Date.now();
 
-app.use(
-  express.urlencoded({
-    extended: false,
-    limit: '64kb'
-  })
-);
-
-/* =========================================================
-   REQUEST LOGGER
-========================================================= */
-
-app.use(
-  (req, res, next) => {
-
-    const started =
-      Date.now();
-
-    const ip =
-      getClientIp(req);
-
-    res.on(
-      'finish',
-      () => {
-
-        const duration =
-          Date.now() -
-          started;
-
-        console.log(
-          `${req.method} ${req.originalUrl} -> ${res.statusCode} (${duration}ms) [${ip}]`
-        );
-      }
+  res.on('finish', () => {
+    console.log(
+      `${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - startedAt}ms`
     );
+  });
 
-    next();
-  }
-);
+  next();
+});
 
 /* =========================================================
-   HEALTH CHECK
+   HEALTH CHECK — SERVER + TURSO
 ========================================================= */
 
-app.get(
-  '/api/health',
-  async (req, res) => {
+app.get('/api/health', async (req, res) => {
+  const startedAt = Date.now();
+  let timeout;
 
-    try {
-
-      return res
-        .status(200)
-        .json({
-          status:
-            'ok',
-
-          time:
-            new Date().toISOString(),
-
-          uptime:
-            Math.round(
-              process.uptime()
-            ),
-
-          server:
-            'running',
-
-          database:
-            'turso'
-        });
-
-    } catch (err) {
-
-      console.error(
-        '❌ Health check error:',
-        err
-      );
-
-      return res
-        .status(503)
-        .json({
-          status:
-            'error',
-
-          server:
-            'unhealthy'
-        });
+  try {
+    if (!db || typeof db.healthCheck !== 'function') {
+      return res.status(503).json({
+        status: 'error',
+        server: 'running',
+        database: 'unavailable',
+        time: new Date().toISOString(),
+      });
     }
+
+    const healthy = await Promise.race([
+      db.healthCheck(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error('Turso health check timed out'));
+        }, 5000);
+      }),
+    ]);
+
+    if (!healthy) {
+      throw new Error('Turso health check failed');
+    }
+
+    return res.status(200).json({
+      status: 'ok',
+      server: 'running',
+      database: 'connected',
+      uptime: Math.floor(process.uptime()),
+      responseTimeMs: Date.now() - startedAt,
+      time: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Health check failed:', error.message);
+
+    return res.status(503).json({
+      status: 'error',
+      server: 'running',
+      database: 'unavailable',
+      time: new Date().toISOString(),
+    });
+  } finally {
+    clearTimeout(timeout);
   }
-);
+});
 
 /* =========================================================
    API ROUTES
 ========================================================= */
 
-app.use(
-  '/api/teams',
-  require('./routes/teams')
-);
-
-app.use(
-  '/api/players',
-  require('./routes/players')
-);
-
-app.use(
-  '/api/matches',
-  require('./routes/matches')
-);
-
-app.use(
-  '/api/innings',
-  require('./routes/innings')
-);
-
-app.use(
-  '/api/records',
-  require('./routes/records')
-);
-
-app.use(
-  '/api/notifications',
-  require('./routes/notifications')
-);
+app.use('/api/teams', require('./routes/teams'));
+app.use('/api/players', require('./routes/players'));
+app.use('/api/matches', require('./routes/matches'));
+app.use('/api/innings', require('./routes/innings'));
+app.use('/api/records', require('./routes/records'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 /* =========================================================
    SOCKET.IO
 ========================================================= */
 
-/*
- * Socket.IO has its own CORS handling.
- *
- * We use the already validated list of origins
- * instead of duplicating the origin callback.
- *
- * This keeps Socket.IO CORS handling simple and
- * predictable.
- */
-const io =
-  new Server(
-    server,
-    {
-      cors: {
+const io = new Server(server, {
+  cors: corsOptions,
+  transports: ['polling', 'websocket'],
+  maxHttpBufferSize: 1e6,
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
+});
 
-        origin:
-          uniqueOrigins,
+app.set('io', io);
 
-        credentials:
-          true,
+io.on('connection', (socket) => {
+  console.log('Socket connected:', socket.id);
 
-        methods: [
-          'GET',
-          'POST'
-        ]
-      },
+  socket.on('register-notification-user', (userId) => {
+    try {
+      if (userId === undefined || userId === null || String(userId).trim() === '') {
+        return;
+      }
 
-      /*
-       * Allow both transports.
-       *
-       * The browser can start with polling and
-       * upgrade to WebSocket.
-       */
-      transports: [
-        'polling',
-        'websocket'
-      ],
-
-      /*
-       * Recover short disconnects where possible.
-       */
-      connectionStateRecovery: {
-
-        maxDisconnectionDuration:
-          2 * 60 * 1000,
-
-        skipMiddlewares:
-          true
-      },
-
-      /*
-       * Scoreboard events are very small.
-       */
-      maxHttpBufferSize:
-        256 * 1024,
-
-      /*
-       * Heartbeat.
-       *
-       * A slightly longer timeout helps prevent
-       * unnecessary disconnects when Render/proxy
-       * connections temporarily slow down.
-       */
-      pingInterval:
-        25000,
-
-      pingTimeout:
-        30000,
-
-      /*
-       * Score updates are tiny, so compression
-       * is unnecessary overhead.
-       */
-      httpCompression:
-        false,
-
-      /*
-       * Socket.IO client files are not needed
-       * because your React frontend has its own
-       * socket.io-client package.
-       */
-      serveClient:
-        false
+      socket.join(`notification-user-${String(userId)}`);
+    } catch (error) {
+      console.error('Notification registration error:', error.message);
     }
-  );
+  });
 
-app.set(
-  'io',
-  io
-);
-
-/* =========================================================
-   SOCKET.IO CONNECTION
-========================================================= */
-
-io.on(
-  'connection',
-  (socket) => {
-
-    console.log(
-      `🔌 Socket connected: ${socket.id}`
-    );
-
-    /* =====================================================
-       REGISTER NOTIFICATION USER
-    ===================================================== */
-
-    socket.on(
-      'register-notification-user',
-      ({ userId } = {}) => {
-
-        try {
-
-          if (
-            userId ===
-              undefined ||
-            userId ===
-              null ||
-            userId === ''
-          ) {
-
-            console.warn(
-              `⚠️ Invalid notification user ID from ${socket.id}`
-            );
-
-            return;
-          }
-
-          const cleanedUserId =
-            String(
-              userId
-            ).trim();
-
-          /*
-           * UUIDs should not be excessively long.
-           */
-          if (
-            !cleanedUserId ||
-            cleanedUserId.length >
-              100
-          ) {
-
-            console.warn(
-              `⚠️ Invalid notification user ID length from ${socket.id}`
-            );
-
-            return;
-          }
-
-          /*
-           * Each registered user gets
-           * a private Socket.IO room.
-           */
-          const room =
-            `notification-user-${cleanedUserId}`;
-
-          socket.join(
-            room
-          );
-
-          console.log(
-            `🔔 ${socket.id} joined notification room ${room}`
-          );
-
-          /*
-           * Optional acknowledgement.
-           */
-          socket.emit(
-            'notification-user-registered',
-            {
-              success:
-                true,
-
-              userId:
-                cleanedUserId
-            }
-          );
-
-        } catch (err) {
-
-          console.error(
-            `❌ register-notification-user error (${socket.id}):`,
-            err
-          );
-        }
+  socket.on('join-match', (matchId) => {
+    try {
+      if (matchId === undefined || matchId === null || String(matchId).trim() === '') {
+        return;
       }
-    );
 
-    /* =====================================================
-       JOIN MATCH
-    ===================================================== */
+      socket.join(`match-${String(matchId)}`);
+    } catch (error) {
+      console.error('Join-match error:', error.message);
+    }
+  });
 
-    socket.on(
-      'join-match',
-      (matchId) => {
-
-        try {
-
-          if (
-            typeof matchId !==
-              'string' &&
-            typeof matchId !==
-              'number'
-          ) {
-
-            console.warn(
-              `⚠️ Invalid matchId from ${socket.id}`
-            );
-
-            return;
-          }
-
-          const cleanedId =
-            String(
-              matchId
-            ).trim();
-
-          if (
-            !cleanedId ||
-            cleanedId.length >
-              100
-          ) {
-
-            console.warn(
-              `⚠️ Invalid matchId length from ${socket.id}`
-            );
-
-            return;
-          }
-
-          const room =
-            `match-${cleanedId}`;
-
-          socket.join(
-            room
-          );
-
-          console.log(
-            `🏏 ${socket.id} joined ${room}`
-          );
-
-        } catch (err) {
-
-          console.error(
-            `❌ join-match error (${socket.id}):`,
-            err
-          );
-        }
+  socket.on('leave-match', (matchId) => {
+    try {
+      if (matchId === undefined || matchId === null || String(matchId).trim() === '') {
+        return;
       }
-    );
 
-    /* =====================================================
-       LEAVE MATCH
-    ===================================================== */
+      socket.leave(`match-${String(matchId)}`);
+    } catch (error) {
+      console.error('Leave-match error:', error.message);
+    }
+  });
 
-    socket.on(
-      'leave-match',
-      (matchId) => {
+  socket.on('error', (error) => {
+    console.error('Socket error:', error.message);
+  });
 
-        try {
-
-          if (
-            typeof matchId !==
-              'string' &&
-            typeof matchId !==
-              'number'
-          ) {
-
-            return;
-          }
-
-          const cleanedId =
-            String(
-              matchId
-            ).trim();
-
-          if (
-            !cleanedId ||
-            cleanedId.length >
-              100
-          ) {
-
-            return;
-          }
-
-          const room =
-            `match-${cleanedId}`;
-
-          socket.leave(
-            room
-          );
-
-          console.log(
-            `🚪 ${socket.id} left ${room}`
-          );
-
-        } catch (err) {
-
-          console.error(
-            `❌ leave-match error (${socket.id}):`,
-            err
-          );
-        }
-      }
-    );
-
-    /* =====================================================
-       DISCONNECT
-    ===================================================== */
-
-    socket.on(
-      'disconnect',
-      (reason) => {
-
-        console.log(
-          `🔌 Socket disconnected: ${socket.id} - ${reason}`
-        );
-      }
-    );
-
-    /* =====================================================
-       SOCKET ERROR
-    ===================================================== */
-
-    socket.on(
-      'error',
-      (err) => {
-
-        console.error(
-          `❌ Socket error ${socket.id}:`,
-          err?.message ||
-          err
-        );
-      }
-    );
-  }
-);
+  socket.on('disconnect', (reason) => {
+    console.log('Socket disconnected:', socket.id, reason);
+  });
+});
 
 /* =========================================================
    FRONTEND STATIC FILES
 ========================================================= */
 
-const frontendDist =
-  path.join(
-    __dirname,
-    '..',
-    'frontend',
-    'dist'
-  );
+const frontendDist = path.resolve(__dirname, '../frontend/dist');
 
-if (
-  fs.existsSync(
-    frontendDist
-  )
-) {
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
 
-  console.log(
-    `📦 Frontend found: ${frontendDist}`
-  );
-
-  app.use(
-    express.static(
-      frontendDist,
-      {
-        maxAge:
-          '1d',
-
-        dotfiles:
-          'deny',
-
-        index:
-          false
-      }
-    )
-  );
-
-  /*
-   * React SPA fallback.
-   */
-  app.get(
-    '*',
-    (req, res) => {
-
-      if (
-        req.path.startsWith(
-          '/api'
-        )
-      ) {
-
-        return res
-          .status(404)
-          .json({
-            error:
-              'API route not found'
-          });
-      }
-
-      return res.sendFile(
-        path.join(
-          frontendDist,
-          'index.html'
-        )
-      );
+  // React single-page application fallback.
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      return next();
     }
-  );
 
-} else {
-
-  console.log(
-    `ℹ️ Frontend dist not found: ${frontendDist}`
-  );
+    return res.sendFile(path.join(frontendDist, 'index.html'));
+  });
 }
 
 /* =========================================================
    404 HANDLER
 ========================================================= */
 
-app.use(
-  (req, res) => {
-
-    if (
-      req.path.startsWith(
-        '/api'
-      )
-    ) {
-
-      return res
-        .status(404)
-        .json({
-          error:
-            'API endpoint not found'
-        });
-    }
-
-    return res
-      .status(404)
-      .json({
-        error:
-          'Not found'
-      });
-  }
-);
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.originalUrl,
+  });
+});
 
 /* =========================================================
-   GLOBAL EXPRESS ERROR HANDLER
+   GLOBAL ERROR HANDLER
 ========================================================= */
 
-app.use(
-  (
-    err,
-    req,
-    res,
-    next
-  ) => {
+app.use((error, req, res, next) => {
+  console.error('Request error:', error.stack || error.message);
 
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    console.error(
-      '❌ EXPRESS ERROR'
-    );
-
-    console.error(
-      'URL:',
-      req.method,
-      req.originalUrl
-    );
-
-    console.error(
-      'Message:',
-      err?.message
-    );
-
-    if (
-      process.env.NODE_ENV !==
-      'production'
-    ) {
-
-      console.error(
-        'Stack:',
-        err?.stack
-      );
-    }
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    if (
-      res.headersSent
-    ) {
-
-      return next(err);
-    }
-
-    if (
-      err?.type ===
-      'entity.parse.failed'
-    ) {
-
-      return res
-        .status(400)
-        .json({
-          error:
-            'Invalid JSON request.'
-        });
-    }
-
-    if (
-      err?.type ===
-      'entity.too.large'
-    ) {
-
-      return res
-        .status(413)
-        .json({
-          error:
-            'Request body is too large.'
-        });
-    }
-
-    if (
-      err?.message ===
-      'Not allowed by CORS'
-    ) {
-
-      return res
-        .status(403)
-        .json({
-          error:
-            'Origin not allowed.'
-        });
-    }
-
-    return res
-      .status(500)
-      .json({
-        error:
-          'Internal server error'
-      });
+  if (res.headersSent) {
+    return next(error);
   }
-);
+
+  if (error.message === 'Origin not allowed by CORS') {
+    return res.status(403).json({
+      error: 'Origin not allowed',
+    });
+  }
+
+  return res.status(500).json({
+    error: 'Internal server error',
+  });
+});
 
 /* =========================================================
-   SERVER SHUTDOWN
+   GRACEFUL SHUTDOWN
 ========================================================= */
 
-let isShuttingDown =
-  false;
+let shuttingDown = false;
 
-async function gracefulShutdown(
-  signal
-) {
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
 
-  if (
-    isShuttingDown
-  ) {
+  console.log(`${signal} received. Shutting down gracefully...`);
 
-    console.log(
-      `⚠️ Shutdown already in progress (${signal})`
-    );
+  clearInterval(rateLimitCleanup);
 
-    return;
-  }
+  const forceExit = setTimeout(() => {
+    console.error('Graceful shutdown timed out.');
+    process.exit(1);
+  }, 10000);
 
-  isShuttingDown =
-    true;
+  forceExit.unref();
 
-  console.log(
-    `🛑 Received ${signal}. Shutting down safely...`
-  );
-
-  server.close(
-    () => {
-
-      console.log(
-        '✅ HTTP server closed.'
-      );
-
+  io.close(() => {
+    server.close(() => {
+      clearTimeout(forceExit);
+      console.log('Server shut down successfully.');
       process.exit(0);
-    }
-  );
-
-  try {
-
-    io.close();
-
-    console.log(
-      '✅ Socket.IO closed.'
-    );
-
-  } catch (err) {
-
-    console.error(
-      '⚠️ Socket.IO shutdown error:',
-      err
-    );
-  }
-
-  setTimeout(
-    () => {
-
-      console.error(
-        '⏰ Graceful shutdown timed out.'
-      );
-
-      process.exit(1);
-
-    },
-    10000
-  ).unref();
+    });
+  });
 }
 
-process.on(
-  'SIGTERM',
-  () =>
-    gracefulShutdown(
-      'SIGTERM'
-    )
-);
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
-process.on(
-  'SIGINT',
-  () =>
-    gracefulShutdown(
-      'SIGINT'
-    )
-);
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+  shutdown('uncaughtException');
+});
 
 /* =========================================================
-   UNHANDLED PROMISE REJECTION
+   START SERVER + INITIALIZE TURSO
 ========================================================= */
-
-process.on(
-  'unhandledRejection',
-  (reason) => {
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    console.error(
-      '❌ UNHANDLED PROMISE REJECTION'
-    );
-
-    console.error(
-      reason
-    );
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    setTimeout(
-      () => {
-
-        process.exit(1);
-
-      },
-      100
-    ).unref();
-  }
-);
-
-/* =========================================================
-   UNCAUGHT EXCEPTION
-========================================================= */
-
-process.on(
-  'uncaughtException',
-  (err) => {
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    console.error(
-      '❌ UNCAUGHT EXCEPTION'
-    );
-
-    console.error(
-      'Message:',
-      err?.message
-    );
-
-    console.error(
-      'Stack:',
-      err?.stack
-    );
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    setTimeout(
-      () => {
-
-        process.exit(1);
-
-      },
-      100
-    ).unref();
-  }
-);
-
-/* =========================================================
-   START SERVER
-========================================================= */
-
-const schemaPath =
-  path.join(
-    __dirname,
-    'db',
-    'schema.sql'
-  );
 
 async function startServer() {
-
   try {
-
-    console.log(
-      '🔄 Initializing Turso database...'
-    );
-
-    /* -----------------------------------------------------
-       CHECK TURSO ENVIRONMENT
-    ----------------------------------------------------- */
-
-    if (
-      !process.env.TURSO_DATABASE_URL
-    ) {
-
+    if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
       throw new Error(
-        'TURSO_DATABASE_URL is missing.'
+        'Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN environment variables.'
       );
     }
 
-    if (
-      !process.env.TURSO_AUTH_TOKEN
-    ) {
+    db = require('./db/database');
 
-      throw new Error(
-        'TURSO_AUTH_TOKEN is missing.'
-      );
+    const schemaPath = path.join(__dirname, 'db', 'schema.sql');
+
+    if (!fs.existsSync(schemaPath)) {
+      throw new Error(`Database schema file not found: ${schemaPath}`);
     }
 
-    const db =
-      require(
-        './db/database'
-      );
+    const schema = fs.readFileSync(schemaPath, 'utf8');
 
-    /* -----------------------------------------------------
-       CHECK SCHEMA
-    ----------------------------------------------------- */
+    console.log('Initializing Turso database schema...');
+    await db.initSchema(schema);
+    console.log('Turso database schema initialized.');
 
-    if (
-      !fs.existsSync(
-        schemaPath
-      )
-    ) {
-
-      throw new Error(
-        `Schema file not found: ${schemaPath}`
-      );
-    }
-
-    /* -----------------------------------------------------
-       LOAD SCHEMA
-    ----------------------------------------------------- */
-
-    const schema =
-      fs.readFileSync(
-        schemaPath,
-        'utf8'
-      ).replace(
-        /^\s*PRAGMA foreign_keys = ON;\s*/i,
-        ''
-      );
-
-    /* -----------------------------------------------------
-       INITIALIZE TURSO
-    ----------------------------------------------------- */
-
-    await db.initSchema(
-      schema
-    );
-
-    console.log(
-      '✅ Turso database initialized'
-    );
-
-    /* -----------------------------------------------------
-       START HTTP SERVER
-    ----------------------------------------------------- */
-
-    server.listen(
-      PORT,
-      () => {
-
-        console.log(
-          '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-        );
-
-        console.log(
-          `🏏 Cricket Scoreboard API running on port ${PORT}`
-        );
-
-        console.log(
-          `🌐 Environment: ${
-            process.env.NODE_ENV ||
-            'production'
-          }`
-        );
-
-        console.log(
-          '🔗 Health: /api/health'
-        );
-
-        console.log(
-          '🔌 Socket.IO: enabled'
-        );
-
-        console.log(
-          '🔔 User notifications: enabled'
-        );
-
-        console.log(
-          '💾 Database: Turso'
-        );
-
-        console.log(
-          '🛡️ Security middleware: enabled'
-        );
-
-        console.log(
-          `🚦 Rate limit: ${RATE_LIMIT_MAX} requests/min/IP`
-        );
-
-        console.log(
-          `📦 JSON limit: ${JSON_LIMIT}`
-        );
-
-        console.log(
-          '🌐 CORS preflight: enabled'
-        );
-
-        console.log(
-          '🔄 Socket transports: polling + websocket'
-        );
-
-        console.log(
-          '❤️ Socket heartbeat: 25s / 30s'
-        );
-
-        console.log(
-          '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-        );
-      }
-    );
-
-    /*
-     * HTTP server-level errors.
-     */
-    server.on(
-      'error',
-      (err) => {
-
-        console.error(
-          '❌ HTTP server error:',
-          err
-        );
-
-        process.exit(1);
-      }
-    );
-
-  } catch (err) {
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
-    console.error(
-      '❌ FAILED TO START SERVER'
-    );
-
-    console.error(
-      'Message:',
-      err?.message
-    );
-
-    console.error(
-      'Stack:',
-      err?.stack
-    );
-
-    console.error(
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    );
-
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server listening on port ${PORT}`);
+      console.log('Turso database initialization completed.');
+    });
+  } catch (error) {
+    console.error('Server startup failed:', error.stack || error.message);
     process.exit(1);
   }
 }
 
-/* =========================================================
-   START APPLICATION
-========================================================= */
-
 startServer();
-
