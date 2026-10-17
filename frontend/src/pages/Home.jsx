@@ -1028,6 +1028,9 @@ export default function Home() {
                     ? 'Start your first match'
                     : `${totalMatches} match${totalMatches === 1 ? '' : 'es'} • Scores & records`}
                 </p>
+                <p className="mt-1 text-[9px] font-medium text-slate-700">
+  Founded by Sanjay
+</p>
               </div>
             </div>
           </div>
