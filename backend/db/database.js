@@ -542,4 +542,78 @@ const db = {
   },
 };
 
+
+/* =========================================================
+   DATABASE TRANSACTION SUPPORT
+========================================================= */
+
+db.transaction = async function (callback) {
+  if (typeof callback !== 'function') {
+    throw new TypeError('Transaction callback must be a function');
+  }
+
+  const tx = await client.transaction('write');
+
+  const transactionDb = {
+    prepare(sql) {
+      return {
+        get: async (...args) => {
+          const result = await tx.execute({
+            sql,
+            args: args.map((value) =>
+              value === undefined ? null : value
+            ),
+          });
+
+          return result.rows[0] ?? null;
+        },
+
+        all: async (...args) => {
+          const result = await tx.execute({
+            sql,
+            args: args.map((value) =>
+              value === undefined ? null : value
+            ),
+          });
+
+          return result.rows;
+        },
+
+        run: async (...args) => {
+          const result = await tx.execute({
+            sql,
+            args: args.map((value) =>
+              value === undefined ? null : value
+            ),
+          });
+
+          return {
+            changes: result.rowsAffected,
+            lastInsertRowid: result.lastInsertRowid,
+          };
+        },
+      };
+    },
+  };
+
+  try {
+    const result = await callback(transactionDb);
+
+    await tx.commit();
+
+    return result;
+  } catch (error) {
+    try {
+      await tx.rollback();
+    } catch (rollbackError) {
+      console.error(
+        'Transaction rollback failed:',
+        rollbackError.message
+      );
+    }
+
+    throw error;
+  }
+};
+
 module.exports = db;
