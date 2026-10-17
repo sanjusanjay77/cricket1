@@ -1,16 +1,15 @@
+```javascript
 import axios from 'axios';
-
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  'https://cricket1-mvsi.onrender.com/api';
-
 
 /* =========================================================
    API CONFIGURATION
 ========================================================= */
 
-const REQUEST_TIMEOUT = 30000;
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  'https://cricket1-mvsi.onrender.com/api';
 
+const REQUEST_TIMEOUT = 30000;
 const MAX_RETRIES = 3;
 
 const RETRY_DELAYS = [
@@ -19,987 +18,394 @@ const RETRY_DELAYS = [
   3200,
 ];
 
-
 /* =========================================================
-   AXIOS
+   AXIOS INSTANCE
 ========================================================= */
 
 const api = axios.create({
   baseURL: API_URL,
-
-  timeout:
-    REQUEST_TIMEOUT,
-
+  timeout: REQUEST_TIMEOUT,
   headers: {
-    'Content-Type':
-      'application/json',
+    'Content-Type': 'application/json',
   },
 });
-
 
 /* =========================================================
    RETRY HELPERS
 ========================================================= */
 
-/*
- * Wait before retrying.
- */
-
 function wait(ms) {
-
-  return new Promise(
-    resolve =>
-      setTimeout(
-        resolve,
-        ms
-      )
-  );
-
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-
-/*
- * Determine whether a request
- * is safe/useful to retry.
- *
- * We retry:
- *
- * - Network errors
- * - Timeout
- * - 408
- * - 429
- * - 500
- * - 502
- * - 503
- * - 504
- *
- * We do NOT retry normal 400-level
- * validation/authentication errors.
- */
-
-function shouldRetry(
-  error
-) {
-
-  const status =
-    error?.response?.status;
-
-  /*
-   * No response normally means:
-   *
-   * - network failure
-   * - Render waking up
-   * - connection timeout
-   * - browser connection problem
-   */
+function shouldRetry(error) {
+  const status = error?.response?.status;
 
   if (!error?.response) {
-
     return true;
-
   }
 
-
-  /*
-   * Temporary server errors.
-   */
-
-  if (
-    status === 408 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  ) {
-
-    return true;
-
-  }
-
-
-  return false;
-
+  return [
+    408,
+    429,
+    500,
+    502,
+    503,
+    504,
+  ].includes(status);
 }
 
-
-/*
- * Prevent dangerous automatic retries
- * for operations where repeating the request
- * could create duplicate database records.
- *
- * GET requests are always safe to retry.
- *
- * POST requests are retried only when there
- * was no server response.
- *
- * This is especially important for:
- *
- * /innings/:id/ball
- *
- * because we don't want to accidentally
- * record the same cricket ball twice.
- */
-
-function isSafeToRetry(
-  error,
-  method
-) {
-
+function isSafeToRetry(error, method) {
   const normalizedMethod =
-    String(
-      method || 'get'
-    ).toLowerCase();
+    String(method || 'get').toLowerCase();
 
-
-  /*
-   * GET is safe.
-   */
-
+  // Read-only requests are safe to retry.
   if (
-    normalizedMethod ===
-    'get'
+    normalizedMethod === 'get' ||
+    normalizedMethod === 'head' ||
+    normalizedMethod === 'options'
   ) {
-
     return true;
-
   }
 
-
   /*
-   * HEAD/OPTIONS are safe.
-   */
-
-  if (
-    normalizedMethod ===
-      'head' ||
-    normalizedMethod ===
-      'options'
-  ) {
-
-    return true;
-
-  }
-
-
-  /*
-   * For POST/PUT/PATCH/DELETE:
+   * Do not automatically retry a write request.
    *
-   * only retry when the browser did not
-   * receive a server response.
+   * The server may have completed the operation even
+   * when the browser did not receive the response.
    *
-   * This avoids duplicate writes when the
-   * server already processed the request
-   * but the response was lost.
+   * This prevents accidental duplicate scoring actions.
    */
-
-  if (
-    !error?.response
-  ) {
-
-    return true;
-
-  }
-
-
   return false;
-
 }
-
 
 /* =========================================================
    REQUEST INTERCEPTOR
 ========================================================= */
 
-/*
- * Add a retry counter to every request.
- */
-
 api.interceptors.request.use(
   config => {
-
-    if (
-      typeof config._retryCount !==
-      'number'
-    ) {
-
+    if (typeof config._retryCount !== 'number') {
       config._retryCount = 0;
-
     }
 
     return config;
-
   },
-
-  error =>
-    Promise.reject(error)
+  error => Promise.reject(error)
 );
-
 
 /* =========================================================
    RESPONSE INTERCEPTOR
 ========================================================= */
 
 api.interceptors.response.use(
-
-  /*
-   * Successful request.
-   */
-
-  response =>
-    response,
-
-  /*
-   * Failed request.
-   */
+  response => response,
 
   async error => {
-
-    const config =
-      error?.config;
-
-
-    /*
-     * If Axios does not have request
-     * configuration, return the error.
-     */
+    const config = error?.config;
 
     if (!config) {
-
-      return Promise.reject(
-        error
-      );
-
+      return Promise.reject(error);
     }
-
-
-    /*
-     * Current retry count.
-     */
 
     const retryCount =
-      Number(
-        config._retryCount || 0
-      );
-
-
-    /*
-     * HTTP method.
-     */
+      Number(config._retryCount || 0);
 
     const method =
-      String(
-        config.method || 'get'
-      ).toLowerCase();
-
-
-    /*
-     * Check retry conditions.
-     */
-
-    const retryAllowed =
-      shouldRetry(
-        error
-      );
-
-    const methodSafe =
-      isSafeToRetry(
-        error,
-        method
-      );
-
-
-    /*
-     * Stop after maximum retries.
-     */
+      String(config.method || 'get').toLowerCase();
 
     if (
-      retryCount >=
-        MAX_RETRIES ||
-      !retryAllowed ||
-      !methodSafe
+      retryCount >= MAX_RETRIES ||
+      !shouldRetry(error) ||
+      !isSafeToRetry(error, method)
     ) {
-
-      return Promise.reject(
-        error
-      );
-
+      return Promise.reject(error);
     }
 
-
-    /*
-     * Increase retry counter.
-     */
-
-    config._retryCount =
-      retryCount + 1;
-
-
-    /*
-     * Progressive delay.
-     */
+    config._retryCount = retryCount + 1;
 
     const delay =
-      RETRY_DELAYS[
-        retryCount
-      ] ||
-      RETRY_DELAYS[
-        RETRY_DELAYS.length - 1
-      ];
-
+      RETRY_DELAYS[retryCount] ??
+      RETRY_DELAYS[RETRY_DELAYS.length - 1];
 
     console.warn(
-      `⚠️ API request failed. Retrying ${config._retryCount}/${MAX_RETRIES} in ${delay}ms...`,
+      `API retry ${config._retryCount}/${MAX_RETRIES}`,
       {
-        method:
-          method.toUpperCase(),
-
-        url:
-          config.url,
-
-        status:
-          error?.response?.status,
-
-        message:
-          error?.message,
+        method: method.toUpperCase(),
+        url: config.url,
+        status: error?.response?.status,
+        delay,
       }
     );
 
+    await wait(delay);
 
-    await wait(
-      delay
-    );
-
-
-    /*
-     * Try the exact same request again.
-     */
-
-    return api(
-      config
-    );
-
+    return api(config);
   }
-
 );
-
 
 /* =========================================================
    TEAMS
 ========================================================= */
 
 export const Teams = {
-
-  /* -------------------------------------------------------
-     GET ALL TEAMS
-  ------------------------------------------------------- */
-
   list: () =>
-    api
-      .get('/teams')
-      .then(r => r.data),
+    api.get('/teams').then(r => r.data),
 
+  get: id =>
+    api.get(`/teams/${id}`).then(r => r.data),
 
-  /* -------------------------------------------------------
-     GET SINGLE TEAM
-  ------------------------------------------------------- */
-
-  get: (id) =>
-    api
-      .get(`/teams/${id}`)
-      .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     CREATE TEAM
-  ------------------------------------------------------- */
-
-  create: (data) =>
-    api
-      .post(
-        '/teams',
-        data
-      )
-      .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     UPDATE TEAM
-  ------------------------------------------------------- */
+  create: data =>
+    api.post('/teams', data).then(r => r.data),
 
   update: (id, data) =>
-    api
-      .put(
-        `/teams/${id}`,
-        data
-      )
-      .then(r => r.data),
+    api.put(`/teams/${id}`, data).then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     DELETE TEAM
-  ------------------------------------------------------- */
-
-  remove: (id) =>
-    api
-      .delete(
-        `/teams/${id}`
-      )
-      .then(r => r.data),
-
+  remove: id =>
+    api.delete(`/teams/${id}`).then(r => r.data),
 };
-
 
 /* =========================================================
    PLAYERS
 ========================================================= */
 
 export const Players = {
-
-  /* -------------------------------------------------------
-     GET PLAYERS BY TEAM
-  ------------------------------------------------------- */
-
-  list: (team_id) =>
-    api
-      .get(
-        '/players',
-        {
-          params: {
-            team_id,
-          },
-        }
-      )
-      .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     GET ALL PLAYERS WITH TEAMS
-  ------------------------------------------------------- */
+  list: team_id =>
+    api.get('/players', {
+      params: { team_id },
+    }).then(r => r.data),
 
   listAll: () =>
-    api
-      .get(
-        '/players/all/with-teams'
-      )
+    api.get('/players/all/with-teams')
       .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     GET ALL CAREER STATS
-  ------------------------------------------------------- */
 
   allCareerStats: () =>
-    api
-      .get(
-        '/players/all/career-stats'
-      )
+    api.get('/players/all/career-stats')
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     GET PLAYER STATS
-  ------------------------------------------------------- */
-
-  stats: (id) =>
-    api
-      .get(
-        `/players/${id}/stats`
-      )
+  stats: id =>
+    api.get(`/players/${id}/stats`)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     CREATE PLAYER
-  ------------------------------------------------------- */
-
-  create: (data) =>
-    api
-      .post(
-        '/players',
-        data
-      )
+  create: data =>
+    api.post('/players', data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     UPDATE PLAYER
-  ------------------------------------------------------- */
-
+  /*
+   * Rename an existing player.
+   *
+   * The backend must update the existing player record
+   * using the same ID. It must not delete and recreate
+   * the player or reset historical statistics.
+   */
   update: (id, data) =>
-    api
-      .put(
-        `/players/${id}`,
-        data
-      )
+    api.put(`/players/${id}`, data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     DELETE PLAYER
-  ------------------------------------------------------- */
-
-  remove: (id) =>
-    api
-      .delete(
-        `/players/${id}`
-      )
+  remove: id =>
+    api.delete(`/players/${id}`)
       .then(r => r.data),
-
 };
-
 
 /* =========================================================
    MATCHES
 ========================================================= */
 
 export const Matches = {
-
-  /* -------------------------------------------------------
-     GET ALL MATCHES
-  ------------------------------------------------------- */
-
   list: () =>
-    api
-      .get('/matches')
-      .then(r => r.data),
+    api.get('/matches').then(r => r.data),
 
+  get: id =>
+    api.get(`/matches/${id}`).then(r => r.data),
 
-  /* -------------------------------------------------------
-     GET SINGLE MATCH
-  ------------------------------------------------------- */
-
-  get: (id) =>
-    api
-      .get(
-        `/matches/${id}`
-      )
-      .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     CREATE MATCH
-  ------------------------------------------------------- */
-
-  create: (data) =>
-    api
-      .post(
-        '/matches',
-        data
-      )
-      .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     SET TOSS
-  ------------------------------------------------------- */
+  create: data =>
+    api.post('/matches', data).then(r => r.data),
 
   setToss: (id, data) =>
-    api
-      .post(
-        `/matches/${id}/toss`,
-        data
-      )
+    api.post(`/matches/${id}/toss`, data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     START SECOND INNINGS
-  ------------------------------------------------------- */
-
-  startSecondInnings: (id) =>
-    api
-      .post(
-        `/matches/${id}/second-innings`
-      )
+  startSecondInnings: id =>
+    api.post(`/matches/${id}/second-innings`)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     DELETE MATCH
-  ------------------------------------------------------- */
-
-  remove: (id) =>
-    api
-      .delete(
-        `/matches/${id}`
-      )
-      .then(r => r.data),
-
+  remove: id =>
+    api.delete(`/matches/${id}`).then(r => r.data),
 };
-
 
 /* =========================================================
    INNINGS
 ========================================================= */
 
 export const Innings = {
-
-  /* -------------------------------------------------------
-     GET SCOREBOARD
-  ------------------------------------------------------- */
-
-  scoreboard: (id) =>
-    api
-      .get(
-        `/innings/${id}/scoreboard`
-      )
+  scoreboard: id =>
+    api.get(`/innings/${id}/scoreboard`)
       .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     SET BATSMEN
-  ------------------------------------------------------- */
 
   setBatsmen: (id, data) =>
-    api
-      .post(
-        `/innings/${id}/set-batsmen`,
-        data
-      )
+    api.post(`/innings/${id}/set-batsmen`, data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     SWAP STRIKE
-  ------------------------------------------------------- */
-
-  swapStrike: (id) =>
-    api
-      .post(
-        `/innings/${id}/swap-batsmen`
-      )
+  swapStrike: id =>
+    api.post(`/innings/${id}/swap-batsmen`)
       .then(r => r.data),
-
-
-  /* -------------------------------------------------------
-     SET BOWLER
-  ------------------------------------------------------- */
 
   setBowler: (id, data) =>
-    api
-      .post(
-        `/innings/${id}/set-bowler`,
-        data
-      )
+    api.post(`/innings/${id}/set-bowler`, data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     RECORD BALL
-  ------------------------------------------------------- */
-
+  /*
+   * Record exactly one ball action.
+   * Do not automatically repeat failed scoring writes.
+   */
   ball: (id, data) =>
-    api
-      .post(
-        `/innings/${id}/ball`,
-        data
-      )
+    api.post(`/innings/${id}/ball`, data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     UNDO LAST BALL
-  ------------------------------------------------------- */
-
-  undo: (id) =>
-    api
-      .post(
-        `/innings/${id}/undo`
-      )
+  /*
+   * Undo the most recent recorded ball action.
+   * The backend must reverse only that action and
+   * restore its previous player and innings state.
+   */
+  undo: id =>
+    api.post(`/innings/${id}/undo`)
       .then(r => r.data),
-
 };
-
 
 /* =========================================================
    RECORDS CACHE
 ========================================================= */
 
-let recordsMemoryCache =
-  null;
-
-let playersMemoryCache =
-  null;
-
-
-/*
- * Prevent duplicate requests.
- */
-
-let recordsRequestPromise =
-  null;
-
-let playersRequestPromise =
-  null;
-
-
-/* =========================================================
-   RECORDS
-========================================================= */
+let recordsMemoryCache = null;
+let recordsRequestPromise = null;
 
 export const Records = {
-
-  /* -------------------------------------------------------
-     GET RECORDS
-  ------------------------------------------------------- */
-
   get: () => {
-
-    /*
-     * Reuse an existing request.
-     */
-
-    if (
-      recordsRequestPromise
-    ) {
-
+    if (recordsRequestPromise) {
       return recordsRequestPromise;
-
     }
 
-
-    recordsRequestPromise =
-      api
-        .get('/records')
-        .then(r => {
-
-          recordsMemoryCache =
-            r.data;
-
-          return r.data;
-
-        })
-        .finally(() => {
-
-          recordsRequestPromise =
-            null;
-
-        });
-
+    recordsRequestPromise = api
+      .get('/records')
+      .then(r => {
+        recordsMemoryCache = r.data;
+        return r.data;
+      })
+      .finally(() => {
+        recordsRequestPromise = null;
+      });
 
     return recordsRequestPromise;
-
   },
 
-
-  /* -------------------------------------------------------
-     GET MEMORY CACHE
-  ------------------------------------------------------- */
-
-  getMemoryCache: () =>
-    recordsMemoryCache,
-
-
-  /* -------------------------------------------------------
-     PRELOAD RECORDS
-  ------------------------------------------------------- */
+  getMemoryCache: () => recordsMemoryCache,
 
   preload: () => {
-
-    if (
-      recordsMemoryCache !==
-      null
-    ) {
-
-      return Promise.resolve(
-        recordsMemoryCache
-      );
-
+    if (recordsMemoryCache !== null) {
+      return Promise.resolve(recordsMemoryCache);
     }
 
-
     return Records.get();
-
   },
-
 };
-
 
 /* =========================================================
    PLAYER CACHE
 ========================================================= */
 
+let playersMemoryCache = null;
+let playersRequestPromise = null;
+
 export const CachedPlayers = {
-
-  /* -------------------------------------------------------
-     GET ALL PLAYERS
-  ------------------------------------------------------- */
-
   listAll: () => {
-
-    /*
-     * Return cached players immediately.
-     */
-
-    if (
-      playersMemoryCache !==
-      null
-    ) {
-
-      return Promise.resolve(
-        playersMemoryCache
-      );
-
+    if (playersMemoryCache !== null) {
+      return Promise.resolve(playersMemoryCache);
     }
 
-
-    /*
-     * Reuse existing request.
-     */
-
-    if (
-      playersRequestPromise
-    ) {
-
+    if (playersRequestPromise) {
       return playersRequestPromise;
-
     }
 
-
-    playersRequestPromise =
-      api
-        .get(
-          '/players/all/with-teams'
-        )
-        .then(r => {
-
-          playersMemoryCache =
-            r.data;
-
-          return r.data;
-
-        })
-        .finally(() => {
-
-          playersRequestPromise =
-            null;
-
-        });
-
+    playersRequestPromise = api
+      .get('/players/all/with-teams')
+      .then(r => {
+        playersMemoryCache = r.data;
+        return r.data;
+      })
+      .finally(() => {
+        playersRequestPromise = null;
+      });
 
     return playersRequestPromise;
-
   },
 
-
-  /* -------------------------------------------------------
-     GET MEMORY CACHE
-  ------------------------------------------------------- */
-
-  getMemoryCache: () =>
-    playersMemoryCache,
-
+  getMemoryCache: () => playersMemoryCache,
 };
 
+/* =========================================================
+   CACHE INVALIDATION
+========================================================= */
+
+/*
+ * Call after updating players if another screen uses
+ * CachedPlayers.listAll().
+ */
+export function invalidatePlayerCache() {
+  playersMemoryCache = null;
+}
+
+/*
+ * Call after changing match records when a screen needs
+ * fresh records rather than previously cached records.
+ */
+export function invalidateRecordsCache() {
+  recordsMemoryCache = null;
+}
 
 /* =========================================================
    NOTIFICATIONS
 ========================================================= */
 
 export const Notifications = {
-
-  /* -------------------------------------------------------
-     REGISTER DEVICE
-  ------------------------------------------------------- */
-
-  register: (data) =>
-    api
-      .post(
-        '/notifications/register',
-        data
-      )
+  register: data =>
+    api.post('/notifications/register', data)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     GET USER
-  ------------------------------------------------------- */
-
-  getUser: (id) =>
-    api
-      .get(
-        `/notifications/${id}`
-      )
+  getUser: id =>
+    api.get(`/notifications/${id}`)
       .then(r => r.data),
 
-
-  /* -------------------------------------------------------
-     UNREGISTER DEVICE
-  ------------------------------------------------------- */
-
-  unregister: (data) =>
-    api
-      .post(
-        '/notifications/unregister',
-        data
-      )
+  unregister: data =>
+    api.post('/notifications/unregister', data)
       .then(r => r.data),
-
 };
-
 
 /* =========================================================
    HEALTH CHECK
 ========================================================= */
 
-/*
- * This does NOT modify the database.
- *
- * It simply checks whether the backend is reachable.
- *
- * NOTE:
- * Your backend must have:
- *
- * GET /api/health
- *
- * for this function to return successfully.
- */
-
 export async function healthCheck() {
-
   try {
-
-    const response =
-      await api.get(
-        '/health',
-        {
-          timeout: 10000,
-        }
-      );
+    const response = await api.get('/health', {
+      timeout: 10000,
+    });
 
     return {
-      online:
-        true,
-
-      status:
-        response.status,
-
-      data:
-        response.data,
+      online: true,
+      status: response.status,
+      data: response.data,
     };
-
   } catch (error) {
-
     return {
-      online:
-        false,
-
-      status:
-        error?.response?.status ||
-        null,
-
-      message:
-        getApiErrorMessage(
-          error,
-          'Server is currently unavailable'
-        ),
+      online: false,
+      status: error?.response?.status || null,
+      message: getApiErrorMessage(
+        error,
+        'Server is currently unavailable'
+      ),
     };
-
   }
-
 }
-
 
 /* =========================================================
    ERROR MESSAGE
@@ -1009,103 +415,45 @@ export function getApiErrorMessage(
   error,
   fallback = 'Something went wrong'
 ) {
-
-  /*
-   * Server returned an explicit message.
-   */
-
-  if (
-    error?.response?.data?.message
-  ) {
-
-    return String(
-      error.response.data.message
-    );
-
+  if (error?.response?.data?.message) {
+    return String(error.response.data.message);
   }
 
-
-  if (
-    error?.response?.data?.error
-  ) {
-
-    return String(
-      error.response.data.error
-    );
-
+  if (error?.response?.data?.error) {
+    return String(error.response.data.error);
   }
 
-
-  /*
-   * Network error.
-   */
-
-  if (
-    error?.code ===
-      'ERR_NETWORK'
-  ) {
-
-    return 'Unable to connect to the server. Retrying automatically...';
-
+  if (error?.code === 'ERR_NETWORK') {
+    return 'Unable to connect to the server. Check your connection and try again.';
   }
 
-
-  /*
-   * Timeout.
-   */
-
   if (
-    error?.code ===
-      'ECONNABORTED' ||
-    error?.code ===
-      'ETIMEDOUT'
+    error?.code === 'ECONNABORTED' ||
+    error?.code === 'ETIMEDOUT'
   ) {
-
-    return 'Server is taking too long to respond. Please wait a moment and try again.';
-
+    return 'Server is taking too long to respond. Please check the scoreboard before retrying.';
   }
 
+  const status = error?.response?.status;
 
-  /*
-   * 502 / 503 / 504.
-   */
-
-  const status =
-    error?.response?.status;
-
-  if (
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  ) {
-
-    return 'Server is temporarily unavailable. Please wait a moment and try again.';
-
+  if ([502, 503, 504].includes(status)) {
+    return 'Server is temporarily unavailable. Please wait and try again.';
   }
 
-
-  /*
-   * Axios message.
-   */
-
-  if (
-    error?.message
-  ) {
-
-    return String(
-      error.message
-    );
-
+  if (status === 429) {
+    return 'Too many requests. Wait a moment before trying again.';
   }
 
+  if (error?.message) {
+    return String(error.message);
+  }
 
   return fallback;
-
 }
-
 
 /* =========================================================
    DEFAULT API
 ========================================================= */
 
 export default api;
+```
