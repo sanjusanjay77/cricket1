@@ -2,14 +2,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Players } from '../api/api.js';
 
-function normalizeName(name) {
-  return String(name ?? '')
-    .normalize('NFKC')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
-}
-
 function cleanName(name) {
   return String(name ?? '')
     .normalize('NFKC')
@@ -17,51 +9,90 @@ function cleanName(name) {
     .replace(/\s+/g, ' ');
 }
 
+function normalizeName(name) {
+  return cleanName(name).toLocaleLowerCase();
+}
+
 function normalizeId(id) {
-  return id === undefined || id === null || id === ''
-    ? ''
-    : String(id);
+  if (id === undefined || id === null || id === '') return '';
+  if (typeof id === 'object') return normalizeId(id.id);
+  return String(id);
 }
 
 function sameName(a, b) {
-  const first = normalizeName(a);
-  return first !== '' && first === normalizeName(b);
+  return normalizeName(a) === normalizeName(b);
 }
 
 function getPlayerList(result) {
   if (Array.isArray(result)) return result;
   if (Array.isArray(result?.players)) return result.players;
   if (Array.isArray(result?.data)) return result.data;
-  if (Array.isArray(result?.data?.players)) {
-    return result.data.players;
-  }
+  if (Array.isArray(result?.data?.players)) return result.data.players;
   return [];
 }
 
 function getCreatedPlayer(result) {
-  const candidates = [
-    result?.player,
-    result?.data?.player,
-    result?.data,
-    result,
-  ];
-
-  return candidates.find(
-    (item) =>
-      item &&
-      typeof item === 'object' &&
-      item.id != null &&
-      !Array.isArray(item)
-  ) ?? null;
+  return (
+    result?.player ??
+    result?.data?.player ??
+    result?.data ??
+    result
+  );
 }
 
-function getErrorMessage(error) {
-  return (
-    error?.response?.data?.error ||
-    error?.response?.data?.message ||
-    error?.message ||
-    'Failed to add player.'
-  );
+function uniquePlayers(players, teamId) {
+  const byId = new Map();
+
+  for (const player of players) {
+    if (!player || player.id == null) continue;
+
+    const id = normalizeId(player.id);
+    if (!id) continue;
+
+    const existing = byId.get(id);
+
+    if (!existing) {
+      byId.set(id, player);
+      continue;
+    }
+
+    const score = item =>
+      Number(Boolean(item.name)) +
+      Number(Boolean(item.role)) +
+      Number(Boolean(item.team_id));
+
+    if (score(player) > score(existing)) {
+      byId.set(id, player);
+    }
+  }
+
+  const byName = new Map();
+
+  for (const player of byId.values()) {
+    const nameKey = normalizeName(player.name);
+    if (!nameKey) continue;
+
+    const existing = byName.get(nameKey);
+
+    if (!existing) {
+      byName.set(nameKey, player);
+      continue;
+    }
+
+    const existingIsTeam =
+      teamId != null &&
+      normalizeId(existing.team_id) === normalizeId(teamId);
+
+    const playerIsTeam =
+      teamId != null &&
+      normalizeId(player.team_id) === normalizeId(teamId);
+
+    if (playerIsTeam && !existingIsTeam) {
+      byName.set(nameKey, player);
+    }
+  }
+
+  return Array.from(byName.values());
 }
 
 export default function PlayerAutocomplete({
@@ -91,178 +122,99 @@ export default function PlayerAutocomplete({
     [excludeIds]
   );
 
-  // Remove duplicate IDs, then duplicate names for display.
-  const uniquePlayers = useMemo(() => {
-    const byId = new Map();
-
-    for (const player of safePlayers) {
-      if (!player || player.id == null || !cleanName(player.name)) {
-        continue;
-      }
-
-      const id = normalizeId(player.id);
-      const previous = byId.get(id);
-
-      if (!previous) {
-        byId.set(id, player);
-        continue;
-      }
-
-      const score = (item) =>
-        Number(Boolean(item.name)) +
-        Number(Boolean(item.role)) +
-        Number(item.team_id != null);
-
-      if (score(player) > score(previous)) {
-        byId.set(id, player);
-      }
-    }
-
-    const byName = new Map();
-
-    for (const player of byId.values()) {
-      const key = normalizeName(player.name);
-
-      if (!byName.has(key)) {
-        byName.set(key, player);
-      } else {
-        // Prefer the record belonging to the requested team.
-        const previous = byName.get(key);
-
-        if (
-          teamId != null &&
-          normalizeId(player.team_id) === normalizeId(teamId) &&
-          normalizeId(previous.team_id) !== normalizeId(teamId)
-        ) {
-          byName.set(key, player);
-        }
-      }
-    }
-
-    return [...byName.values()];
-  }, [safePlayers, teamId]);
+  const uniqueList = useMemo(
+    () => uniquePlayers(safePlayers, teamId),
+    [safePlayers, teamId]
+  );
 
   const selectedPlayer = useMemo(() => {
     const selectedId = normalizeId(value);
-
     if (!selectedId) return null;
 
     return (
-      safePlayers.find(
-        (player) =>
-          player &&
-          normalizeId(player.id) === selectedId
-      ) ||
-      uniquePlayers.find(
-        (player) => normalizeId(player.id) === selectedId
-      ) ||
-      null
+      uniqueList.find(
+        player => normalizeId(player.id) === selectedId
+      ) || null
     );
-  }, [safePlayers, uniquePlayers, value]);
+  }, [uniqueList, value]);
 
   const matches = useMemo(() => {
-    const excluded = new Set(
-      safeExcludeIds.map(normalizeId)
-    );
-
-    const pool = uniquePlayers.filter(
-      (player) => !excluded.has(normalizeId(player.id))
-    );
-
+    const excluded = new Set(safeExcludeIds.map(normalizeId));
     const q = normalizeName(query);
 
-    return pool
-      .filter((player) =>
-        !q || normalizeName(player.name).includes(q)
-      )
+    return uniqueList
+      .filter(player => !excluded.has(normalizeId(player.id)))
+      .filter(player => !q || normalizeName(player.name).includes(q))
       .slice(0, 8);
-  }, [uniquePlayers, safeExcludeIds, query]);
+  }, [uniqueList, safeExcludeIds, query]);
 
   const exactMatch = useMemo(() => {
     const q = normalizeName(query);
-
     if (!q) return null;
 
-    // Prefer an exact match from the requested team.
     return (
-      uniquePlayers.find(
-        (player) =>
-          sameName(player.name, query) &&
-          teamId != null &&
-          normalizeId(player.team_id) === normalizeId(teamId)
-      ) ||
-      uniquePlayers.find(
-        (player) => sameName(player.name, query)
-      ) ||
-      null
+      uniqueList.find(player => sameName(player.name, q)) || null
     );
-  }, [uniquePlayers, query, teamId]);
+  }, [uniqueList, query]);
 
   useEffect(() => {
-    const handleOutsideClick = (event) => {
-      if (
-        boxRef.current &&
-        !boxRef.current.contains(event.target)
-      ) {
+    const onClickOutside = event => {
+      if (boxRef.current && !boxRef.current.contains(event.target)) {
         setOpen(false);
-        setCreateError('');
       }
     };
 
-    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('mousedown', onClickOutside);
 
     return () => {
-      document.removeEventListener(
-        'mousedown',
-        handleOutsideClick
-      );
+      document.removeEventListener('mousedown', onClickOutside);
     };
   }, []);
 
-  const selectPlayer = (player) => {
+  const selectPlayer = player => {
     if (!player || player.id == null) return;
 
-    if (typeof onChange === 'function') {
-      onChange(player.id);
-    }
-
+    onChange?.(player.id);
     setQuery('');
     setCreateError('');
     setOpen(false);
   };
 
-  const refreshAndFindExisting = async (name) => {
-    if (teamId == null) return null;
+  const refreshAndFindExisting = async name => {
+    if (!teamId) return null;
 
-    const result = await Players.list(teamId);
-    const refreshedPlayers = getPlayerList(result);
+    try {
+      const result = await Players.list(teamId);
+      const refreshed = getPlayerList(result);
 
-    return (
-      refreshedPlayers.find(
-        (player) =>
+      const existing = refreshed.find(
+        player =>
           player?.id != null &&
           sameName(player.name, name) &&
           (
             player.team_id == null ||
             normalizeId(player.team_id) === normalizeId(teamId)
           )
-      ) || null
-    );
+      );
+
+      if (existing) {
+        onCreated?.(existing);
+        return existing;
+      }
+    } catch (error) {
+      console.error('Failed to refresh player list:', error);
+    }
+
+    return null;
   };
 
   const createPlayer = async () => {
     const name = cleanName(query);
 
-    if (!name || teamId == null || createLockRef.current) {
-      return;
-    }
+    if (!name || !teamId || createLockRef.current) return;
 
-    setCreateError('');
-
-    // Reuse a player already present in the current list.
-    const existing = uniquePlayers.find(
-      (player) =>
-        player.id != null &&
+    const existing = uniqueList.find(
+      player =>
         sameName(player.name, name) &&
         (
           player.team_id == null ||
@@ -277,53 +229,21 @@ export default function PlayerAutocomplete({
 
     createLockRef.current = true;
     setCreating(true);
+    setCreateError('');
 
     try {
-      let created;
+      const result = await Players.create({
+        team_id: teamId,
+        name,
+      });
 
-      try {
-        const result = await Players.create({
-          team_id: teamId,
-          name,
-        });
+      const player = getCreatedPlayer(result);
 
-        created = getCreatedPlayer(result);
-      } catch (error) {
-        // A 409 normally means the backend rejected a duplicate.
-        // Refresh and select the existing record if it is found.
-        if (error?.response?.status === 409) {
-          const existingPlayer =
-            await refreshAndFindExisting(name);
+      if (!player || player.id == null) {
+        const refreshed = await refreshAndFindExisting(name);
 
-          if (existingPlayer) {
-            if (typeof onCreated === 'function') {
-              onCreated(existingPlayer);
-            }
-
-            selectPlayer(existingPlayer);
-            return;
-          }
-
-          throw new Error(
-            'This player name already exists, but the existing player could not be found in the refreshed list. Please check the team and try again.'
-          );
-        }
-
-        throw error;
-      }
-
-      if (!created || created.id == null) {
-        // Avoid blindly repeating the create request. It may have
-        // succeeded on the server even if the response was unusual.
-        const existingPlayer =
-          await refreshAndFindExisting(name);
-
-        if (existingPlayer) {
-          if (typeof onCreated === 'function') {
-            onCreated(existingPlayer);
-          }
-
-          selectPlayer(existingPlayer);
+        if (refreshed) {
+          selectPlayer(refreshed);
           return;
         }
 
@@ -332,18 +252,28 @@ export default function PlayerAutocomplete({
         );
       }
 
-      if (typeof onCreated === 'function') {
-        onCreated(created);
-      }
-
-      selectPlayer(created);
+      onCreated?.(player);
+      onChange?.(player.id);
+      setQuery('');
+      setOpen(false);
     } catch (error) {
-      console.error(
-        'Failed to create player:',
-        error?.response?.data || error
-      );
+      console.error('Failed to create player:', error);
 
-      setCreateError(getErrorMessage(error));
+      // A 409 can mean another request already created this player.
+      const existing = await refreshAndFindExisting(name);
+
+      if (existing) {
+        onChange?.(existing.id);
+        setQuery('');
+        setOpen(false);
+      } else {
+        setCreateError(
+          error?.response?.data?.error ||
+          error?.response?.data?.message ||
+          error?.message ||
+          'Unable to add player.'
+        );
+      }
     } finally {
       createLockRef.current = false;
       setCreating(false);
@@ -353,18 +283,13 @@ export default function PlayerAutocomplete({
   if (selectedPlayer) {
     return (
       <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-lg px-3 py-2">
-        <span className="font-medium">
-          {selectedPlayer.name}
-        </span>
+        <span className="font-medium">{selectedPlayer.name}</span>
 
         <button
           type="button"
           className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
           onClick={() => {
-            if (typeof onChange === 'function') {
-              onChange(null);
-            }
-
+            onChange?.(null);
             setQuery('');
             setCreateError('');
             setOpen(false);
@@ -380,30 +305,27 @@ export default function PlayerAutocomplete({
     <div className="relative" ref={boxRef}>
       <input
         className="input"
+        autoComplete="off"
+        maxLength={80}
         placeholder={placeholder}
         value={query}
-        autoComplete="off"
         onFocus={() => setOpen(true)}
-        onChange={(event) => {
+        onChange={event => {
           setQuery(event.target.value);
           setCreateError('');
           setOpen(true);
         }}
-        onKeyDown={(event) => {
+        onKeyDown={event => {
           if (event.key === 'Escape') {
             setOpen(false);
           }
 
-          if (
-            event.key === 'Enter' &&
-            open &&
-            query.trim()
-          ) {
+          if (event.key === 'Enter' && open) {
             event.preventDefault();
 
             if (exactMatch) {
               selectPlayer(exactMatch);
-            } else {
+            } else if (query.trim()) {
               createPlayer();
             }
           }
@@ -418,11 +340,11 @@ export default function PlayerAutocomplete({
             </div>
           )}
 
-          {matches.map((player) => (
+          {matches.map(player => (
             <button
               type="button"
               key={normalizeId(player.id)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between gap-3"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between"
               onClick={() => selectPlayer(player)}
             >
               <span>{player.name}</span>
@@ -435,7 +357,7 @@ export default function PlayerAutocomplete({
             </button>
           ))}
 
-          {teamId != null && query.trim() && (
+          {teamId && query.trim() && (
             exactMatch ? (
               <button
                 type="button"
@@ -451,18 +373,13 @@ export default function PlayerAutocomplete({
                 className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium disabled:opacity-50"
                 onClick={createPlayer}
               >
-                {creating
-                  ? 'Adding…'
-                  : `+ Add new player "${cleanName(query)}"`}
+                {creating ? 'Adding…' : `+ Add new player "${cleanName(query)}"`}
               </button>
             )
           )}
 
           {createError && (
-            <div
-              role="alert"
-              className="px-3 py-2 text-sm text-red-300 border-t border-slate-700"
-            >
+            <div className="border-t border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-200">
               {createError}
             </div>
           )}
