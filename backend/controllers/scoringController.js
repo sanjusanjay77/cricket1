@@ -904,43 +904,34 @@ innings to another player on the same batting team.
 
 Runs, extras, bowlers, and fielders are not changed.
 */
+
+/* =========================================================
+   CORRECT HISTORICAL BATSMAN IDENTITY
+   Preserves delivery scores and uses a transaction.
+========================================================= */
+
 exports.correctBatsmanHistory = async (req, res) => {
   try {
     const inningsId = cleanId(req.params.id);
-    const body = req.body || {};
+    const fromPlayerId = cleanId(req.body?.from_player_id);
+    const toPlayerId = cleanId(req.body?.to_player_id);
 
-    const fromPlayerId = cleanId(
-      body.from_player_id
-    );
-
-    const toPlayerId = cleanId(
-      body.to_player_id
-    );
-
-    if (
-      !inningsId ||
-      !fromPlayerId ||
-      !toPlayerId
-    ) {
+    if (!inningsId || !fromPlayerId || !toPlayerId) {
       return res.status(400).json({
-        error:
-          'innings id, from_player_id and to_player_id are required'
+        error: 'innings id, from_player_id and to_player_id are required',
       });
     }
 
     if (fromPlayerId === toPlayerId) {
       return res.status(400).json({
-        error:
-          'Source and replacement players must be different'
+        error: 'Source and replacement players must be different',
       });
     }
 
     const innings = await getInnings(inningsId);
 
     if (!innings) {
-      return res.status(404).json({
-        error: 'Innings not found'
-      });
+      return res.status(404).json({ error: 'Innings not found' });
     }
 
     const sourcePlayer = await db.prepare(`
@@ -957,26 +948,19 @@ exports.correctBatsmanHistory = async (req, res) => {
 
     if (!sourcePlayer || !targetPlayer) {
       return res.status(404).json({
-        error: 'Source or replacement player not found'
+        error: 'Source or replacement player not found',
       });
     }
 
     if (
-      String(sourcePlayer.team_id) !==
-        String(innings.batting_team_id) ||
-      String(targetPlayer.team_id) !==
-        String(innings.batting_team_id)
+      String(sourcePlayer.team_id) !== String(innings.batting_team_id) ||
+      String(targetPlayer.team_id) !== String(innings.batting_team_id)
     ) {
       return res.status(400).json({
-        error:
-          'Both players must belong to the innings batting team'
+        error: 'Both players must belong to the innings batting team',
       });
     }
 
-    /*
-    Count deliveries credited to the source batter
-    before modifying anything.
-    */
     const count = await db.prepare(`
       SELECT COUNT(*) AS delivery_count
       FROM balls
@@ -984,33 +968,86 @@ exports.correctBatsmanHistory = async (req, res) => {
         AND batsman_id = ?
     `).get(inningsId, fromPlayerId);
 
-    const deliveryCount = Number(
-      count?.delivery_count || 0
-    );
+    const deliveryCount = Number(count?.delivery_count || 0);
 
     if (deliveryCount === 0) {
       return res.status(400).json({
-        error:
-          'No batting deliveries found for this player in this innings'
+        error: 'No batting deliveries found for this player in this innings',
       });
     }
 
-    /*
-    IMPORTANT:
-    This initial handler is deliberately not wired
-    into the routes yet. The related ball and innings
-    updates must be committed atomically using the
-    database wrapper's supported transaction API.
-    */
-    return res.status(501).json({
-      error:
-        'Validation passed, but historical correction is not enabled until atomic transaction support is configured',
-      innings_id: inningsId,
-      from_player_id: fromPlayerId,
-      to_player_id: toPlayerId,
-      deliveries_found: deliveryCount
+    const result = await db.transaction(async (tx) => {
+      // Change only the batter identity on deliveries.
+      const battingUpdate = await tx.prepare(`
+        UPDATE balls
+        SET batsman_id = ?
+        WHERE innings_id = ?
+          AND batsman_id = ?
+      `).run(toPlayerId, inningsId, fromPlayerId);
+
+      // Keep the same identity on deliveries where this player
+      // was recorded as the non-striker.
+      const nonStrikerUpdate = await tx.prepare(`
+        UPDATE balls
+        SET non_striker_id = ?
+        WHERE innings_id = ?
+          AND non_striker_id = ?
+      `).run(toPlayerId, inningsId, fromPlayerId);
+
+      // Keep the dismissal linked to the corrected player.
+      const dismissedUpdate = await tx.prepare(`
+        UPDATE balls
+        SET dismissed_id = ?
+        WHERE innings_id = ?
+          AND dismissed_id = ?
+      `).run(toPlayerId, inningsId, fromPlayerId);
+
+      // Correct current batting selections if they still reference
+      // the source player. Do not change the current bowler.
+      await tx.prepare(`
+        UPDATE innings
+        SET striker_id = CASE
+              WHEN striker_id = ? THEN ?
+              ELSE striker_id
+            END,
+            non_striker_id = CASE
+              WHEN non_striker_id = ? THEN ?
+              ELSE non_striker_id
+            END
+        WHERE id = ?
+      `).run(
+        fromPlayerId,
+        toPlayerId,
+        fromPlayerId,
+        toPlayerId,
+        inningsId
+      );
+
+      return {
+        batting_deliveries_updated: Number(battingUpdate.changes || 0),
+        non_striker_references_updated: Number(nonStrikerUpdate.changes || 0),
+        dismissal_references_updated: Number(dismissedUpdate.changes || 0),
+      };
     });
 
+    // Broadcast the corrected scorecard after the transaction commits.
+    try {
+      await broadcast(req, innings.match_id);
+    } catch (broadcastError) {
+      console.error(
+        'Historical correction broadcast failed:',
+        broadcastError.message
+      );
+    }
+
+    return res.json({
+      message: 'Historical batting identity corrected',
+      innings_id: inningsId,
+      from_player: sourcePlayer.name,
+      to_player: targetPlayer.name,
+      ...result,
+      scores_changed: false,
+    });
   } catch (err) {
     return sendError(res, err, 500);
   }
