@@ -10,9 +10,7 @@ const DATABASE_URL = process.env.TURSO_DATABASE_URL;
 const DATABASE_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
 
 if (!DATABASE_URL || !DATABASE_AUTH_TOKEN) {
-  console.error(
-    'Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN.'
-  );
+  console.error('Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN.');
 }
 
 const client = createClient({
@@ -38,10 +36,7 @@ function normalizePlayerName(name) {
 
 function normalizeQuery(sql, args) {
   if (args.length === 1 && Array.isArray(args[0])) {
-    return {
-      sql,
-      args: args[0],
-    };
+    return { sql, args: args[0] };
   }
 
   if (
@@ -55,15 +50,8 @@ function normalizeQuery(sql, args) {
     const normalizedSql = sql.replace(
       /@([A-Za-z_][A-Za-z0-9_]*)/g,
       (match, name) => {
-        if (
-          !Object.prototype.hasOwnProperty.call(
-            named,
-            name
-          )
-        ) {
-          throw new Error(
-            `Missing SQL parameter: @${name}`
-          );
+        if (!Object.prototype.hasOwnProperty.call(named, name)) {
+          throw new Error(`Missing SQL parameter: @${name}`);
         }
 
         values.push(named[name]);
@@ -77,16 +65,10 @@ function normalizeQuery(sql, args) {
       );
     }
 
-    return {
-      sql: normalizedSql,
-      args: values,
-    };
+    return { sql: normalizedSql, args: values };
   }
 
-  return {
-    sql,
-    args,
-  };
+  return { sql, args };
 }
 
 /* =========================================================
@@ -94,19 +76,14 @@ function normalizeQuery(sql, args) {
 ========================================================= */
 
 function convertValue(value) {
-  if (value === null || value === undefined) {
-    return value;
-  }
+  if (value === null || value === undefined) return value;
 
   if (
     typeof value === 'object' &&
     typeof value.valueOf === 'function'
   ) {
     const converted = value.valueOf();
-
-    if (converted !== value) {
-      return converted;
-    }
+    if (converted !== value) return converted;
   }
 
   return value;
@@ -159,9 +136,7 @@ const ALLOWED_TABLES = new Set([
 
 async function columnExists(tableName, columnName) {
   if (!ALLOWED_TABLES.has(tableName)) {
-    throw new Error(
-      `Unsupported table name: ${tableName}`
-    );
+    throw new Error(`Unsupported table name: ${tableName}`);
   }
 
   const result = await client.execute({
@@ -176,48 +151,57 @@ async function columnExists(tableName, columnName) {
 /* =========================================================
    PLAYER NAME UNIQUENESS MIGRATION
 
-   Rules:
-   - Only active players must have unique names per team.
-   - Inactive/deleted players do not reserve their names.
-   - Existing player IDs and scorecard references are preserved.
-   - Duplicate active names are reported, not deleted.
+   - Active names must be unique within a team.
+   - Inactive/deleted players do not reserve names.
+   - Existing player IDs and scorecard history are preserved.
+   - Existing unrelated indexes are preserved.
 ========================================================= */
 
 async function ensurePlayerNameUniqueness() {
-  console.log(
-    'Checking active player-name uniqueness...'
-  );
+  console.log('Checking player-name uniqueness...');
 
-  const hasNameKey = await columnExists(
-    'players',
-    'name_key'
-  );
+  if (!(await columnExists('players', 'active'))) {
+    throw new Error(
+      'The players table has no active column. Cannot safely apply player-name migration.'
+    );
+  }
 
-  if (!hasNameKey) {
+  if (!(await columnExists('players', 'team_id'))) {
+    throw new Error(
+      'The players table has no team_id column.'
+    );
+  }
+
+  if (!(await columnExists('players', 'name'))) {
+    throw new Error(
+      'The players table has no name column.'
+    );
+  }
+
+  if (!(await columnExists('players', 'name_key'))) {
     await client.execute(`
-      ALTER TABLE players
-      ADD COLUMN name_key TEXT
+      ALTER TABLE players ADD COLUMN name_key TEXT
     `);
   }
 
   /*
-   * Remove the previous unconditional unique index.
-   *
-   * This index incorrectly prevents reusing a name after
-   * soft deletion because it also includes active=0 players.
+   * Drop only the known obsolete indexes created by previous
+   * versions of this migration.
    */
   await client.execute(`
-    DROP INDEX IF EXISTS
-    idx_players_team_name_key_unique
+    DROP INDEX IF EXISTS idx_players_team_name_key_unique
   `);
 
-  /*
-   * Remove our previous partial index so it can be rebuilt
-   * after validating the current active player records.
-   */
   await client.execute(`
-    DROP INDEX IF EXISTS
-    idx_players_team_name_key_active_unique
+    DROP INDEX IF EXISTS idx_players_team_name_key_active_unique
+  `);
+
+  await client.execute(`
+    DROP INDEX IF EXISTS idx_players_team_active_name_unique
+  `);
+
+  await client.execute(`
+    DROP INDEX IF EXISTS idx_players_team_active_name_unique_v2
   `);
 
   const result = await client.execute(`
@@ -229,156 +213,63 @@ async function ensurePlayerNameUniqueness() {
     convertRow(row, result.columns)
   );
 
-  const normalizedPlayers = players.map(player => ({
-    ...player,
-    calculatedNameKey: normalizePlayerName(
-      player.name
-    ),
-  }));
+  const activeNames = new Map();
 
-  /*
-   * A blank name on an active player needs attention.
-   * Do not automatically delete or rename any player.
-   */
-  const invalidPlayers = normalizedPlayers.filter(
-    player =>
-      Number(player.active) === 1 &&
-      !player.calculatedNameKey
-  );
+  for (const player of players) {
+    const nameKey = normalizePlayerName(player.name);
 
-  if (invalidPlayers.length > 0) {
-    console.error(
-      'Player-name migration stopped: active players with empty names were found.'
-    );
-
-    for (const player of invalidPlayers) {
-      console.error({
-        id: player.id,
-        team_id: player.team_id,
-        name: player.name,
-        active: player.active,
+    /*
+     * Update normalized names for all records, including
+     * historical inactive records.
+     */
+    if (player.name_key !== nameKey) {
+      await client.execute({
+        sql: `UPDATE players SET name_key = ? WHERE id = ?`,
+        args: [nameKey, player.id],
       });
     }
 
-    return {
-      ready: false,
-      reason: 'INVALID_ACTIVE_PLAYER_NAMES',
-    };
-  }
-
-  /*
-   * Check duplicates among active players ONLY.
-   *
-   * Multiple inactive records with the same name are allowed.
-   * An inactive and an active record with the same name are
-   * also allowed.
-   */
-  const groups = new Map();
-
-  for (const player of normalizedPlayers) {
     if (Number(player.active) !== 1) {
       continue;
     }
 
-    if (!player.calculatedNameKey) {
-      continue;
-    }
-
-    const groupKey = JSON.stringify([
-      String(player.team_id),
-      player.calculatedNameKey,
-    ]);
-
-    if (!groups.has(groupKey)) {
-      groups.set(groupKey, []);
-    }
-
-    groups.get(groupKey).push(player);
-  }
-
-  const duplicates = [...groups.values()].filter(
-    group => group.length > 1
-  );
-
-  if (duplicates.length > 0) {
-    console.error(
-      `Found ${duplicates.length} duplicate active player-name group(s).`
-    );
-
-    for (const group of duplicates) {
-      console.error(
-        JSON.stringify(
-          group.map(player => ({
-            id: player.id,
-            team_id: player.team_id,
-            name: player.name,
-            active: player.active,
-          })),
-          null,
-          2
-        )
+    if (!nameKey) {
+      throw new Error(
+        `Active player ${player.id} has an empty name. Correct this record before enabling uniqueness.`
       );
     }
 
-    /*
-     * Do not delete records or choose a player automatically.
-     * Fix these active duplicates, then restart the backend.
-     */
-    return {
-      ready: false,
-      reason: 'DUPLICATE_ACTIVE_PLAYER_NAMES',
-      duplicateGroups: duplicates.length,
-    };
-  }
+    const key = JSON.stringify([
+      String(player.team_id),
+      nameKey,
+    ]);
 
-  /*
-   * Update the helper column for existing records.
-   * This is not used as the database's unique index because
-   * the application must also populate it consistently when
-   * inserting or renaming players.
-   */
-  for (const player of normalizedPlayers) {
-    if (
-      player.name_key !== player.calculatedNameKey
-    ) {
-      await client.execute({
-        sql: `
-          UPDATE players
-          SET name_key = ?
-          WHERE id = ?
-        `,
-        args: [
-          player.calculatedNameKey,
-          player.id,
-        ],
-      });
+    if (activeNames.has(key)) {
+      throw new Error(
+        `Duplicate active player names found in team ${player.team_id}: "${player.name}". Resolve the active duplicate before restarting.`
+      );
     }
+
+    activeNames.set(key, player.id);
   }
 
   /*
-   * Database-level protection for active names.
+   * Use a partial unique index so inactive players do not
+   * block name reuse. The application controller should also
+   * check names using normalizePlayerName().
    *
-   * The partial index excludes inactive players.
-   * The application controller should additionally check
-   * normalized names to handle Unicode and repeated spaces.
+   * This index uses SQLite lower(trim(name)); it does not
+   * implement full Unicode or internal-whitespace normalization.
    */
   await client.execute(`
-    CREATE UNIQUE INDEX
-    idx_players_team_active_name_unique
-    ON players (
-      team_id,
-      lower(trim(name))
-    )
+    CREATE UNIQUE INDEX idx_players_team_active_name_unique_v2
+    ON players(team_id, lower(trim(name)))
     WHERE active = 1
   `);
 
-  console.log(
-    'Active player-name uniqueness index is ready.'
-  );
+  console.log('Player-name uniqueness migration completed.');
 
-  return {
-    ready: true,
-  };
+  return { ready: true };
 }
 
 /* =========================================================
@@ -412,15 +303,7 @@ async function ensureDatabaseUpdates() {
     `);
   }
 
-  const migration =
-    await ensurePlayerNameUniqueness();
-
-  if (!migration.ready) {
-    console.warn(
-      'Player-name uniqueness migration needs attention:',
-      migration.reason
-    );
-  }
+  await ensurePlayerNameUniqueness();
 
   await client.execute(`
     CREATE TABLE IF NOT EXISTS notification_devices (
@@ -437,14 +320,12 @@ async function ensureDatabaseUpdates() {
   `);
 
   await client.execute(`
-    CREATE INDEX IF NOT EXISTS
-    idx_notification_devices_user
+    CREATE INDEX IF NOT EXISTS idx_notification_devices_user
     ON notification_devices(user_id)
   `);
 
   await client.execute(`
-    CREATE INDEX IF NOT EXISTS
-    idx_teams_archived
+    CREATE INDEX IF NOT EXISTS idx_teams_archived
     ON teams(archived)
   `);
 
@@ -467,17 +348,11 @@ function createQueryInterface(executor) {
             args: query.args,
           });
 
-          if (
-            !result.rows ||
-            result.rows.length === 0
-          ) {
+          if (!result.rows || result.rows.length === 0) {
             return undefined;
           }
 
-          return convertRow(
-            result.rows[0],
-            result.columns
-          );
+          return convertRow(result.rows[0], result.columns);
         },
 
         async all(...args) {
@@ -517,9 +392,6 @@ const db = {
     return client.execute(statement);
   },
 
-  /*
-   * Actual database connectivity test.
-   */
   async healthCheck() {
     const result = await client.execute({
       sql: 'SELECT 1 AS ok',
@@ -528,23 +400,14 @@ const db = {
     return Number(result.rows?.[0]?.ok) === 1;
   },
 
-  /*
-   * Initialize schema and apply migrations.
-   * Call once during server startup.
-   */
   async initSchema(schemaSql) {
-    const statements =
-      splitSqlStatements(schemaSql);
+    const statements = splitSqlStatements(schemaSql);
 
     console.log(
       `Initializing schema: ${statements.length} statements.`
     );
 
-    for (
-      let i = 0;
-      i < statements.length;
-      i++
-    ) {
+    for (let i = 0; i < statements.length; i++) {
       try {
         await client.execute(statements[i]);
       } catch (error) {
@@ -554,7 +417,6 @@ const db = {
         );
 
         console.error(statements[i]);
-
         throw error;
       }
     }
@@ -569,7 +431,7 @@ const db = {
    TRANSACTION SUPPORT
 ========================================================= */
 
-db.transaction = async function (callback) {
+db.transaction = async function(callback) {
   if (typeof callback !== 'function') {
     throw new TypeError(
       'Transaction callback must be a function'
@@ -581,9 +443,7 @@ db.transaction = async function (callback) {
 
   try {
     const result = await callback(transactionDb);
-
     await tx.commit();
-
     return result;
   } catch (error) {
     try {
