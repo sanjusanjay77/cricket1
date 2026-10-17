@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
-const cors = require('cors');
+const cors = require('cors');f
 const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
@@ -222,17 +222,39 @@ app.set('io', io);
 io.on('connection', (socket) => {
   console.log('Socket connected:', socket.id);
 
-  socket.on('register-notification-user', (userId) => {
-    try {
-      if (userId === undefined || userId === null || String(userId).trim() === '') {
-        return;
-      }
+  
+socket.on('register-notification-user', (payload) => {
+  try {
+    // Support both the raw ID and { userId: ID } formats.
+    const userId =
+      payload && typeof payload === 'object'
+        ? payload.userId
+        : payload;
 
-      socket.join(`notification-user-${String(userId)}`);
-    } catch (error) {
-      console.error('Notification registration error:', error.message);
+    if (
+      userId === undefined ||
+      userId === null ||
+      String(userId).trim() === ''
+    ) {
+      console.warn('Invalid notification user ID received.');
+      return;
     }
-  });
+
+    const room = `notification-user-${String(userId)}`;
+
+    socket.join(room);
+
+    console.log(
+      `Notification user ${String(userId)} joined room ${room}`
+    );
+  } catch (error) {
+    console.error(
+      'Notification registration error:',
+      error.message
+    );
+  }
+});
+
 
   socket.on('join-match', (matchId) => {
     try {
