@@ -1,390 +1,589 @@
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Players } from '../api/api.js';
+const { v4: uuidv4 } = require('uuid');
+const db = require('../db/database');
+const calc = require('../utils/scoreCalculator');
 
-function cleanName(name) {
+/* =========================================================
+   PLAYER NAME HELPERS
+========================================================= */
+
+function cleanPlayerName(name) {
   return String(name ?? '')
     .normalize('NFKC')
     .trim()
     .replace(/\s+/g, ' ');
 }
 
-function normalizeName(name) {
-  return cleanName(name).toLocaleLowerCase();
+function normalizePlayerName(name) {
+  return cleanPlayerName(name).toLowerCase();
 }
 
-function normalizeId(id) {
-  if (id === undefined || id === null || id === '') return '';
-  if (typeof id === 'object') return normalizeId(id.id);
-  return String(id);
+function getErrorMessage(error) {
+  return error?.message || String(error || 'Unknown error');
 }
 
-function sameName(a, b) {
-  return normalizeName(a) === normalizeName(b);
+/* =========================================================
+   DATABASE COMPATIBILITY HELPERS
+   Supports the existing db.prepare().get/all/run wrapper.
+========================================================= */
+
+function prepare(sql) {
+  return db.prepare(sql);
 }
 
-function getPlayerList(result) {
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result?.players)) return result.players;
-  if (Array.isArray(result?.data)) return result.data;
-  if (Array.isArray(result?.data?.players)) return result.data.players;
-  return [];
-}
-
-function getCreatedPlayer(result) {
-  return (
-    result?.player ??
-    result?.data?.player ??
-    result?.data ??
-    result
-  );
-}
-
-function uniquePlayers(players, teamId) {
-  const byId = new Map();
-
-  for (const player of players) {
-    if (!player || player.id == null) continue;
-
-    const id = normalizeId(player.id);
-    if (!id) continue;
-
-    const existing = byId.get(id);
-
-    if (!existing) {
-      byId.set(id, player);
-      continue;
-    }
-
-    const score = item =>
-      Number(Boolean(item.name)) +
-      Number(Boolean(item.role)) +
-      Number(Boolean(item.team_id));
-
-    if (score(player) > score(existing)) {
-      byId.set(id, player);
-    }
-  }
-
-  const byName = new Map();
-
-  for (const player of byId.values()) {
-    const nameKey = normalizeName(player.name);
-    if (!nameKey) continue;
-
-    const existing = byName.get(nameKey);
-
-    if (!existing) {
-      byName.set(nameKey, player);
-      continue;
-    }
-
-    const existingIsTeam =
-      teamId != null &&
-      normalizeId(existing.team_id) === normalizeId(teamId);
-
-    const playerIsTeam =
-      teamId != null &&
-      normalizeId(player.team_id) === normalizeId(teamId);
-
-    if (playerIsTeam && !existingIsTeam) {
-      byName.set(nameKey, player);
-    }
-  }
-
-  return Array.from(byName.values());
-}
-
-export default function PlayerAutocomplete({
-  players,
-  value,
-  onChange,
-  onCreated,
+async function findActiveDuplicateName(
   teamId,
-  placeholder = 'Type a player name…',
-  excludeIds = [],
-}) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
+  name,
+  excludePlayerId = null
+) {
+  const normalizedName = normalizePlayerName(name);
 
-  const boxRef = useRef(null);
-  const createLockRef = useRef(false);
+  if (!normalizedName) {
+    return null;
+  }
 
-  const safePlayers = useMemo(
-    () => (Array.isArray(players) ? players : []),
-    [players]
-  );
+  const rows = await prepare(`
+    SELECT id, team_id, name, active
+    FROM players
+    WHERE team_id = ?
+      AND active = 1
+  `).all(teamId);
 
-  const safeExcludeIds = useMemo(
-    () => (Array.isArray(excludeIds) ? excludeIds : []),
-    [excludeIds]
-  );
-
-  const uniqueList = useMemo(
-    () => uniquePlayers(safePlayers, teamId),
-    [safePlayers, teamId]
-  );
-
-  const selectedPlayer = useMemo(() => {
-    const selectedId = normalizeId(value);
-    if (!selectedId) return null;
+  return rows.find(player => {
+    if (
+      excludePlayerId !== null &&
+      String(player.id) === String(excludePlayerId)
+    ) {
+      return false;
+    }
 
     return (
-      uniqueList.find(
-        player => normalizeId(player.id) === selectedId
-      ) || null
+      normalizePlayerName(player.name) === normalizedName
     );
-  }, [uniqueList, value]);
+  }) || null;
+}
 
-  const matches = useMemo(() => {
-    const excluded = new Set(safeExcludeIds.map(normalizeId));
-    const q = normalizeName(query);
+async function findActiveDuplicateJersey(
+  teamId,
+  jerseyNo,
+  excludePlayerId = null
+) {
+  if (
+    jerseyNo === null ||
+    jerseyNo === undefined ||
+    String(jerseyNo).trim() === ''
+  ) {
+    return null;
+  }
 
-    return uniqueList
-      .filter(player => !excluded.has(normalizeId(player.id)))
-      .filter(player => !q || normalizeName(player.name).includes(q))
-      .slice(0, 8);
-  }, [uniqueList, safeExcludeIds, query]);
+  const rows = await prepare(`
+    SELECT id, team_id, name, jersey_no, active
+    FROM players
+    WHERE team_id = ?
+      AND active = 1
+      AND jersey_no = ?
+  `).all(teamId, jerseyNo);
 
-  const exactMatch = useMemo(() => {
-    const q = normalizeName(query);
-    if (!q) return null;
+  return rows.find(player => {
+    if (
+      excludePlayerId !== null &&
+      String(player.id) === String(excludePlayerId)
+    ) {
+      return false;
+    }
 
-    return (
-      uniqueList.find(player => sameName(player.name, q)) || null
+    return true;
+  }) || null;
+}
+
+/* =========================================================
+   LIST PLAYERS
+========================================================= */
+
+async function listPlayers(req, res) {
+  try {
+    const teamId =
+      req.query.team_id ??
+      req.query.teamId;
+
+    let rows;
+
+    if (teamId !== undefined && teamId !== null && teamId !== '') {
+      rows = await prepare(`
+        SELECT *
+        FROM players
+        WHERE team_id = ?
+          AND active = 1
+        ORDER BY name COLLATE NOCASE ASC
+      `).all(teamId);
+    } else {
+      rows = await prepare(`
+        SELECT *
+        FROM players
+        WHERE active = 1
+        ORDER BY name COLLATE NOCASE ASC
+      `).all();
+    }
+
+    return res.json(rows);
+  } catch (error) {
+    console.error('listPlayers error:', error);
+
+    return res.status(500).json({
+      error: 'Failed to load players.',
+      details: getErrorMessage(error),
+    });
+  }
+}
+
+/* =========================================================
+   CREATE PLAYER
+
+   Rules:
+   - Same name can be reused after soft deletion.
+   - Duplicate active names in the same team are rejected.
+   - Active jersey numbers must be unique within the team.
+========================================================= */
+
+async function createPlayer(req, res) {
+  try {
+    const body = req.body || {};
+
+    const teamId =
+      body.team_id ??
+      body.teamId;
+
+    const name = cleanPlayerName(body.name);
+
+    const role = body.role ?? null;
+    const battingStyle = body.batting_style ?? null;
+    const bowlingStyle = body.bowling_style ?? null;
+
+    const jerseyNo =
+      body.jersey_no === '' ||
+      body.jersey_no === undefined
+        ? null
+        : body.jersey_no;
+
+    if (
+      teamId === undefined ||
+      teamId === null ||
+      String(teamId).trim() === ''
+    ) {
+      return res.status(400).json({
+        error: 'Team ID is required.',
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'Player name is required.',
+      });
+    }
+
+    /*
+     * IMPORTANT:
+     * findActiveDuplicateName checks only active=1 players.
+     * Deleted players with active=0 do not block name reuse.
+     */
+
+    const duplicateName = await findActiveDuplicateName(
+      teamId,
+      name
     );
-  }, [uniqueList, query]);
 
-  useEffect(() => {
-    const onClickOutside = event => {
-      if (boxRef.current && !boxRef.current.contains(event.target)) {
-        setOpen(false);
-      }
-    };
+    if (duplicateName) {
+      return res.status(409).json({
+        error: 'A player with this name already exists in this team.',
+        existing_player: duplicateName,
+      });
+    }
 
-    document.addEventListener('mousedown', onClickOutside);
+    const duplicateJersey = await findActiveDuplicateJersey(
+      teamId,
+      jerseyNo
+    );
 
-    return () => {
-      document.removeEventListener('mousedown', onClickOutside);
-    };
-  }, []);
+    if (duplicateJersey) {
+      return res.status(409).json({
+        error: 'This jersey number is already used by an active player in this team.',
+        existing_player: duplicateJersey,
+      });
+    }
 
-  const selectPlayer = player => {
-    if (!player || player.id == null) return;
+    const id = uuidv4();
 
-    onChange?.(player.id);
-    setQuery('');
-    setCreateError('');
-    setOpen(false);
-  };
+    await prepare(`
+      INSERT INTO players (
+        id,
+        team_id,
+        name,
+        role,
+        batting_style,
+        bowling_style,
+        jersey_no,
+        active
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      id,
+      teamId,
+      name,
+      role,
+      battingStyle,
+      bowlingStyle,
+      jerseyNo
+    );
 
-  const refreshAndFindExisting = async name => {
-    if (!teamId) return null;
+    const player = await prepare(`
+      SELECT *
+      FROM players
+      WHERE id = ?
+      LIMIT 1
+    `).get(id);
 
-    try {
-      const result = await Players.list(teamId);
-      const refreshed = getPlayerList(result);
+    return res.status(201).json(player || {
+      id,
+      team_id: teamId,
+      name,
+      role,
+      batting_style: battingStyle,
+      bowling_style: bowlingStyle,
+      jersey_no: jerseyNo,
+      active: 1,
+    });
+  } catch (error) {
+    console.error('createPlayer error:', error);
 
-      const existing = refreshed.find(
-        player =>
-          player?.id != null &&
-          sameName(player.name, name) &&
-          (
-            player.team_id == null ||
-            normalizeId(player.team_id) === normalizeId(teamId)
-          )
+    if (
+      /unique constraint|unique violation/i.test(
+        getErrorMessage(error)
+      )
+    ) {
+      return res.status(409).json({
+        error: 'A player with this name or jersey number already exists in this team.',
+      });
+    }
+
+    return res.status(500).json({
+      error: 'Failed to create player.',
+      details: getErrorMessage(error),
+    });
+  }
+}
+
+/* =========================================================
+   UPDATE PLAYER
+
+   - Keeps the existing player ID.
+   - Preserves historical records linked to that ID.
+   - Prevents duplicate active names in the same team.
+   - Allows a name belonging only to an inactive player.
+========================================================= */
+
+async function updatePlayer(req, res) {
+  try {
+    const playerId = req.params.id;
+    const body = req.body || {};
+
+    const existing = await prepare(`
+      SELECT *
+      FROM players
+      WHERE id = ?
+      LIMIT 1
+    `).get(playerId);
+
+    if (!existing) {
+      return res.status(404).json({
+        error: 'Player not found.',
+      });
+    }
+
+    const teamId =
+      body.team_id ??
+      body.teamId ??
+      existing.team_id;
+
+    const name =
+      body.name === undefined
+        ? cleanPlayerName(existing.name)
+        : cleanPlayerName(body.name);
+
+    const role =
+      body.role === undefined
+        ? existing.role
+        : body.role;
+
+    const battingStyle =
+      body.batting_style === undefined
+        ? existing.batting_style
+        : body.batting_style;
+
+    const bowlingStyle =
+      body.bowling_style === undefined
+        ? existing.bowling_style
+        : body.bowling_style;
+
+    const jerseyNo =
+      body.jersey_no === undefined
+        ? existing.jersey_no
+        : (
+            body.jersey_no === ''
+              ? null
+              : body.jersey_no
+          );
+
+    if (
+      teamId === undefined ||
+      teamId === null ||
+      String(teamId).trim() === ''
+    ) {
+      return res.status(400).json({
+        error: 'Team ID is required.',
+      });
+    }
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'Player name is required.',
+      });
+    }
+
+    if (Number(existing.active) === 1) {
+      const duplicateName = await findActiveDuplicateName(
+        teamId,
+        name,
+        playerId
       );
 
-      if (existing) {
-        onCreated?.(existing);
-        return existing;
+      if (duplicateName) {
+        return res.status(409).json({
+          error: 'A player with this name already exists in this team.',
+          existing_player: duplicateName,
+        });
       }
-    } catch (error) {
-      console.error('Failed to refresh player list:', error);
+
+      const duplicateJersey = await findActiveDuplicateJersey(
+        teamId,
+        jerseyNo,
+        playerId
+      );
+
+      if (duplicateJersey) {
+        return res.status(409).json({
+          error: 'This jersey number is already used by an active player in this team.',
+          existing_player: duplicateJersey,
+        });
+      }
     }
 
-    return null;
-  };
-
-  const createPlayer = async () => {
-    const name = cleanName(query);
-
-    if (!name || !teamId || createLockRef.current) return;
-
-    const existing = uniqueList.find(
-      player =>
-        sameName(player.name, name) &&
-        (
-          player.team_id == null ||
-          normalizeId(player.team_id) === normalizeId(teamId)
-        )
+    await prepare(`
+      UPDATE players
+      SET
+        team_id = ?,
+        name = ?,
+        role = ?,
+        batting_style = ?,
+        bowling_style = ?,
+        jersey_no = ?
+      WHERE id = ?
+    `).run(
+      teamId,
+      name,
+      role,
+      battingStyle,
+      bowlingStyle,
+      jerseyNo,
+      playerId
     );
 
-    if (existing) {
-      selectPlayer(existing);
-      return;
-    }
+    const updatedPlayer = await prepare(`
+      SELECT *
+      FROM players
+      WHERE id = ?
+      LIMIT 1
+    `).get(playerId);
 
-    createLockRef.current = true;
-    setCreating(true);
-    setCreateError('');
+    return res.json(updatedPlayer);
+  } catch (error) {
+    console.error('updatePlayer error:', error);
 
-    try {
-      const result = await Players.create({
-        team_id: teamId,
-        name,
+    if (
+      /unique constraint|unique violation/i.test(
+        getErrorMessage(error)
+      )
+    ) {
+      return res.status(409).json({
+        error: 'A player with this name or jersey number already exists in this team.',
       });
-
-      const player = getCreatedPlayer(result);
-
-      if (!player || player.id == null) {
-        const refreshed = await refreshAndFindExisting(name);
-
-        if (refreshed) {
-          selectPlayer(refreshed);
-          return;
-        }
-
-        throw new Error(
-          'The server did not return a valid player ID.'
-        );
-      }
-
-      onCreated?.(player);
-      onChange?.(player.id);
-      setQuery('');
-      setOpen(false);
-    } catch (error) {
-      console.error('Failed to create player:', error);
-
-      // A 409 can mean another request already created this player.
-      const existing = await refreshAndFindExisting(name);
-
-      if (existing) {
-        onChange?.(existing.id);
-        setQuery('');
-        setOpen(false);
-      } else {
-        setCreateError(
-          error?.response?.data?.error ||
-          error?.response?.data?.message ||
-          error?.message ||
-          'Unable to add player.'
-        );
-      }
-    } finally {
-      createLockRef.current = false;
-      setCreating(false);
     }
-  };
 
-  if (selectedPlayer) {
-    return (
-      <div className="flex items-center justify-between bg-slate-900 border border-emerald-600/60 rounded-lg px-3 py-2">
-        <span className="font-medium">{selectedPlayer.name}</span>
-
-        <button
-          type="button"
-          className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
-          onClick={() => {
-            onChange?.(null);
-            setQuery('');
-            setCreateError('');
-            setOpen(false);
-          }}
-        >
-          Change
-        </button>
-      </div>
-    );
+    return res.status(500).json({
+      error: 'Failed to update player.',
+      details: getErrorMessage(error),
+    });
   }
-
-  return (
-    <div className="relative" ref={boxRef}>
-      <input
-        className="input"
-        autoComplete="off"
-        maxLength={80}
-        placeholder={placeholder}
-        value={query}
-        onFocus={() => setOpen(true)}
-        onChange={event => {
-          setQuery(event.target.value);
-          setCreateError('');
-          setOpen(true);
-        }}
-        onKeyDown={event => {
-          if (event.key === 'Escape') {
-            setOpen(false);
-          }
-
-          if (event.key === 'Enter' && open) {
-            event.preventDefault();
-
-            if (exactMatch) {
-              selectPlayer(exactMatch);
-            } else if (query.trim()) {
-              createPlayer();
-            }
-          }
-        }}
-      />
-
-      {open && (
-        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-slate-800 border border-slate-600 rounded-lg shadow-xl">
-          {matches.length === 0 && !query.trim() && (
-            <div className="px-3 py-2 text-sm text-slate-400">
-              No players yet
-            </div>
-          )}
-
-          {matches.map(player => (
-            <button
-              type="button"
-              key={normalizeId(player.id)}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-600/20 flex justify-between"
-              onClick={() => selectPlayer(player)}
-            >
-              <span>{player.name}</span>
-
-              {player.role && (
-                <span className="text-slate-500 text-xs">
-                  {player.role}
-                </span>
-              )}
-            </button>
-          ))}
-
-          {teamId && query.trim() && (
-            exactMatch ? (
-              <button
-                type="button"
-                className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium"
-                onClick={() => selectPlayer(exactMatch)}
-              >
-                Select existing: {exactMatch.name}
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={creating}
-                className="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:bg-emerald-600/20 border-t border-slate-700 font-medium disabled:opacity-50"
-                onClick={createPlayer}
-              >
-                {creating ? 'Adding…' : `+ Add new player "${cleanName(query)}"`}
-              </button>
-            )
-          )}
-
-          {createError && (
-            <div className="border-t border-red-800 bg-red-950/50 px-3 py-2 text-xs text-red-200">
-              {createError}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
+
+/* =========================================================
+   DELETE PLAYER
+
+   Soft deletion preserves historical scorecard references.
+   active=0 means the name can be reused.
+========================================================= */
+
+async function deletePlayer(req, res) {
+  try {
+    const playerId = req.params.id;
+
+    const existing = await prepare(`
+      SELECT *
+      FROM players
+      WHERE id = ?
+      LIMIT 1
+    `).get(playerId);
+
+    if (!existing) {
+      return res.status(404).json({
+        error: 'Player not found.',
+      });
+    }
+
+    await prepare(`
+      UPDATE players
+      SET active = 0
+      WHERE id = ?
+    `).run(playerId);
+
+    return res.json({
+      success: true,
+      softRemoved: true,
+      message: 'Player deleted successfully. The name can be reused.',
+      id: playerId,
+    });
+  } catch (error) {
+    console.error('deletePlayer error:', error);
+
+    return res.status(500).json({
+      error: 'Failed to delete player.',
+      details: getErrorMessage(error),
+    });
+  }
+}
+
+/* =========================================================
+   LIST PLAYERS WITH TEAM DETAILS
+========================================================= */
+
+async function listAllWithTeams(req, res) {
+  try {
+    const rows = await prepare(`
+      SELECT
+        p.*,
+        t.name AS team_name
+      FROM players p
+      LEFT JOIN teams t
+        ON t.id = p.team_id
+      WHERE p.active = 1
+      ORDER BY t.name COLLATE NOCASE ASC,
+               p.name COLLATE NOCASE ASC
+    `).all();
+
+    return res.json(rows);
+  } catch (error) {
+    console.error('listAllWithTeams error:', error);
+
+    return res.status(500).json({
+      error: 'Failed to load players with teams.',
+      details: getErrorMessage(error),
+    });
+  }
+}
+
+/* =========================================================
+   GET ONE PLAYER'S CAREER STATS
+========================================================= */
+
+async function getPlayerStats(req, res) {
+  try {
+    const playerId = req.params.id;
+
+    const player = await prepare(`
+      SELECT *
+      FROM players
+      WHERE id = ?
+      LIMIT 1
+    `).get(playerId);
+
+    if (!player) {
+      return res.status(404).json({
+        error: 'Player not found.',
+      });
+    }
+
+    if (
+      !calc ||
+      typeof calc.getPlayerCareerStats !== 'function'
+    ) {
+      return res.status(500).json({
+        error: 'Player career statistics are not available in scoreCalculator.',
+      });
+    }
+
+    const stats = await calc.getPlayerCareerStats(playerId);
+
+    return res.json({
+      player,
+      ...(stats || {}),
+    });
+  } catch (error) {
+    console.error('getPlayerStats error:', error);
+
+    return res.status(500).json({
+      error: 'Failed to load player statistics.',
+      details: getErrorMessage(error),
+    });
+  }
+}
+
+/* =========================================================
+   GET ALL PLAYERS' CAREER STATS
+========================================================= */
+
+async function getAllPlayerCareerStats(req, res) {
+  try {
+    if (
+      !calc ||
+      typeof calc.getAllPlayerCareerStats !== 'function'
+    ) {
+      return res.status(500).json({
+        error: 'All-player career statistics are not available in scoreCalculator.',
+      });
+    }
+
+    const stats = await calc.getAllPlayerCareerStats();
+
+    return res.json(stats);
+  } catch (error) {
+    console.error('getAllPlayerCareerStats error:', error);
+
+    return res.status(500).json({
+      error: 'Failed to load player career statistics.',
+      details: getErrorMessage(error),
+    });
+  }
+}
+
+/* =========================================================
+   EXPORTS
+========================================================= */
+
+module.exports = {
+  listPlayers,
+  createPlayer,
+  updatePlayer,
+  deletePlayer,
+  listAllWithTeams,
+  getPlayerStats,
+  getAllPlayerCareerStats,
+};
