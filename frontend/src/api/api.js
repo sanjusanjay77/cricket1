@@ -59,7 +59,6 @@ function isSafeToRetry(error, method) {
   const normalizedMethod =
     String(method || 'get').toLowerCase();
 
-  // Read-only requests are safe to retry.
   if (
     normalizedMethod === 'get' ||
     normalizedMethod === 'head' ||
@@ -68,14 +67,8 @@ function isSafeToRetry(error, method) {
     return true;
   }
 
-  /*
-   * Do not automatically retry a write request.
-   *
-   * The server may have completed the operation even
-   * when the browser did not receive the response.
-   *
-   * This prevents accidental duplicate scoring actions.
-   */
+  // Never automatically retry a write request.
+  // The server might already have completed the operation.
   return false;
 }
 
@@ -192,11 +185,8 @@ export const Players = {
       .then(r => r.data),
 
   /*
-   * Rename an existing player.
-   *
-   * The backend must update the existing player record
-   * using the same ID. It must not delete and recreate
-   * the player or reset historical statistics.
+   * Rename the existing player record.
+   * The backend must preserve the same player ID.
    */
   update: (id, data) =>
     api.put(`/players/${id}`, data)
@@ -255,8 +245,24 @@ export const Innings = {
       .then(r => r.data),
 
   /*
+   * Correct historical batting identity in one innings.
+   *
+   * data:
+   * {
+   *   from_player_id: 'wrong-player-id',
+   *   to_player_id: 'correct-player-id'
+   * }
+   *
+   * This is a write operation and is not automatically retried.
+   */
+  correctBatsmanHistory: (inningsId, data) =>
+    api.put(
+      `/innings/${inningsId}/correct-batsman-history`,
+      data
+    ).then(r => r.data),
+
+  /*
    * Record exactly one ball action.
-   * Do not automatically repeat failed scoring writes.
    */
   ball: (id, data) =>
     api.post(`/innings/${id}/ball`, data)
@@ -264,8 +270,6 @@ export const Innings = {
 
   /*
    * Undo the most recent recorded ball action.
-   * The backend must reverse only that action and
-   * restore its previous player and innings state.
    */
   undo: id =>
     api.post(`/innings/${id}/undo`)
@@ -346,18 +350,10 @@ export const CachedPlayers = {
    CACHE INVALIDATION
 ========================================================= */
 
-/*
- * Call after updating players if another screen uses
- * CachedPlayers.listAll().
- */
 export function invalidatePlayerCache() {
   playersMemoryCache = null;
 }
 
-/*
- * Call after changing match records when a screen needs
- * fresh records rather than previously cached records.
- */
 export function invalidateRecordsCache() {
   recordsMemoryCache = null;
 }
