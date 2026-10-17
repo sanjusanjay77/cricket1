@@ -198,29 +198,54 @@ export default function Scorer() {
    */
 
   const handlePlayerCreated = useCallback(player => {
-    if (!player || player.id == null) return;
+  if (!player) return;
 
-    setPlayers(previous => {
-      const exists = previous.some(existing => {
-        if (sameId(existing.id, player.id)) return true;
+  // Support common API response shapes.
+  const normalizedPlayer =
+    player.player ??
+    player.data?.player ??
+    player.data ??
+    player;
 
-        return (
-          sameId(existing.team_id, player.team_id) &&
-          normalizePlayerName(existing.name) === normalizePlayerName(player.name)
-        );
-      });
+  if (normalizedPlayer.id == null) {
+    console.error('Created player response has no ID:', player);
+    setError('Player was created, but the server did not return a player ID.');
+    return;
+  }
 
-      if (exists) {
-        return previous.map(existing =>
-          sameId(existing.id, player.id)
-            ? { ...existing, ...player }
-            : existing
-        );
-      }
+  const newPlayer = {
+    ...normalizedPlayer,
+    id: normalizedPlayer.id,
+    team_id: normalizedPlayer.team_id ?? normalizedPlayer.teamId,
+    active: true
+  };
 
-      return [...previous, player];
-    });
-  }, []);
+  setPlayers(previous => {
+    const existingIndex = previous.findIndex(existing =>
+      sameId(existing.id, newPlayer.id)
+    );
+
+    if (existingIndex !== -1) {
+      return previous.map((existing, index) =>
+        index === existingIndex
+          ? { ...existing, ...newPlayer }
+          : existing
+      );
+    }
+
+    // Keep a re-created player visible even if an old entry
+    // with the same name exists in local state.
+    const withoutSameName = previous.filter(existing =>
+      !(
+        sameId(existing.team_id, newPlayer.team_id) &&
+        normalizePlayerName(existing.name) ===
+          normalizePlayerName(newPlayer.name)
+      )
+    );
+
+    return [...withoutSameName, newPlayer];
+  });
+}, []);
 
   /*
    * VISUAL EFFECTS
