@@ -1024,9 +1024,15 @@ exports.correctBatsmanHistory = async (req, res) => {
       );
 
       return {
-        batting_deliveries_updated: Number(battingUpdate.changes || 0),
-        non_striker_references_updated: Number(nonStrikerUpdate.changes || 0),
-        dismissal_references_updated: Number(dismissedUpdate.changes || 0),
+        batting_deliveries_updated: Number(
+  battingUpdate.rowsAffected ?? 0
+),
+non_striker_references_updated: Number(
+  nonStrikerUpdate.rowsAffected ?? 0
+),
+dismissal_references_updated: Number(
+  dismissedUpdate.rowsAffected ?? 0
+),
       };
     });
 
