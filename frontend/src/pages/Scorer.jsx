@@ -1321,9 +1321,13 @@ export default function Scorer() {
       }
 
       const currentInnings =
-        innings[
-          innings.length - 1
-        ];
+  innings.find(
+    item =>
+      Number(
+        item?.innings?.innings_number ??
+        item?.innings_number
+      ) === Number(match?.current_innings)
+  ) || innings[innings.length - 1];
 
       if (!currentInnings) {
         return;
@@ -1930,7 +1934,7 @@ const runsNeeded =
       players.filter(
         p =>
           String(p.team_id) === String(inn.batting_team_id) &&
-          p.active !== false
+          p.active !== false && p.active !== 0
       )
     );
 
@@ -1939,7 +1943,7 @@ const runsNeeded =
       players.filter(
         p =>
           String(p.team_id) === String(inn.bowling_team_id) &&
-          p.active !== false
+          p.active !== false && p.active !== 0
       )
     );
 
@@ -2142,8 +2146,7 @@ const runsNeeded =
       currentInnings.battingCard
     ).find(
       b =>
-        b.player_id ===
-        effectiveStrikerId
+        String(b.player_id) === String(effectiveStrikerId)
     ) || {
       player_id:
         effectiveStrikerId,
@@ -2159,8 +2162,7 @@ const runsNeeded =
       currentInnings.battingCard
     ).find(
       b =>
-        b.player_id ===
-        effectiveNonStrikerId
+        String(b.player_id) === String(effectiveStrikerId)
     ) || {
       player_id:
         effectiveNonStrikerId,
