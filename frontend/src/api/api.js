@@ -1,15 +1,17 @@
-
 import axios from 'axios';
 
 /* =========================================================
    API CONFIGURATION
 ========================================================= */
 
-const API_URL =
+const API_URL = (
   import.meta.env.VITE_API_URL ||
-  'https://cricket1-mvsi.onrender.com/api';
+  'https://cricket1-mvsi.onrender.com/api'
+).replace(/\/+$/, '');
 
 const REQUEST_TIMEOUT = 30000;
+const HEALTH_TIMEOUT = 10000;
+
 const MAX_RETRIES = 3;
 
 const RETRY_DELAYS = [
@@ -17,6 +19,15 @@ const RETRY_DELAYS = [
   1600,
   3200,
 ];
+
+const RETRYABLE_STATUSES = new Set([
+  408,
+  429,
+  500,
+  502,
+  503,
+  504,
+]);
 
 /* =========================================================
    AXIOS INSTANCE
@@ -38,38 +49,66 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function shouldRetry(error) {
-  const status = error?.response?.status;
-
-  if (!error?.response) {
-    return true;
-  }
-
-  return [
-    408,
-    429,
-    500,
-    502,
-    503,
-    504,
-  ].includes(status);
+function isCanceled(error) {
+  return (
+    axios.isCancel(error) ||
+    error?.code === 'ERR_CANCELED'
+  );
 }
 
-function isSafeToRetry(error, method) {
-  const normalizedMethod =
-    String(method || 'get').toLowerCase();
+function isSafeMethod(method) {
+  return [
+    'get',
+    'head',
+    'options',
+  ].includes(
+    String(method || 'get').toLowerCase()
+  );
+}
 
-  if (
-    normalizedMethod === 'get' ||
-    normalizedMethod === 'head' ||
-    normalizedMethod === 'options'
-  ) {
-    return true;
+function shouldRetry(error) {
+  if (!error || isCanceled(error)) {
+    return false;
   }
 
-  // Never automatically retry a write request.
-  // The server might already have completed the operation.
-  return false;
+  const status = error.response?.status;
+
+  // Network errors, connection resets and timeouts.
+  if (!error.response) {
+    return [
+      'ERR_NETWORK',
+      'ECONNABORTED',
+      'ETIMEDOUT',
+    ].includes(error.code);
+  }
+
+  return RETRYABLE_STATUSES.has(status);
+}
+
+function getRetryDelay(error, retryIndex) {
+  const retryAfter =
+    error?.response?.headers?.['retry-after'];
+
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      // Respect Retry-After, with a maximum wait of 30 sec.
+      return Math.min(seconds * 1000, 30000);
+    }
+
+    const retryDate = Date.parse(retryAfter);
+
+    if (!Number.isNaN(retryDate)) {
+      return Math.min(
+        Math.max(0, retryDate - Date.now()),
+        30000
+      );
+    }
+  }
+
+  return RETRY_DELAYS[retryIndex] ??
+    RETRY_DELAYS[RETRY_DELAYS.length - 1];
 }
 
 /* =========================================================
@@ -97,43 +136,63 @@ api.interceptors.response.use(
   async error => {
     const config = error?.config;
 
-    if (!config) {
+    if (!config || isCanceled(error)) {
       return Promise.reject(error);
     }
 
-    const retryCount =
-      Number(config._retryCount || 0);
+    const method = String(
+      config.method || 'get'
+    ).toLowerCase();
 
-    const method =
-      String(config.method || 'get').toLowerCase();
+    // Never retry writes automatically.
+    // A failed response does not prove the server
+    // failed to complete the operation.
+    if (!isSafeMethod(method)) {
+      return Promise.reject(error);
+    }
+
+    const retryCount = Number(
+      config._retryCount || 0
+    );
 
     if (
       retryCount >= MAX_RETRIES ||
-      !shouldRetry(error) ||
-      !isSafeToRetry(error, method)
+      !shouldRetry(error)
     ) {
       return Promise.reject(error);
     }
 
+    const delay = getRetryDelay(
+      error,
+      retryCount
+    );
+
     config._retryCount = retryCount + 1;
 
-    const delay =
-      RETRY_DELAYS[retryCount] ??
-      RETRY_DELAYS[RETRY_DELAYS.length - 1];
-
     console.warn(
-      `API retry ${config._retryCount}/${MAX_RETRIES}`,
+      `[API] Retrying request ${config._retryCount}/${MAX_RETRIES}`,
       {
         method: method.toUpperCase(),
         url: config.url,
-        status: error?.response?.status,
+        status: error.response?.status ?? null,
+        code: error.code ?? null,
         delay,
       }
     );
 
     await wait(delay);
 
-    return api(config);
+    // If the original request was canceled during
+    // the delay, do not start another request.
+    if (config.signal?.aborted) {
+      return Promise.reject(
+        new axios.CanceledError(
+          'Request canceled'
+        )
+      );
+    }
+
+    return api.request(config);
   }
 );
 
@@ -162,6 +221,13 @@ export const Teams = {
    PLAYERS
 ========================================================= */
 
+let playersMemoryCache = null;
+let playersRequestPromise = null;
+
+export function invalidatePlayerCache() {
+  playersMemoryCache = null;
+}
+
 export const Players = {
   list: team_id =>
     api.get('/players', {
@@ -182,19 +248,24 @@ export const Players = {
 
   create: data =>
     api.post('/players', data)
-      .then(r => r.data),
+      .then(r => {
+        invalidatePlayerCache();
+        return r.data;
+      }),
 
-  /*
-   * Rename the existing player record.
-   * The backend must preserve the same player ID.
-   */
   update: (id, data) =>
     api.put(`/players/${id}`, data)
-      .then(r => r.data),
+      .then(r => {
+        invalidatePlayerCache();
+        return r.data;
+      }),
 
   remove: id =>
     api.delete(`/players/${id}`)
-      .then(r => r.data),
+      .then(r => {
+        invalidatePlayerCache();
+        return r.data;
+      }),
 };
 
 /* =========================================================
@@ -220,7 +291,8 @@ export const Matches = {
       .then(r => r.data),
 
   remove: id =>
-    api.delete(`/matches/${id}`).then(r => r.data),
+    api.delete(`/matches/${id}`)
+      .then(r => r.data),
 };
 
 /* =========================================================
@@ -244,33 +316,18 @@ export const Innings = {
     api.post(`/innings/${id}/set-bowler`, data)
       .then(r => r.data),
 
-  /*
-   * Correct historical batting identity in one innings.
-   *
-   * data:
-   * {
-   *   from_player_id: 'wrong-player-id',
-   *   to_player_id: 'correct-player-id'
-   * }
-   *
-   * This is a write operation and is not automatically retried.
-   */
   correctBatsmanHistory: (inningsId, data) =>
     api.put(
       `/innings/${inningsId}/correct-batsman-history`,
       data
     ).then(r => r.data),
 
-  /*
-   * Record exactly one ball action.
-   */
+  // Records one ball action.
+  // Do not blindly retry if the response is lost.
   ball: (id, data) =>
     api.post(`/innings/${id}/ball`, data)
       .then(r => r.data),
 
-  /*
-   * Undo the most recent recorded ball action.
-   */
   undo: id =>
     api.post(`/innings/${id}/undo`)
       .then(r => r.data),
@@ -282,6 +339,10 @@ export const Innings = {
 
 let recordsMemoryCache = null;
 let recordsRequestPromise = null;
+
+export function invalidateRecordsCache() {
+  recordsMemoryCache = null;
+}
 
 export const Records = {
   get: () => {
@@ -314,11 +375,8 @@ export const Records = {
 };
 
 /* =========================================================
-   PLAYER CACHE
+   CACHED PLAYERS
 ========================================================= */
-
-let playersMemoryCache = null;
-let playersRequestPromise = null;
 
 export const CachedPlayers = {
   listAll: () => {
@@ -347,18 +405,6 @@ export const CachedPlayers = {
 };
 
 /* =========================================================
-   CACHE INVALIDATION
-========================================================= */
-
-export function invalidatePlayerCache() {
-  playersMemoryCache = null;
-}
-
-export function invalidateRecordsCache() {
-  recordsMemoryCache = null;
-}
-
-/* =========================================================
    NOTIFICATIONS
 ========================================================= */
 
@@ -383,7 +429,7 @@ export const Notifications = {
 export async function healthCheck() {
   try {
     const response = await api.get('/health', {
-      timeout: 10000,
+      timeout: HEALTH_TIMEOUT,
     });
 
     return {
@@ -394,7 +440,7 @@ export async function healthCheck() {
   } catch (error) {
     return {
       online: false,
-      status: error?.response?.status || null,
+      status: error?.response?.status ?? null,
       message: getApiErrorMessage(
         error,
         'Server is currently unavailable'
@@ -411,33 +457,63 @@ export function getApiErrorMessage(
   error,
   fallback = 'Something went wrong'
 ) {
-  if (error?.response?.data?.message) {
-    return String(error.response.data.message);
+  if (isCanceled(error)) {
+    return 'Request canceled.';
   }
 
-  if (error?.response?.data?.error) {
-    return String(error.response.data.error);
+  const responseData = error?.response?.data;
+
+  if (typeof responseData?.message === 'string') {
+    return responseData.message;
+  }
+
+  if (typeof responseData?.error === 'string') {
+    return responseData.error;
+  }
+
+  const status = error?.response?.status;
+
+  if (status === 400) {
+    return 'Invalid request. Please check the entered information.';
+  }
+
+  if (status === 401) {
+    return 'Authentication required. Please sign in again.';
+  }
+
+  if (status === 403) {
+    return 'You do not have permission to perform this action.';
+  }
+
+  if (status === 404) {
+    return 'The requested resource was not found.';
+  }
+
+  if (status === 409) {
+    return 'This action conflicts with the current match state. Refresh the scoreboard.';
+  }
+
+  if (status === 429) {
+    return 'Too many requests. Wait a moment before trying again.';
+  }
+
+  if (status === 408) {
+    return 'The server timed out. Refresh the scoreboard before retrying a scoring action.';
+  }
+
+  if ([500, 502, 503, 504].includes(status)) {
+    return 'The server is temporarily unavailable. Refresh the scoreboard and try again.';
   }
 
   if (error?.code === 'ERR_NETWORK') {
-    return 'Unable to connect to the server. Check your connection and try again.';
+    return 'Cannot reach the server. Check your internet connection or the server status.';
   }
 
   if (
     error?.code === 'ECONNABORTED' ||
     error?.code === 'ETIMEDOUT'
   ) {
-    return 'Server is taking too long to respond. Please check the scoreboard before retrying.';
-  }
-
-  const status = error?.response?.status;
-
-  if ([502, 503, 504].includes(status)) {
-    return 'Server is temporarily unavailable. Please wait and try again.';
-  }
-
-  if (status === 429) {
-    return 'Too many requests. Wait a moment before trying again.';
+    return 'The request timed out. Check the latest scoreboard before retrying.';
   }
 
   if (error?.message) {
