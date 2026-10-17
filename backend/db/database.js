@@ -543,13 +543,16 @@ const db = {
 };
 
 
+
 /* =========================================================
    DATABASE TRANSACTION SUPPORT
 ========================================================= */
 
 db.transaction = async function (callback) {
   if (typeof callback !== 'function') {
-    throw new TypeError('Transaction callback must be a function');
+    throw new TypeError(
+      'Transaction callback must be a function'
+    );
   }
 
   const tx = await client.transaction('write');
@@ -558,39 +561,43 @@ db.transaction = async function (callback) {
     prepare(sql) {
       return {
         get: async (...args) => {
+          const query = normalizeQuery(sql, args);
+
           const result = await tx.execute({
-            sql,
-            args: args.map((value) =>
-              value === undefined ? null : value
-            ),
+            sql: query.sql,
+            args: query.args,
           });
 
-          return result.rows[0] ?? null;
+          if (!result.rows || result.rows.length === 0) {
+            return undefined;
+          }
+
+          return convertRow(
+            result.rows[0],
+            result.columns
+          );
         },
 
         all: async (...args) => {
+          const query = normalizeQuery(sql, args);
+
           const result = await tx.execute({
-            sql,
-            args: args.map((value) =>
-              value === undefined ? null : value
-            ),
+            sql: query.sql,
+            args: query.args,
           });
 
-          return result.rows;
+          return (result.rows || []).map((row) =>
+            convertRow(row, result.columns)
+          );
         },
 
         run: async (...args) => {
-          const result = await tx.execute({
-            sql,
-            args: args.map((value) =>
-              value === undefined ? null : value
-            ),
-          });
+          const query = normalizeQuery(sql, args);
 
-          return {
-            changes: result.rowsAffected,
-            lastInsertRowid: result.lastInsertRowid,
-          };
+          return await tx.execute({
+            sql: query.sql,
+            args: query.args,
+          });
         },
       };
     },
@@ -607,7 +614,7 @@ db.transaction = async function (callback) {
       await tx.rollback();
     } catch (rollbackError) {
       console.error(
-        'Transaction rollback failed:',
+        'Database transaction rollback failed:',
         rollbackError.message
       );
     }
@@ -615,5 +622,6 @@ db.transaction = async function (callback) {
     throw error;
   }
 };
+
 
 module.exports = db;
