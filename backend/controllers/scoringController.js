@@ -893,6 +893,130 @@ exports.getScoreboard = async (
 };
 
 
+
+/*
+====================================================
+CORRECT HISTORICAL BATSMAN IDENTITY
+====================================================
+
+Reassign one player's batting records in a single
+innings to another player on the same batting team.
+
+Runs, extras, bowlers, and fielders are not changed.
+*/
+exports.correctBatsmanHistory = async (req, res) => {
+  try {
+    const inningsId = cleanId(req.params.id);
+    const body = req.body || {};
+
+    const fromPlayerId = cleanId(
+      body.from_player_id
+    );
+
+    const toPlayerId = cleanId(
+      body.to_player_id
+    );
+
+    if (
+      !inningsId ||
+      !fromPlayerId ||
+      !toPlayerId
+    ) {
+      return res.status(400).json({
+        error:
+          'innings id, from_player_id and to_player_id are required'
+      });
+    }
+
+    if (fromPlayerId === toPlayerId) {
+      return res.status(400).json({
+        error:
+          'Source and replacement players must be different'
+      });
+    }
+
+    const innings = await getInnings(inningsId);
+
+    if (!innings) {
+      return res.status(404).json({
+        error: 'Innings not found'
+      });
+    }
+
+    const sourcePlayer = await db.prepare(`
+      SELECT id, team_id, name
+      FROM players
+      WHERE id = ?
+    `).get(fromPlayerId);
+
+    const targetPlayer = await db.prepare(`
+      SELECT id, team_id, name
+      FROM players
+      WHERE id = ?
+    `).get(toPlayerId);
+
+    if (!sourcePlayer || !targetPlayer) {
+      return res.status(404).json({
+        error: 'Source or replacement player not found'
+      });
+    }
+
+    if (
+      String(sourcePlayer.team_id) !==
+        String(innings.batting_team_id) ||
+      String(targetPlayer.team_id) !==
+        String(innings.batting_team_id)
+    ) {
+      return res.status(400).json({
+        error:
+          'Both players must belong to the innings batting team'
+      });
+    }
+
+    /*
+    Count deliveries credited to the source batter
+    before modifying anything.
+    */
+    const count = await db.prepare(`
+      SELECT COUNT(*) AS delivery_count
+      FROM balls
+      WHERE innings_id = ?
+        AND batsman_id = ?
+    `).get(inningsId, fromPlayerId);
+
+    const deliveryCount = Number(
+      count?.delivery_count || 0
+    );
+
+    if (deliveryCount === 0) {
+      return res.status(400).json({
+        error:
+          'No batting deliveries found for this player in this innings'
+      });
+    }
+
+    /*
+    IMPORTANT:
+    This initial handler is deliberately not wired
+    into the routes yet. The related ball and innings
+    updates must be committed atomically using the
+    database wrapper's supported transaction API.
+    */
+    return res.status(501).json({
+      error:
+        'Validation passed, but historical correction is not enabled until atomic transaction support is configured',
+      innings_id: inningsId,
+      from_player_id: fromPlayerId,
+      to_player_id: toPlayerId,
+      deliveries_found: deliveryCount
+    });
+
+  } catch (err) {
+    return sendError(res, err, 500);
+  }
+};
+
+
 /*
 ====================================================
 EXPORT INTERNAL HELPERS
