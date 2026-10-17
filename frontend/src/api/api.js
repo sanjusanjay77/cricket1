@@ -26,14 +26,15 @@ const RETRYABLE_STATUSES = new Set([
    AXIOS INSTANCE
 ========================================================= */
 
+
 const api = axios.create({
   baseURL: API_URL,
   timeout: REQUEST_TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
-    'Cache-Control': 'no-cache',
   },
 });
+
 
 /* =========================================================
    HELPERS
