@@ -1028,44 +1028,10 @@ async function recordBall(
   );
 }
 
-/**
- * Rebuild over and ball positions from the remaining delivery history.
- * Legal deliveries determine over progression; wides and no-balls do not
- * count toward the six-ball limit.
- */
-async function renumberBallsAfterUndo(inningsId) {
-  const balls = await db.prepare(`
-    SELECT id, is_legal
-    FROM balls
-    WHERE innings_id = ?
-    ORDER BY ball_sequence ASC
-  `).all(inningsId);
-
-  let legalBalls = 0;
-
-  for (const ball of balls) {
-    const overNumber = Math.floor(legalBalls / 6);
-    const ballInOver = ball.is_legal
-      ? (legalBalls % 6) + 1
-      : (legalBalls % 6);
-
-    await db.prepare(`
-      UPDATE balls
-      SET over_number = ?, ball_in_over = ?
-      WHERE id = ?
-    `).run(overNumber, ballInOver, ball.id);
-
-    if (Number(ball.is_legal) === 1) {
-      legalBalls += 1;
-    }
-  }
-}
-
-
 /* =========================================================
-   UNDO LAST BALL
-   Preserves existing scoring and innings safety rules.
+   UNDO
 ========================================================= */
+
 
 async function undoLastBall(inningsId) {
   return withInningsLock(inningsId, async () => {
@@ -1128,26 +1094,21 @@ async function undoLastBall(inningsId) {
     }
 
     const wasFirstBall =
+      Number(beforeUndo.total_balls || 0) <= 1 &&
       Number(last.ball_sequence || 0) === 1;
 
-    const preservedStriker =
-      beforeUndo.striker_id || null;
-
-    const preservedNonStriker =
-      beforeUndo.non_striker_id || null;
-
+    const preservedStriker = beforeUndo.striker_id || null;
+    const preservedNonStriker = beforeUndo.non_striker_id || null;
     const preservedBowler =
-      beforeUndo.current_bowler_id ||
-      last.bowler_id ||
-      null;
+      beforeUndo.current_bowler_id || last.bowler_id || null;
 
-    // Delete exactly one delivery.
+    // Delete only the latest recorded delivery.
     await db.prepare(`
       DELETE FROM balls
       WHERE id = ?
     `).run(last.id);
 
-    // Recalculate the innings from the remaining deliveries.
+    // Recalculate and reopen the innings in one database update.
     await recomputeInningsFromBalls(inningsId, {
       innings: beforeUndo,
       preserveSelections: wasFirstBall,
@@ -1156,7 +1117,8 @@ async function undoLastBall(inningsId) {
       preservedBowler
     });
 
-    // Reopen the match if the undone ball ended it.
+    // Undoing the final delivery of a completed second innings
+    // must reopen the match and remove the previous result.
     await db.prepare(`
       UPDATE matches
       SET status = 'live',
@@ -1166,6 +1128,7 @@ async function undoLastBall(inningsId) {
         AND status IN ('innings-break', 'completed')
     `).run(beforeUndo.match_id);
 
+    // Only one final innings read is needed for the response.
     const updatedInnings = await getInnings(inningsId);
 
     return {
@@ -1177,12 +1140,8 @@ async function undoLastBall(inningsId) {
 
 
 /* =========================================================
-   RECOMPUTE INNINGS FROM REMAINING BALLS
-
-   Rebuilds score, wickets, legal balls, extras and
-   batter/bowler selections after undo.
+   RECOMPUTE INNINGS
 ========================================================= */
-
 
 async function recomputeInningsFromBalls(
   inningsId,
@@ -1195,7 +1154,6 @@ async function recomputeInningsFromBalls(
     throw new Error('Innings not found');
   }
 
-  // Always process the remaining deliveries in their original order.
   const balls = await db.prepare(`
     SELECT *
     FROM balls
@@ -1226,53 +1184,11 @@ async function recomputeInningsFromBalls(
       extra_runs: b.extra_runs
     });
 
-    /*
-     * FIX:
-     * Rebuild the over and ball position from the
-     * remaining deliveries after every undo.
-     *
-     * Illegal deliveries do not advance the legal-ball
-     * count. They stay in the current over.
-     */
-    const legalBallsBefore = totalBalls;
-
-    const correctedOverNumber =
-      Math.floor(legalBallsBefore / 6);
-
-    const correctedBallInOver =
-      Number(b.is_legal) === 1
-        ? (legalBallsBefore % 6) + 1
-        : (legalBallsBefore % 6);
-
-    // Repair the saved delivery position as well as the score.
-    if (
-      Number(b.over_number) !== correctedOverNumber ||
-      Number(b.ball_in_over) !== correctedBallInOver
-    ) {
-      await db.prepare(`
-        UPDATE balls
-        SET
-          over_number = ?,
-          ball_in_over = ?
-        WHERE id = ?
-      `).run(
-        correctedOverNumber,
-        correctedBallInOver,
-        b.id
-      );
-
-      // Keep the in-memory delivery consistent with the database.
-      b.over_number = correctedOverNumber;
-      b.ball_in_over = correctedBallInOver;
-    }
-
-    // Recalculate team runs.
+    // Recalculate the team score.
     totalRuns += effect.teamRuns;
 
-    // Count legal deliveries only.
-    const isLegal = Number(b.is_legal) === 1;
-
-    if (isLegal) {
+    // Count only legal deliveries.
+    if (Number(b.is_legal) === 1) {
       totalBalls += 1;
     }
 
@@ -1281,7 +1197,7 @@ async function recomputeInningsFromBalls(
       totalWickets += 1;
     }
 
-    // Recalculate extras using the existing scoring rules.
+    // Recalculate extras.
     if (
       b.extra_type &&
       Object.prototype.hasOwnProperty.call(
@@ -1313,7 +1229,7 @@ async function recomputeInningsFromBalls(
         ballNonStriker = null;
       }
     } else if (effect.runsRun % 2 === 1) {
-      // Rotate strike for odd running runs.
+      // Rotate strike for an odd number of running runs.
       [ballStriker, ballNonStriker] = [
         ballNonStriker,
         ballStriker
@@ -1326,9 +1242,9 @@ async function recomputeInningsFromBalls(
     // Restore the bowler for this delivery.
     bowler = b.bowler_id;
 
-    // Rotate strike after the sixth legal delivery.
+    // Rotate strike at the end of a completed over.
     if (
-      isLegal &&
+      Number(b.is_legal) === 1 &&
       totalBalls > 0 &&
       totalBalls % 6 === 0
     ) {
@@ -1339,13 +1255,14 @@ async function recomputeInningsFromBalls(
         ];
       }
 
-      // Preserve the existing next-bowler selection flow.
+      // The next bowler must be selected separately.
       bowler = null;
     }
   }
 
   /*
-   * Preserve the existing first-ball undo behavior.
+   * When undoing the first delivery, preserve the
+   * selections that existed before that delivery.
    */
   const finalStriker = options.preserveSelections
     ? options.preservedStriker
@@ -1359,9 +1276,7 @@ async function recomputeInningsFromBalls(
     ? options.preservedBowler
     : bowler;
 
-  /*
-   * Save the recalculated innings totals and selections.
-   */
+  // Save all recalculated values in one database update.
   await db.prepare(`
     UPDATE innings
     SET
@@ -1393,7 +1308,6 @@ async function recomputeInningsFromBalls(
     inningsId
   );
 }
-
 
 
 /* =========================================================
