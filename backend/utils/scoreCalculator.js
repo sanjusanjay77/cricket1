@@ -1093,12 +1093,9 @@ async function undoLastBall(inningsId) {
       }
     }
 
-    // Preserve the current selections when undoing a delivery.
-// This prevents recomputation from clearing a bowler selected
-// for the current over or losing the current batter selections.
-const preservedStriker = beforeUndo.striker_id || null;
-const preservedNonStriker = beforeUndo.non_striker_id || null;
-const preservedBowler = beforeUndo.current_bowler_id || null;
+    const wasFirstBall =
+      Number(beforeUndo.total_balls || 0) <= 1 &&
+      Number(last.ball_sequence || 0) === 1;
 
     const preservedStriker = beforeUndo.striker_id || null;
     const preservedNonStriker = beforeUndo.non_striker_id || null;
