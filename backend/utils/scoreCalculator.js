@@ -1093,9 +1093,12 @@ async function undoLastBall(inningsId) {
       }
     }
 
-    const wasFirstBall =
-      Number(beforeUndo.total_balls || 0) <= 1 &&
-      Number(last.ball_sequence || 0) === 1;
+    // Preserve the current selections when undoing a delivery.
+// This prevents recomputation from clearing a bowler selected
+// for the current over or losing the current batter selections.
+const preservedStriker = beforeUndo.striker_id || null;
+const preservedNonStriker = beforeUndo.non_striker_id || null;
+const preservedBowler = beforeUndo.current_bowler_id || null;
 
     const preservedStriker = beforeUndo.striker_id || null;
     const preservedNonStriker = beforeUndo.non_striker_id || null;
@@ -1110,12 +1113,12 @@ async function undoLastBall(inningsId) {
 
     // Recalculate and reopen the innings in one database update.
     await recomputeInningsFromBalls(inningsId, {
-      innings: beforeUndo,
-      preserveSelections: wasFirstBall,
-      preservedStriker,
-      preservedNonStriker,
-      preservedBowler
-    });
+  innings: beforeUndo,
+  preserveSelections: true,
+  preservedStriker,
+  preservedNonStriker,
+  preservedBowler
+});
 
     // Undoing the final delivery of a completed second innings
     // must reopen the match and remove the previous result.
